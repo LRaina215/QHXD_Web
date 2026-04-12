@@ -17,6 +17,7 @@
 
 - FastAPI 后端骨架
 - Vue 3 + TypeScript + Vite 前端骨架
+- 单页 Dashboard 验收版
 - `GET /health`
 - 状态查询、告警查询、当前任务查询
 - mission mock 接口：
@@ -30,6 +31,8 @@
   - command logs
   - recent alerts
   - state snapshots
+
+当前前端以单页 Dashboard 为准，独立的 Mission / Devices / Logs 页面留到下一阶段补强。
 
 ## 运行方式
 
