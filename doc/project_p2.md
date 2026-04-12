@@ -198,6 +198,14 @@ At the end, summarize changed files and the frozen contracts.
 - real 状态接入链路
 - 前端显示真实状态的基础能力
 
+### 当前实现进展
+
+- 已新增 `nuc_adapter`
+- 已新增共享 `state_store`
+- 已选定 NUC 状态接入方式为 `POST /api/internal/nuc/state`
+- mock / real 模式可共存
+- real 模式下接收到的状态会写入共享状态并通过现有 WebSocket 推送
+
 ### 验收
 
 - RK3588 能接收到 NUC 的真实状态

@@ -76,7 +76,6 @@ class MockStateService:
     def switch_system_mode(self, request: ModeSwitchRequest) -> ModeSwitchResult:
         self._system_mode = SystemMode(mode=request.mode, updated_at=self._timestamp())
         self._current_state = self._build_state()
-        persistence.save_state_snapshot(self._current_state)
         return ModeSwitchResult(
             accepted=True,
             system_mode=self.get_system_mode(),

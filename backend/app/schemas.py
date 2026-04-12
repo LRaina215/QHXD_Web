@@ -153,6 +153,29 @@ class ModeSwitchResponse(ContractModel):
     data: ModeSwitchResult
 
 
+class NucStateUpdateRequest(ContractModel):
+    robot_pose: RobotPose
+    nav_status: NavStatus
+    task_status: TaskStatus
+    device_status: DeviceStatus
+    env_sensor: EnvSensor
+    alerts: list[AlertEvent] = Field(default_factory=list, description="随状态一并上送的告警列表")
+    updated_at: datetime = Field(description="状态更新时间")
+
+
+class NucStateUpdateResult(ContractModel):
+    accepted: bool = Field(description="是否已被当前模式接收")
+    system_mode: SystemMode
+    state_updated: bool = Field(description="是否已刷新共享状态")
+    received_at: datetime = Field(description="NUC 状态接收时间")
+    detail: str = Field(description="状态接收说明")
+
+
+class NucStateUpdateResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: NucStateUpdateResult
+
+
 class CommandLogEntry(ContractModel):
     id: int = Field(description="自增日志 ID")
     command: str = Field(description="命令名称")

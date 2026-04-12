@@ -96,6 +96,12 @@ Web/App -> RK3588 -> NUC11 -> RT-Thread
 - HTTP：任务与查询接口
 - WebSocket：实时状态推送（如需要，也可由 RK3588 主动拉取/接收）
 
+### 当前实现选择
+
+当前 Round 2 先采用 **NUC 主动通过 HTTP 向 RK3588 上送状态** 的方式进行联调，具体入口为：
+
+- `POST /api/internal/nuc/state`
+
 ### Phase 2 承载内容
 
 #### RK3588 -> NUC
@@ -158,6 +164,11 @@ RK3588 后端建议拆分为以下模块：
 - 区分 mock / real 状态源
 - 为 REST 和 WebSocket 提供统一读取入口
 
+当前状态：
+
+- 已实现最小共享状态存储
+- `GET /api/state/latest` 与 `GET /api/tasks/current` 已从共享状态读取
+
 ### 5.2 `nuc_adapter`
 
 职责：
@@ -166,6 +177,12 @@ RK3588 后端建议拆分为以下模块：
 - 接收真实状态
 - 发送任务命令
 - 处理超时、错误码、连接状态
+
+当前状态：
+
+- 已实现最小 `nuc_adapter`
+- 当前仅覆盖 **NUC -> RK3588 的真实状态输入**
+- 任务转发给 NUC 仍留到下一轮实现
 
 ### 5.3 `mission_gateway`
 
