@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 import app.main as main_module
-from app.schemas import GoToWaypointRequest
+from app.schemas import GoToWaypointRequest, ModeSwitchRequest
 from app.services.mock_state import MockStateService
 from app.services.persistence import persistence
 
@@ -45,6 +45,16 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0].source, "test")
         self.assertEqual(logs[0].payload["waypoint_id"], "mock-waypoint")
+
+    async def test_system_mode_switch_endpoint_updates_contract_state(self) -> None:
+        response = await main_module.switch_system_mode(
+            ModeSwitchRequest(mode="real", source="test", requested_by="unittest")
+        )
+        latest_state = main_module.mock_state_service.get_latest_state()
+
+        self.assertTrue(response.success)
+        self.assertEqual(response.data.system_mode.mode, "real")
+        self.assertEqual(latest_state.system_mode.mode, "real")
 
     def test_mock_state_tick_updates_snapshot_history(self) -> None:
         before = main_module.mock_state_service.get_latest_state()

@@ -10,6 +10,8 @@ from app.schemas import (
     GoToWaypointRequest,
     HealthResponse,
     MissionActionResponse,
+    ModeSwitchRequest,
+    ModeSwitchResponse,
     PauseMissionRequest,
     ResumeMissionRequest,
     ReturnHomeRequest,
@@ -90,6 +92,11 @@ async def resume_mission(request: ResumeMissionRequest) -> MissionActionResponse
 @app.post("/api/mission/return_home", response_model=MissionActionResponse)
 async def return_home(request: ReturnHomeRequest) -> MissionActionResponse:
     return MissionActionResponse(data=mock_state_service.return_home(request))
+
+
+@app.post("/api/system/mode/switch", response_model=ModeSwitchResponse)
+async def switch_system_mode(request: ModeSwitchRequest) -> ModeSwitchResponse:
+    return ModeSwitchResponse(data=mock_state_service.switch_system_mode(request))
 
 
 @app.websocket("/ws/state")

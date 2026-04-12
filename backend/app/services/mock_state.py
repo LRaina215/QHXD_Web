@@ -8,6 +8,8 @@ from app.schemas import (
     GoToWaypointRequest,
     MissionActionResult,
     MissionRequestBase,
+    ModeSwitchRequest,
+    ModeSwitchResult,
     NavStatus,
     PauseMissionRequest,
     ResumeMissionRequest,
@@ -15,6 +17,7 @@ from app.schemas import (
     RobotPose,
     RobotState,
     StartPatrolRequest,
+    SystemMode,
     TaskStatus,
 )
 from app.services.persistence import persistence
@@ -26,6 +29,7 @@ class MockStateService:
     def __init__(self) -> None:
         self._sequence = 0
         self._current_task = TaskStatus()
+        self._system_mode = SystemMode(mode="mock", updated_at=self._timestamp())
         self._current_state = self._build_state()
 
     def initialize(self) -> None:
@@ -60,11 +64,28 @@ class MockStateService:
     def get_current_task(self) -> TaskStatus:
         return self._current_task.model_copy(deep=True)
 
+    def get_system_mode(self) -> SystemMode:
+        return self._system_mode.model_copy(deep=True)
+
     def get_alerts(self) -> list[AlertEvent]:
         return persistence.list_recent_alerts()
 
     def get_command_logs(self) -> list:
         return persistence.list_command_logs()
+
+    def switch_system_mode(self, request: ModeSwitchRequest) -> ModeSwitchResult:
+        self._system_mode = SystemMode(mode=request.mode, updated_at=self._timestamp())
+        self._current_state = self._build_state()
+        persistence.save_state_snapshot(self._current_state)
+        return ModeSwitchResult(
+            accepted=True,
+            system_mode=self.get_system_mode(),
+            received_at=self._timestamp(),
+            detail=(
+                f"已切换到 {request.mode} 模式。"
+                "当前阶段仅冻结契约，未接入真实 NUC 通信，状态仍由本地占位实现驱动。"
+            ),
+        )
 
     def go_to_waypoint(self, request: GoToWaypointRequest) -> MissionActionResult:
         self._current_task = TaskStatus(
@@ -166,7 +187,7 @@ class MockStateService:
                 timestamp=timestamp,
             ),
             nav_status=NavStatus(
-                mode="mock",
+                mode="auto",
                 state=self._nav_state(),
                 current_goal=self._task_goal(),
                 remaining_distance=self._remaining_distance(progress),
@@ -183,6 +204,7 @@ class MockStateService:
                 humidity_percent=round(46.0 + math.cos(angle) * 8.0, 2),
                 status="mock",
             ),
+            system_mode=self.get_system_mode(),
             updated_at=timestamp,
         )
 
