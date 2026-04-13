@@ -102,6 +102,10 @@ Web/App -> RK3588 -> NUC11 -> RT-Thread
 
 - `POST /api/internal/nuc/state`
 
+当前 Round 3 的任务桥接则采用 **RK3588 主动通过 HTTP 向 NUC 转发命令** 的方式进行联调，具体入口为：
+
+- `POST /api/internal/rk3588/mission`
+
 ### Phase 2 承载内容
 
 #### RK3588 -> NUC
@@ -181,8 +185,8 @@ RK3588 后端建议拆分为以下模块：
 当前状态：
 
 - 已实现最小 `nuc_adapter`
-- 当前仅覆盖 **NUC -> RK3588 的真实状态输入**
-- 任务转发给 NUC 仍留到下一轮实现
+- 已覆盖 **NUC -> RK3588 的真实状态输入**
+- 已覆盖 **RK3588 -> NUC 的最小任务命令转发**
 
 ### 5.3 `mission_gateway`
 
@@ -194,6 +198,13 @@ RK3588 后端建议拆分为以下模块：
 - 调用 `nuc_adapter` 转发给 NUC
 - 记录命令日志
 
+当前状态：
+
+- 已实现最小 `mission_gateway`
+- mock 模式继续走本地占位流程
+- real 模式下通过 `nuc_adapter` 转发命令到 NUC
+- NUC 返回的任务结果会写入 SQLite 并刷新共享状态
+
 ### 5.4 `mode_manager`
 
 职责：
@@ -201,6 +212,14 @@ RK3588 后端建议拆分为以下模块：
 - 管理 mock / real 模式
 - 决定当前状态数据源
 - 支持联调回退
+
+当前状态：
+
+- 已实现最小 `mode_manager`
+- 切到 `real` 时会先进入“等待 NUC 首包”状态
+- real 模式下支持状态超时离线标记
+- NUC 状态恢复或命令桥恢复后，会自动回到在线状态
+- 模式切换、超时、恢复会写入轻量告警，便于前端观察
 
 ### 5.5 `websocket_push`
 
@@ -225,6 +244,13 @@ RK3588 后端建议拆分为以下模块：
 - 展示状态、任务、告警
 - 调用命令接口
 - 显示 mock / real 模式
+
+当前状态：
+
+- 已显示当前系统模式
+- 已支持从页面切换 mock / real
+- 已显示 NUC bridge 在线、等待首包、超时、bridge 异常等状态
+- WebSocket 断开后会自动重连，并在重连后主动拉取最新状态
 
 ---
 

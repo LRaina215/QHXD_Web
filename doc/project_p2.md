@@ -265,6 +265,14 @@ At the end, summarize state flow, changed files, and validation steps.
 - 至少 3 个命令真实可用
 - 命令日志入库
 
+### 当前实现进展
+
+- 已新增 `mission_gateway`
+- real 模式下 mission API 会转发到 NUC `POST /api/internal/rk3588/mission`
+- mock 模式仍保留原有本地占位执行流程
+- 命令结果会写入 SQLite `command_logs`
+- 命令返回的任务状态会同步刷新共享状态并通过现有 WebSocket 对前端输出
+
 ### 验收
 
 - `go_to_waypoint`
@@ -326,6 +334,17 @@ At the end, summarize the command flow and validation results.
 - mock / real 模式切换
 - 任务状态闭环
 - 基础错误提示
+
+### 当前实现进展
+
+- 已新增并接入 `mode_manager`
+- `POST /api/system/mode/switch` 仍作为统一模式切换入口
+- 前端页面已显示当前模式，并支持直接切换 mock / real
+- 切到 `real` 后，系统会显式显示“等待 NUC 首包”
+- real 模式下如果状态上送超时，会标记为离线并提示恢复中
+- NUC 状态恢复后，页面会自动回到在线状态
+- NUC bridge 命令异常会写日志、写告警，并同步反映到当前状态
+- WebSocket 断开后前端会自动重连，并在重连后重新拉取最新状态
 
 ### 验收
 

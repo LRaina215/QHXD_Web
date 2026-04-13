@@ -82,7 +82,7 @@ class MockStateService:
             received_at=self._timestamp(),
             detail=(
                 f"已切换到 {request.mode} 模式。"
-                "当前阶段仅冻结契约，未接入真实 NUC 通信，状态仍由本地占位实现驱动。"
+                "mock 模式仍由本地占位实现驱动；real 模式下任务与状态桥接将切换到 NUC。"
             ),
         )
 

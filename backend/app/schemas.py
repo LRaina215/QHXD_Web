@@ -12,6 +12,7 @@ TaskTypeValue = Literal["placeholder", "go_to_waypoint", "start_patrol", "return
 TaskStateValue = Literal["idle", "pending", "running", "paused", "completed", "failed", "cancelled"]
 SensorStatusValue = Literal["mock", "nominal", "warning", "fault", "offline"]
 AlertLevelValue = Literal["info", "warning", "error", "critical"]
+MissionCommandValue = Literal["go_to_waypoint", "start_patrol", "pause_task", "resume_task", "return_home"]
 
 
 class ContractModel(BaseModel):
@@ -174,6 +175,28 @@ class NucStateUpdateResult(ContractModel):
 class NucStateUpdateResponse(ContractModel):
     success: bool = Field(default=True)
     data: NucStateUpdateResult
+
+
+class NucMissionCommandRequest(ContractModel):
+    command: MissionCommandValue = Field(description="转发到 NUC 的命令名称")
+    source: str = Field(default="web", description="命令来源")
+    requested_by: str | None = Field(default=None, description="命令发起人")
+    payload: dict[str, JsonScalar] = Field(default_factory=dict, description="命令参数")
+
+
+class NucMissionCommandResult(ContractModel):
+    accepted: bool = Field(description="NUC 是否已受理该命令")
+    command: MissionCommandValue = Field(description="NUC 已处理的命令名称")
+    task_status: TaskStatus
+    current_goal: str | None = Field(default=None, description="命令生效后的当前目标点")
+    nav_state: NavStateValue | None = Field(default=None, description="命令生效后的导航状态")
+    received_at: datetime = Field(description="NUC 命令接收时间")
+    detail: str = Field(description="NUC 返回的命令处理说明")
+
+
+class NucMissionCommandResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: NucMissionCommandResult
 
 
 class CommandLogEntry(ContractModel):

@@ -189,6 +189,15 @@ h2 {
   gap: 12px;
 }
 
+.compact-row {
+  margin-top: 12px;
+}
+
+.compact-row button {
+  flex: 1;
+  min-width: 110px;
+}
+
 button {
   border: none;
   border-radius: 10px;

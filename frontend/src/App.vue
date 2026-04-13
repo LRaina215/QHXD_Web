@@ -33,6 +33,10 @@ type RobotState = {
     humidity_percent: number
     status: string
   }
+  system_mode: {
+    mode: string
+    updated_at: string
+  }
   updated_at: string
 }
 
@@ -64,24 +68,53 @@ type MissionActionResponse = {
   }
 }
 
+type ModeSwitchResponse = {
+  success: boolean
+  data: {
+    accepted: boolean
+    detail: string
+    system_mode: {
+      mode: string
+    }
+  }
+}
+
 const state = ref<RobotState | null>(null)
 const alerts = ref<AlertEvent[]>([])
 const waypointId = ref('mock-waypoint')
 const connectionLabel = ref('连接中')
 const actionMessage = ref('等待命令')
 const isSending = ref(false)
+const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
 const shouldReconnect = ref(true)
 
 let socket: WebSocket | null = null
 let alertsTimer: number | null = null
+let stateTimer: number | null = null
 
 const onlineStatus = computed(() => {
   if (!state.value) {
     return '未连接'
   }
 
-  return wsConnected.value && state.value.device_status.online ? '在线' : '离线'
+  if (state.value.system_mode.mode === 'mock') {
+    return wsConnected.value ? '在线（Mock）' : '离线（Mock）'
+  }
+
+  if (state.value.device_status.fault_code === 'waiting-for-real-state') {
+    return '等待 NUC'
+  }
+
+  if (state.value.device_status.fault_code === 'nuc-state-timeout') {
+    return 'NUC 状态超时'
+  }
+
+  if (state.value.device_status.fault_code === 'nuc-bridge-unreachable') {
+    return 'NUC Bridge 离线'
+  }
+
+  return wsConnected.value && state.value.device_status.online ? '在线（Real）' : '离线（Real）'
 })
 
 const currentTaskLabel = computed(() => {
@@ -93,6 +126,38 @@ const currentTaskLabel = computed(() => {
 })
 
 const currentGoalLabel = computed(() => state.value?.nav_status.current_goal ?? '未设置')
+
+const systemModeLabel = computed(() => {
+  if (!state.value) {
+    return '--'
+  }
+
+  return state.value.system_mode.mode.toUpperCase()
+})
+
+const transportStatusLabel = computed(() => {
+  if (!state.value) {
+    return '等待状态'
+  }
+
+  if (state.value.system_mode.mode === 'mock') {
+    return '本地 mock generator'
+  }
+
+  if (state.value.device_status.fault_code === 'waiting-for-real-state') {
+    return '已切到 real，等待 NUC 首包'
+  }
+
+  if (state.value.device_status.fault_code === 'nuc-state-timeout') {
+    return 'NUC 状态超时，等待恢复'
+  }
+
+  if (state.value.device_status.fault_code === 'nuc-bridge-unreachable') {
+    return 'NUC 命令桥异常'
+  }
+
+  return 'NUC real bridge 已连接'
+})
 
 const batteryLabel = computed(() => {
   if (!state.value) {
@@ -124,6 +189,9 @@ onMounted(async () => {
   alertsTimer = window.setInterval(() => {
     void loadAlerts()
   }, 5000)
+  stateTimer = window.setInterval(() => {
+    void loadState()
+  }, 4000)
 })
 
 onBeforeUnmount(() => {
@@ -135,6 +203,10 @@ onBeforeUnmount(() => {
 
   if (alertsTimer !== null) {
     window.clearInterval(alertsTimer)
+  }
+
+  if (stateTimer !== null) {
+    window.clearInterval(stateTimer)
   }
 })
 
@@ -173,6 +245,7 @@ function connectWebSocket() {
   socket.onopen = () => {
     wsConnected.value = true
     connectionLabel.value = '实时流已连接'
+    void loadState()
   }
 
   socket.onmessage = (event) => {
@@ -224,6 +297,35 @@ async function sendMission(
   }
 }
 
+async function switchMode(mode: 'mock' | 'real') {
+  isSwitchingMode.value = true
+
+  try {
+    const response = await fetch('/api/system/mode/switch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        mode,
+        source: 'web',
+        requested_by: 'dashboard',
+      }),
+    })
+    if (!response.ok) {
+      throw new Error('模式切换失败')
+    }
+
+    const payload = (await response.json()) as ModeSwitchResponse
+    actionMessage.value = payload.data.detail
+    await Promise.all([loadState(), loadAlerts()])
+  } catch (error) {
+    actionMessage.value = error instanceof Error ? error.message : '模式切换失败'
+  } finally {
+    isSwitchingMode.value = false
+  }
+}
+
 function formatNumber(value: number | null | undefined, suffix = '') {
   if (value === null || value === undefined) {
     return '--'
@@ -241,23 +343,47 @@ function formatTime(value: string) {
   <main class="dashboard">
     <section class="panel hero-panel">
       <div>
-        <p class="eyebrow">Phase 1 Dashboard</p>
+        <p class="eyebrow">Phase 2 Dashboard</p>
         <h1>RK3588 状态中台</h1>
         <p class="description">
-          面向第一阶段联调用的最小看板，使用 mock backend 数据展示状态、告警和任务入口。
+          面向 Phase 1 / Phase 2 联调用的最小看板，支持 mock 中台与 NUC real bridge 的状态展示和任务入口。
         </p>
       </div>
       <div class="stream-status">
         <span class="status-dot" :class="{ live: wsConnected }"></span>
         <strong>{{ connectionLabel }}</strong>
         <small>最近更新时间 {{ lastUpdatedLabel }}</small>
+        <small>{{ transportStatusLabel }}</small>
+        <div class="button-row compact-row">
+          <button
+            :disabled="isSwitchingMode || state?.system_mode.mode === 'mock'"
+            class="secondary"
+            @click="switchMode('mock')"
+          >
+            切到 Mock
+          </button>
+          <button
+            :disabled="isSwitchingMode || state?.system_mode.mode === 'real'"
+            @click="switchMode('real')"
+          >
+            切到 Real
+          </button>
+        </div>
       </div>
     </section>
 
     <section class="status-grid">
       <article class="card">
+        <span class="card-label">系统模式</span>
+        <strong>{{ systemModeLabel }}</strong>
+      </article>
+      <article class="card">
         <span class="card-label">在线状态</span>
         <strong>{{ onlineStatus }}</strong>
+      </article>
+      <article class="card">
+        <span class="card-label">数据链路</span>
+        <strong>{{ transportStatusLabel }}</strong>
       </article>
       <article class="card">
         <span class="card-label">当前任务</span>
@@ -347,6 +473,10 @@ function formatTime(value: string) {
           <div class="detail-item">
             <span>传感器状态</span>
             <strong>{{ state?.env_sensor.status ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>故障码</span>
+            <strong>{{ state?.device_status.fault_code ?? '--' }}</strong>
           </div>
           <div class="detail-item">
             <span>导航状态</span>

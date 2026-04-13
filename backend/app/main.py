@@ -20,6 +20,8 @@ from app.schemas import (
     StartPatrolRequest,
     StateLatestResponse,
 )
+from app.services.mission_gateway import mission_gateway
+from app.services.mode_manager import mode_manager
 from app.services.mock_state import mock_state_service
 from app.services.nuc_adapter import nuc_adapter
 from app.services.state_store import state_store
@@ -35,17 +37,30 @@ async def _mock_state_loop() -> None:
         await asyncio.sleep(1)
 
 
+async def _real_health_loop() -> None:
+    while True:
+        state = mode_manager.poll_real_health()
+        if state is not None:
+            await ws_manager.broadcast_state(state)
+        await asyncio.sleep(1)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     mock_state_service.initialize()
     state_store.initialize(mock_state_service.get_latest_state())
+    mode_manager.initialize(state_store.get_latest_state())
     state_task = asyncio.create_task(_mock_state_loop())
+    health_task = asyncio.create_task(_real_health_loop())
     try:
         yield
     finally:
         state_task.cancel()
+        health_task.cancel()
         with suppress(asyncio.CancelledError):
             await state_task
+        with suppress(asyncio.CancelledError):
+            await health_task
 
 
 app = FastAPI(title="RK3588 Middleware", version="0.1.0", lifespan=lifespan)
@@ -78,55 +93,51 @@ async def get_current_task() -> CurrentTaskResponse:
 
 @app.post("/api/mission/go_to_waypoint", response_model=MissionActionResponse)
 async def go_to_waypoint(request: GoToWaypointRequest) -> MissionActionResponse:
-    response = MissionActionResponse(data=mock_state_service.go_to_waypoint(request))
-    state = state_store.publish_mock_state(mock_state_service.get_latest_state())
+    result, state = mission_gateway.go_to_waypoint(request)
     if state is not None:
         await ws_manager.broadcast_state(state)
-    return response
+    return MissionActionResponse(data=result)
 
 
 @app.post("/api/mission/start_patrol", response_model=MissionActionResponse)
 async def start_patrol(request: StartPatrolRequest) -> MissionActionResponse:
-    response = MissionActionResponse(data=mock_state_service.start_patrol(request))
-    state = state_store.publish_mock_state(mock_state_service.get_latest_state())
+    result, state = mission_gateway.start_patrol(request)
     if state is not None:
         await ws_manager.broadcast_state(state)
-    return response
+    return MissionActionResponse(data=result)
 
 
 @app.post("/api/mission/pause", response_model=MissionActionResponse)
 async def pause_mission(request: PauseMissionRequest) -> MissionActionResponse:
-    response = MissionActionResponse(data=mock_state_service.pause(request))
-    state = state_store.publish_mock_state(mock_state_service.get_latest_state())
+    result, state = mission_gateway.pause(request)
     if state is not None:
         await ws_manager.broadcast_state(state)
-    return response
+    return MissionActionResponse(data=result)
 
 
 @app.post("/api/mission/resume", response_model=MissionActionResponse)
 async def resume_mission(request: ResumeMissionRequest) -> MissionActionResponse:
-    response = MissionActionResponse(data=mock_state_service.resume(request))
-    state = state_store.publish_mock_state(mock_state_service.get_latest_state())
+    result, state = mission_gateway.resume(request)
     if state is not None:
         await ws_manager.broadcast_state(state)
-    return response
+    return MissionActionResponse(data=result)
 
 
 @app.post("/api/mission/return_home", response_model=MissionActionResponse)
 async def return_home(request: ReturnHomeRequest) -> MissionActionResponse:
-    response = MissionActionResponse(data=mock_state_service.return_home(request))
-    state = state_store.publish_mock_state(mock_state_service.get_latest_state())
+    result, state = mission_gateway.return_home(request)
     if state is not None:
         await ws_manager.broadcast_state(state)
-    return response
+    return MissionActionResponse(data=result)
 
 
 @app.post("/api/system/mode/switch", response_model=ModeSwitchResponse)
 async def switch_system_mode(request: ModeSwitchRequest) -> ModeSwitchResponse:
     response = ModeSwitchResponse(data=mock_state_service.switch_system_mode(request))
-    latest_state = state_store.switch_mode(response.data.system_mode)
-    if response.data.system_mode.mode == "mock":
-        latest_state = state_store.publish_mock_state(mock_state_service.get_latest_state()) or latest_state
+    latest_state = mode_manager.apply_mode_switch(
+        response.data.system_mode,
+        mock_state_service.get_latest_state(),
+    )
     await ws_manager.broadcast_state(latest_state)
     return response
 
@@ -135,7 +146,7 @@ async def switch_system_mode(request: ModeSwitchRequest) -> ModeSwitchResponse:
 async def ingest_nuc_state(request: NucStateUpdateRequest) -> NucStateUpdateResponse:
     result, latest_state = nuc_adapter.ingest_state_update(request)
     if latest_state is not None:
-        await ws_manager.broadcast_state(latest_state)
+        await ws_manager.broadcast_state(mode_manager.record_real_state(latest_state))
     return NucStateUpdateResponse(data=result)
 
 
