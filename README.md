@@ -158,3 +158,83 @@ python3 -m unittest discover -s tests -v
 - WebSocket 会推送变化中的 mock 状态
 - mission 按钮会调用后端接口并更新页面
 - SQLite 数据库文件可创建，命令日志和告警可持久化
+
+## Phase 2 联调说明
+
+当前仓库在 Phase 2 已支持：
+
+- `mock / real` 模式切换
+- `NUC -> RK3588` 实时状态上送
+- `RK3588 -> NUC` mission bridge
+- 真实状态通过现有 REST / WebSocket / Dashboard 反馈到前端
+
+### Round 4 问题根因结论
+
+Round 4 联调中曾出现过这样一种现象：
+
+- NUC 状态上送正常
+- NUC mission 服务本身正常
+- 但 RK3588 的 public mission API 返回 `accepted=false`，并提示无法连接 NUC
+
+最终确认根因不是 NUC 功能缺失，而是：
+
+- **RK3588 正式运行实例启动时，没有带上正确的 NUC bridge 配置**
+
+也就是说，问题出在 **RK3588 后端启动方式/启动环境变量未对齐**，而不是 NUC 没有实现接口。
+
+### RK3588 后端正确启动方式
+
+如果要进行 Phase 2 的真实联调，RK3588 后端启动时需要显式带上 NUC mission 服务地址。
+
+示例：
+
+```bash
+export NUC_BASE_URL=http://192.168.10.3:8090
+export NUC_MISSION_PATH=/api/internal/rk3588/mission
+
+cd backend
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+如果使用 `systemd` 或其他守护方式启动，也需要确保等价配置已经写入服务环境：
+
+```ini
+Environment="NUC_BASE_URL=http://192.168.10.3:8090"
+Environment="NUC_MISSION_PATH=/api/internal/rk3588/mission"
+```
+
+否则会出现：
+
+- `POST /api/mission/go_to_waypoint`
+- `POST /api/mission/pause`
+- `POST /api/mission/return_home`
+
+这些 public mission API 无法正确桥接到 NUC 的情况。
+
+### Phase 2 启动后的最小确认
+
+1. 切到 `real` 模式：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/system/mode/switch \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"real","source":"integration-test","requested_by":"operator"}'
+```
+
+2. 直接确认 RK3588 能访问 NUC mission 服务：
+
+```bash
+curl --noproxy '*' -X POST http://192.168.10.3:8090/api/internal/rk3588/mission \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"go_to_waypoint","source":"rk3588-direct-check","requested_by":"operator","payload":{"waypoint_id":"wp-check-001"}}'
+```
+
+3. 再确认 RK3588 public mission API 已桥接成功：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/mission/go_to_waypoint \
+  -H 'Content-Type: application/json' \
+  -d '{"waypoint_id":"wp-check-001","source":"integration-test","requested_by":"operator"}'
+```
+
+如果第 2 步成功但第 3 步失败，优先检查的不是 NUC 代码，而是 RK3588 当前运行实例是否使用了正确的 `NUC_BASE_URL` 和 `NUC_MISSION_PATH`。
