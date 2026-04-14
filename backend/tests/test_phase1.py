@@ -207,6 +207,23 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(latest_state.device_status.fault_code, "waiting-for-real-state")
         self.assertEqual(latest_state.nav_status.state, "offline")
 
+    async def test_switching_back_to_mock_restores_mock_state_contract(self) -> None:
+        await main_module.switch_system_mode(
+            ModeSwitchRequest(mode="real", source="test", requested_by="unittest")
+        )
+
+        response = await main_module.switch_system_mode(
+            ModeSwitchRequest(mode="mock", source="test", requested_by="unittest")
+        )
+        latest_state = state_store.get_latest_state()
+
+        self.assertTrue(response.success)
+        self.assertEqual(response.data.system_mode.mode, "mock")
+        self.assertEqual(latest_state.system_mode.mode, "mock")
+        self.assertTrue(latest_state.device_status.online)
+        self.assertEqual(latest_state.device_status.fault_code, None)
+        self.assertEqual(latest_state.env_sensor.status, "mock")
+
     async def test_nuc_state_ingest_updates_shared_state_in_real_mode(self) -> None:
         await main_module.switch_system_mode(
             ModeSwitchRequest(mode="real", source="test", requested_by="unittest")

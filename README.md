@@ -1,60 +1,40 @@
-# RK3588 Middleware Phase 1
+# RK3588 Middleware Phase 2
 
 ## 项目目的
 
-本项目是 RK3588 车载交互与状态中台的第一阶段空壳工程。
-当前目标是提供一个可运行、可联调、可 review 的最小前后端骨架，用 mock 数据打通：
+本项目用于把 RK3588 做成 RoboMaster 车载系统的交互与状态中台。
 
-- 后端 API
-- WebSocket 状态推送
-- 前端 Dashboard 展示
-- 基础 mission 命令入口
-- 本地 SQLite 持久化
+当前已完成 Phase 2 的核心目标：
 
-第一阶段不接入真实 NUC、真实 RT-Thread、真实语音或真实视频。
+- 保留 Phase 1 的 mock 中台能力
+- 接入 `NUC -> RK3588` 的真实状态上送
+- 接入 `RK3588 -> NUC` 的 mission bridge
+- 让 Dashboard 通过 REST / WebSocket 观察 mock 与 real 两种模式
 
-## 当前 Phase 1 范围
+当前范围仍然只覆盖 Phase 2：
 
-- FastAPI 后端骨架
-- Vue 3 + TypeScript + Vite 前端骨架
-- 单页 Dashboard 验收版
-- `GET /health`
-- 状态查询、告警查询、当前任务查询
-- mission mock 接口：
-  - `POST /api/mission/go_to_waypoint`
-  - `POST /api/mission/start_patrol`
-  - `POST /api/mission/pause`
-  - `POST /api/mission/resume`
-  - `POST /api/mission/return_home`
-- `WS /ws/state` mock 实时状态流
-- SQLite 本地持久化：
-  - command logs
-  - recent alerts
-  - state snapshots
+- 不接 RT-Thread 直连
+- 不做语音、图传、视觉增强能力
+- 不扩展到多页面复杂前端
 
-当前前端以单页 Dashboard 为准，独立的 Mission / Devices / Logs 页面留到下一阶段补强。
-
-## 运行方式
+## 快速运行
 
 ### 后端
 
 ```bash
 cd backend
 python3 -m pip install -r requirements.txt
-python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-启动后可验证：
+最小检查：
 
 ```bash
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/api/state/latest
-curl http://127.0.0.1:8000/api/alerts
-curl http://127.0.0.1:8000/api/tasks/current
-curl http://127.0.0.1:8000/api/commands/logs
 ```
 
-数据库文件默认生成在：
+数据库默认写入：
 
 ```text
 backend/data/rk3588_phase1.db
@@ -74,117 +54,32 @@ npm run dev -- --host 0.0.0.0 --port 5173
 http://127.0.0.1:5173
 ```
 
-说明：
+开发态默认把 `/api` 和 `/ws` 代理到 `http://127.0.0.1:8000`。
 
-- 开发态通过 `vite` 代理把 `/api` 和 `/ws` 转发到 `http://127.0.0.1:8000`
-- 启动前端前，请先启动后端
+## 如何使用 Mock 模式
 
-## 开发说明
+默认启动后即可直接使用 mock 模式。
 
-### Mock 数据来源
+在 mock 模式下：
 
-当前所有 mock 状态都来自：
+- 状态来自 [backend/app/services/mock_state.py](/home/robomaster/QHXD/backend/app/services/mock_state.py)
+- 页面会显示 `MOCK`
+- mission 接口走本地 mock 流程
+- WebSocket 会持续推送本地生成的状态
 
-- [backend/app/services/mock_state.py](/home/robomaster/QHXD/backend/app/services/mock_state.py)
-
-该文件负责：
-
-- 定时生成位姿、任务、电量、环境传感器等 mock 状态
-- 生成最近告警
-- 生成 mission mock 处理结果
-- 将状态和日志写入 SQLite
-
-### 未来 NUC 适配器接入点
-
-当前 `mock_state.py` 既扮演状态源，也扮演简化的状态聚合器。
-后续接入真实 NUC 时，建议在 `backend/app/services/` 下新增独立适配器，例如：
-
-- `backend/app/services/nuc_adapter.py`
-
-接入位置：
-
-- 替换或扩展 `mock_state.py` 中 `nav_status`、`task_status`、`robot_pose` 的生成逻辑
-- 保持对外 API 和 WebSocket 输出结构不变
-
-### 未来 RT-Thread 适配器接入点
-
-后续接入真实 RT-Thread 时，建议在 `backend/app/services/` 下新增独立适配器，例如：
-
-- `backend/app/services/rtthread_adapter.py`
-
-接入位置：
-
-- 替换或扩展 `mock_state.py` 中 `device_status`、`env_sensor`、急停和底层状态生成逻辑
-- 保持对外 API 和 WebSocket 输出结构不变
-
-## 最小验证
-
-### 运行检查
-
-后端启动后：
+手工切回 mock：
 
 ```bash
-curl http://127.0.0.1:8000/health
+curl -X POST http://127.0.0.1:8000/api/system/mode/switch \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"mock","source":"manual-check","requested_by":"operator"}'
 ```
 
-前端启动后：
+## 如何使用 Real 模式
 
-- 页面应显示在线状态、当前任务、当前目标、电量、急停、环境传感器和最近告警
-- 点击 mission 按钮后，状态卡片和提示文案会更新
+### 1. 正确启动 RK3588 后端
 
-### 后端自检
-
-项目内提供了一个最小 `unittest` 检查，覆盖：
-
-- `health` endpoint
-- `go_to_waypoint` mission endpoint
-- mock state tick 更新
-
-运行方式：
-
-```bash
-cd backend
-python3 -m unittest discover -s tests -v
-```
-
-## 已验证通过
-
-本仓库当前已实际验证通过：
-
-- 后端可启动
-- `GET /health` 返回成功
-- 前端可启动
-- Dashboard 可渲染当前状态
-- WebSocket 会推送变化中的 mock 状态
-- mission 按钮会调用后端接口并更新页面
-- SQLite 数据库文件可创建，命令日志和告警可持久化
-
-## Phase 2 联调说明
-
-当前仓库在 Phase 2 已支持：
-
-- `mock / real` 模式切换
-- `NUC -> RK3588` 实时状态上送
-- `RK3588 -> NUC` mission bridge
-- 真实状态通过现有 REST / WebSocket / Dashboard 反馈到前端
-
-### Round 4 问题根因结论
-
-Round 4 联调中曾出现过这样一种现象：
-
-- NUC 状态上送正常
-- NUC mission 服务本身正常
-- 但 RK3588 的 public mission API 返回 `accepted=false`，并提示无法连接 NUC
-
-最终确认根因不是 NUC 功能缺失，而是：
-
-- **RK3588 正式运行实例启动时，没有带上正确的 NUC bridge 配置**
-
-也就是说，问题出在 **RK3588 后端启动方式/启动环境变量未对齐**，而不是 NUC 没有实现接口。
-
-### RK3588 后端正确启动方式
-
-如果要进行 Phase 2 的真实联调，RK3588 后端启动时需要显式带上 NUC mission 服务地址。
+如果要桥接 NUC mission 服务，RK3588 后端必须带上正确的环境变量。
 
 示例：
 
@@ -196,32 +91,35 @@ cd backend
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-如果使用 `systemd` 或其他守护方式启动，也需要确保等价配置已经写入服务环境：
+这一步非常关键。Round 3 / Round 4 联调中出现过：
 
-```ini
-Environment="NUC_BASE_URL=http://192.168.10.3:8090"
-Environment="NUC_MISSION_PATH=/api/internal/rk3588/mission"
-```
+- NUC 状态上送正常
+- NUC mission 服务正常
+- 但 RK3588 public mission API 返回 `accepted=false`
 
-否则会出现：
+最终确认根因是：
 
-- `POST /api/mission/go_to_waypoint`
-- `POST /api/mission/pause`
-- `POST /api/mission/return_home`
+- **RK3588 正式运行实例没有带着正确的 `NUC_BASE_URL` / `NUC_MISSION_PATH` 启动**
 
-这些 public mission API 无法正确桥接到 NUC 的情况。
+也就是说，这类问题优先检查 RK3588 启动配置，而不是先怀疑 NUC 功能缺失。
 
-### Phase 2 启动后的最小确认
-
-1. 切到 `real` 模式：
+### 2. 切换到 real 模式
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/system/mode/switch \
   -H 'Content-Type: application/json' \
-  -d '{"mode":"real","source":"integration-test","requested_by":"operator"}'
+  -d '{"mode":"real","source":"manual-check","requested_by":"operator"}'
 ```
 
-2. 直接确认 RK3588 能访问 NUC mission 服务：
+切到 real 后，如果还没收到 NUC 首包，页面和状态会显示：
+
+- `system_mode.mode=real`
+- `device_status.online=false`
+- `device_status.fault_code=waiting-for-real-state`
+
+### 3. 确认 NUC 接口直连正常
+
+先从 RK3588 直接打一次 NUC mission 服务：
 
 ```bash
 curl --noproxy '*' -X POST http://192.168.10.3:8090/api/internal/rk3588/mission \
@@ -229,12 +127,176 @@ curl --noproxy '*' -X POST http://192.168.10.3:8090/api/internal/rk3588/mission 
   -d '{"command":"go_to_waypoint","source":"rk3588-direct-check","requested_by":"operator","payload":{"waypoint_id":"wp-check-001"}}'
 ```
 
-3. 再确认 RK3588 public mission API 已桥接成功：
+如果这里成功，再测试 RK3588 public mission API：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/mission/go_to_waypoint \
   -H 'Content-Type: application/json' \
-  -d '{"waypoint_id":"wp-check-001","source":"integration-test","requested_by":"operator"}'
+  -d '{"waypoint_id":"wp-check-001","source":"manual-check","requested_by":"operator"}'
 ```
 
-如果第 2 步成功但第 3 步失败，优先检查的不是 NUC 代码，而是 RK3588 当前运行实例是否使用了正确的 `NUC_BASE_URL` 和 `NUC_MISSION_PATH`。
+### 4. NUC 状态上送入口
+
+NUC 的真实状态通过这个接口进入 RK3588：
+
+```text
+POST /api/internal/nuc/state
+```
+
+进入后会写入共享状态，再通过：
+
+- `GET /api/state/latest`
+- `GET /api/tasks/current`
+- `WS /ws/state`
+- Dashboard
+
+统一对外可见。
+
+## NUC 适配器接入点
+
+当前 NUC 相关逻辑主要在这些文件：
+
+- [backend/app/services/nuc_adapter.py](/home/robomaster/QHXD/backend/app/services/nuc_adapter.py)
+- [backend/app/services/state_store.py](/home/robomaster/QHXD/backend/app/services/state_store.py)
+- [backend/app/services/mission_gateway.py](/home/robomaster/QHXD/backend/app/services/mission_gateway.py)
+- [backend/app/services/mode_manager.py](/home/robomaster/QHXD/backend/app/services/mode_manager.py)
+
+职责分工：
+
+- `nuc_adapter.py`
+  负责 NUC 状态接入和 mission bridge
+- `state_store.py`
+  负责保存当前共享状态
+- `mission_gateway.py`
+  负责 mock / real 命令分流
+- `mode_manager.py`
+  负责模式切换、离线判定、恢复判定和 bridge 错误暴露
+
+## 开发调试说明
+
+### 状态流
+
+mock 模式：
+
+```text
+mock_state_service.tick()
+-> state_store
+-> REST / WS / Dashboard
+```
+
+real 模式：
+
+```text
+NUC
+-> POST /api/internal/nuc/state
+-> nuc_adapter
+-> state_store
+-> REST / WS / Dashboard
+```
+
+### 命令流
+
+mock 模式：
+
+```text
+Frontend
+-> /api/mission/*
+-> mission_gateway
+-> mock_state_service
+-> state_store
+-> REST / WS / Dashboard
+```
+
+real 模式：
+
+```text
+Frontend
+-> /api/mission/*
+-> mission_gateway
+-> nuc_adapter.forward_mission_command()
+-> NUC /api/internal/rk3588/mission
+-> NUC 状态回传 /api/internal/nuc/state
+-> state_store
+-> REST / WS / Dashboard
+```
+
+### 常见故障点
+
+1. `real` 模式下命令返回 `accepted=false`
+   先检查 RK3588 是否用正确的 `NUC_BASE_URL` / `NUC_MISSION_PATH` 启动。
+
+2. 页面一直显示“等待 NUC”
+   说明已经切到 `real`，但 NUC 还没有向 `/api/internal/nuc/state` 发首包。
+
+3. 页面显示 `nuc-state-timeout`
+   说明 NUC 实时状态上送超过超时阈值未更新。
+
+4. 页面显示 `nuc-bridge-unreachable`
+   说明 RK3588 调 NUC mission 服务失败，优先查 NUC 监听地址、端口和 RK3588 启动配置。
+
+5. RK3588 直连 NUC 失败
+   先在 NUC 上确认 mission 服务是否真的监听在 `0.0.0.0:8090` 或 `192.168.10.3:8090`。
+
+## 最小验证
+
+### 后端自检
+
+当前最小 `unittest` 已覆盖：
+
+- `GET /health`
+- 一个 mission endpoint：`go_to_waypoint`
+- 模式切换：`POST /api/system/mode/switch`
+- real 模式下命令转发与失败返回
+
+运行方式：
+
+```bash
+cd backend
+python3 -m unittest discover -s tests -v
+```
+
+### 手工检查
+
+1. 健康检查：
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+2. 模式切换：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/system/mode/switch \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"mock","source":"manual-check","requested_by":"operator"}'
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/system/mode/switch \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"real","source":"manual-check","requested_by":"operator"}'
+```
+
+3. 一个 mission 命令：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/mission/go_to_waypoint \
+  -H 'Content-Type: application/json' \
+  -d '{"waypoint_id":"wp-demo-001","source":"manual-check","requested_by":"operator"}'
+```
+
+4. 前端观察点：
+
+- 页面能显示 `MOCK / REAL`
+- mock / real 切换后状态变化可见
+- real 模式下能看到“等待 NUC / 在线 / 超时 / bridge 异常”等状态
+
+## 当前交接状态
+
+Phase 2 已达到可交接、可验收状态：
+
+- 后端与前端可启动
+- mock / real 两种模式都可发现、可测试
+- NUC 状态上送与 mission bridge 已打通
+- Dashboard 能观察到命令和状态反馈闭环
+- 最小自检和手工复验路径已经写入本 README
