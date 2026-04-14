@@ -152,6 +152,22 @@ POST /api/internal/nuc/state
 
 统一对外可见。
 
+### 5. NUC IMU 调试入口
+
+为了配合当前 C 板只能稳定提供 IMU 的联调阶段，RK3588 还提供了一个最小 IMU 专项链路：
+
+```text
+POST /api/internal/nuc/imu
+GET /api/imu/latest
+WS /ws/imu
+```
+
+说明：
+
+- 这条链路不改已有 `POST /api/internal/nuc/state` 契约
+- 适合 NUC 先把真实 IMU 样本独立送到 RK3588 做专项验收
+- 前端 Dashboard 已增加最小 IMU 调试卡片
+
 ## NUC 适配器接入点
 
 当前 NUC 相关逻辑主要在这些文件：

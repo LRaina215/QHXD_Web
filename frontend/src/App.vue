@@ -23,14 +23,14 @@ type RobotState = {
     source: string
   }
   device_status: {
-    battery_percent: number
+    battery_percent: number | null
     emergency_stop: boolean
     fault_code: string | null
     online: boolean
   }
   env_sensor: {
-    temperature_c: number
-    humidity_percent: number
+    temperature_c: number | null
+    humidity_percent: number | null
     status: string
   }
   system_mode: {
@@ -79,17 +79,51 @@ type ModeSwitchResponse = {
   }
 }
 
+type ImuEnvelope = {
+  source: string
+  updated_at: string
+  imu: {
+    frame_id: string
+    timestamp: string
+    orientation: {
+      x: number
+      y: number
+      z: number
+      w: number
+    }
+    angular_velocity: {
+      x: number
+      y: number
+      z: number
+    }
+    linear_acceleration: {
+      x: number
+      y: number
+      z: number
+    }
+  }
+}
+
+type ImuResponse = {
+  success: boolean
+  data: ImuEnvelope | null
+}
+
 const state = ref<RobotState | null>(null)
 const alerts = ref<AlertEvent[]>([])
+const imu = ref<ImuEnvelope | null>(null)
 const waypointId = ref('mock-waypoint')
 const connectionLabel = ref('连接中')
+const imuConnectionLabel = ref('IMU 流连接中')
 const actionMessage = ref('等待命令')
 const isSending = ref(false)
 const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
+const imuWsConnected = ref(false)
 const shouldReconnect = ref(true)
 
 let socket: WebSocket | null = null
+let imuSocket: WebSocket | null = null
 let alertsTimer: number | null = null
 let stateTimer: number | null = null
 
@@ -183,14 +217,23 @@ const lastUpdatedLabel = computed(() => {
   return formatTime(state.value.updated_at)
 })
 
+const imuUpdatedLabel = computed(() => {
+  if (!imu.value) {
+    return '--'
+  }
+
+  return formatTime(imu.value.updated_at)
+})
+
 onMounted(async () => {
-  await Promise.all([loadState(), loadAlerts()])
+  await Promise.all([loadState(), loadAlerts(), loadImu()])
   connectWebSocket()
+  connectImuWebSocket()
   alertsTimer = window.setInterval(() => {
     void loadAlerts()
   }, 5000)
   stateTimer = window.setInterval(() => {
-    void loadState()
+    void Promise.all([loadState(), loadImu()])
   }, 4000)
 })
 
@@ -199,6 +242,10 @@ onBeforeUnmount(() => {
 
   if (socket) {
     socket.close()
+  }
+
+  if (imuSocket) {
+    imuSocket.close()
   }
 
   if (alertsTimer !== null) {
@@ -238,6 +285,20 @@ async function loadAlerts() {
   }
 }
 
+async function loadImu() {
+  try {
+    const response = await fetch('/api/imu/latest')
+    if (!response.ok) {
+      throw new Error('IMU 接口不可用')
+    }
+
+    const payload = (await response.json()) as ImuResponse
+    imu.value = payload.data
+  } catch {
+    imu.value = null
+  }
+}
+
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   socket = new WebSocket(`${protocol}://${window.location.host}/ws/state`)
@@ -265,6 +326,36 @@ function connectWebSocket() {
 
   socket.onerror = () => {
     connectionLabel.value = '实时流异常'
+  }
+}
+
+function connectImuWebSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  imuSocket = new WebSocket(`${protocol}://${window.location.host}/ws/imu`)
+
+  imuSocket.onopen = () => {
+    imuWsConnected.value = true
+    imuConnectionLabel.value = 'IMU 流已连接'
+    void loadImu()
+  }
+
+  imuSocket.onmessage = (event) => {
+    const payload = JSON.parse(event.data) as { type: string; data: ImuEnvelope | null }
+    if (payload.type === 'imu') {
+      imu.value = payload.data
+    }
+  }
+
+  imuSocket.onclose = () => {
+    imuWsConnected.value = false
+    imuConnectionLabel.value = 'IMU 流断开，3 秒后重连'
+    if (shouldReconnect.value) {
+      window.setTimeout(connectImuWebSocket, 3000)
+    }
+  }
+
+  imuSocket.onerror = () => {
+    imuConnectionLabel.value = 'IMU 流异常'
   }
 }
 
@@ -495,6 +586,57 @@ function formatTime(value: string) {
             </strong>
           </div>
         </div>
+      </article>
+
+      <article class="panel section-panel">
+        <div class="section-header">
+          <div>
+            <p class="section-kicker">IMU</p>
+            <h2>IMU 调试面板</h2>
+          </div>
+          <span class="hint-text">{{ imuConnectionLabel }} · 更新时间 {{ imuUpdatedLabel }}</span>
+        </div>
+
+        <div v-if="imu" class="detail-grid">
+          <div class="detail-item">
+            <span>Frame ID</span>
+            <strong>{{ imu.imu.frame_id }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>样本时间</span>
+            <strong>{{ formatTime(imu.imu.timestamp) }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>四元数</span>
+            <strong>
+              {{ formatNumber(imu.imu.orientation.x) }},
+              {{ formatNumber(imu.imu.orientation.y) }},
+              {{ formatNumber(imu.imu.orientation.z) }},
+              {{ formatNumber(imu.imu.orientation.w) }}
+            </strong>
+          </div>
+          <div class="detail-item">
+            <span>角速度</span>
+            <strong>
+              {{ formatNumber(imu.imu.angular_velocity.x) }},
+              {{ formatNumber(imu.imu.angular_velocity.y) }},
+              {{ formatNumber(imu.imu.angular_velocity.z) }}
+            </strong>
+          </div>
+          <div class="detail-item">
+            <span>线加速度</span>
+            <strong>
+              {{ formatNumber(imu.imu.linear_acceleration.x) }},
+              {{ formatNumber(imu.imu.linear_acceleration.y) }},
+              {{ formatNumber(imu.imu.linear_acceleration.z) }}
+            </strong>
+          </div>
+          <div class="detail-item">
+            <span>数据来源</span>
+            <strong>{{ imu.source }}</strong>
+          </div>
+        </div>
+        <div v-else class="empty-state">当前暂无 IMU 样本</div>
       </article>
 
       <article class="panel section-panel alerts-panel">

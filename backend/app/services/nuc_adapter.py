@@ -4,9 +4,12 @@ from datetime import datetime, timezone
 from urllib import error, request
 
 from app.schemas import (
+    ImuEnvelope,
     JsonScalar,
     MissionActionResult,
     MissionCommandValue,
+    NucImuUpdateRequest,
+    NucImuUpdateResult,
     NucMissionCommandRequest,
     NucMissionCommandResponse,
     NucStateUpdateRequest,
@@ -14,6 +17,7 @@ from app.schemas import (
     RobotState,
     TaskStatus,
 )
+from app.services.imu_store import imu_store
 from app.services.mode_manager import mode_manager
 from app.services.persistence import persistence
 from app.services.state_store import state_store
@@ -21,6 +25,40 @@ from app.services.state_store import state_store
 
 class NucAdapter:
     """Phase 2 adapter for NUC real-state ingest and mission forwarding."""
+
+    def ingest_imu_update(self, request: NucImuUpdateRequest) -> tuple[NucImuUpdateResult, ImuEnvelope | None]:
+        current_mode = state_store.get_system_mode()
+        received_at = self._timestamp()
+
+        if current_mode.mode != "real":
+            return (
+                NucImuUpdateResult(
+                    accepted=False,
+                    system_mode=current_mode,
+                    imu_updated=False,
+                    received_at=received_at,
+                    detail="当前系统处于 mock 模式，已忽略 NUC IMU 输入。",
+                ),
+                None,
+            )
+
+        latest_imu = imu_store.store(
+            ImuEnvelope(
+                source=request.source,
+                updated_at=request.updated_at,
+                imu=request.imu,
+            )
+        )
+        return (
+            NucImuUpdateResult(
+                accepted=True,
+                system_mode=current_mode,
+                imu_updated=latest_imu is not None,
+                received_at=received_at,
+                detail="已接收 NUC IMU 数据并刷新最新样本。",
+            ),
+            latest_imu,
+        )
 
     def ingest_state_update(self, request: NucStateUpdateRequest) -> tuple[NucStateUpdateResult, RobotState | None]:
         current_mode = state_store.get_system_mode()

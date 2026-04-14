@@ -96,6 +96,11 @@
 - `POST /api/internal/nuc/state` 已能稳定接收 NUC 上送的 `device_status / env_sensor`
 - 只要 NUC 在 Round 3 中把 RT-Thread 低层状态合并进上送包，RK3588 的 `/api/state/latest`、`WS /ws/state` 和 Dashboard 会继续沿用现有链路展示
 - 本轮 RK 侧重点是锁定兼容性与验收路径，不新增 endpoint
+- 结合当前现场“C 板优先可提供真实 IMU”这一约束，RK3588 已补充最小 IMU 专项链路：
+  - `POST /api/internal/nuc/imu`
+  - `GET /api/imu/latest`
+  - `WS /ws/imu`
+  - Dashboard 最小 IMU 调试卡片
 
 ---
 

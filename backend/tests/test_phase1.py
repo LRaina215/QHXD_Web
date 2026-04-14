@@ -14,15 +14,20 @@ from app.schemas import (
     DeviceStatus,
     EnvSensor,
     GoToWaypointRequest,
+    ImuSample,
     ModeSwitchRequest,
     NavStatus,
+    NucImuUpdateRequest,
     NucStateUpdateRequest,
     PauseMissionRequest,
+    QuaternionSample,
     RobotPose,
     ResumeMissionRequest,
     ReturnHomeRequest,
     TaskStatus,
+    Vector3Sample,
 )
+from app.services.imu_store import imu_store
 from app.services.mock_state import MockStateService
 from app.services.mode_manager import mode_manager
 from app.services.persistence import persistence
@@ -161,6 +166,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         main_module.mock_state_service = MockStateService()
         main_module.mock_state_service.initialize()
         state_store.initialize(main_module.mock_state_service.get_latest_state())
+        imu_store.initialize()
         mode_manager.initialize(state_store.get_latest_state())
 
     def tearDown(self) -> None:
@@ -341,6 +347,60 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(latest_response.data.env_sensor.humidity_percent)
         self.assertEqual(latest_response.data.env_sensor.status, "offline")
         self.assertEqual(latest_response.data.nav_status.current_goal, "wp-rtt-device-001")
+
+    async def test_nuc_imu_update_is_available_through_latest_imu_api(self) -> None:
+        await main_module.switch_system_mode(
+            ModeSwitchRequest(mode="real", source="test", requested_by="unittest")
+        )
+
+        response = await main_module.ingest_nuc_imu(
+            NucImuUpdateRequest(
+                source="rtt",
+                updated_at=datetime.now(timezone.utc),
+                imu=ImuSample(
+                    frame_id="gimbal_pitch_odom",
+                    timestamp=datetime.now(timezone.utc),
+                    orientation=QuaternionSample(x=0.1, y=0.2, z=0.3, w=0.9),
+                    angular_velocity=Vector3Sample(x=0.01, y=0.02, z=0.03),
+                    linear_acceleration=Vector3Sample(x=1.1, y=1.2, z=1.3),
+                ),
+            )
+        )
+        latest_imu = await main_module.get_latest_imu()
+
+        self.assertTrue(response.success)
+        self.assertTrue(response.data.accepted)
+        self.assertTrue(response.data.imu_updated)
+        self.assertIsNotNone(latest_imu.data)
+        self.assertEqual(latest_imu.data.source, "rtt")
+        self.assertEqual(latest_imu.data.imu.frame_id, "gimbal_pitch_odom")
+        self.assertEqual(latest_imu.data.imu.orientation.w, 0.9)
+        self.assertEqual(latest_imu.data.imu.angular_velocity.z, 0.03)
+
+    async def test_switching_back_to_mock_clears_latest_imu_sample(self) -> None:
+        await main_module.switch_system_mode(
+            ModeSwitchRequest(mode="real", source="test", requested_by="unittest")
+        )
+        await main_module.ingest_nuc_imu(
+            NucImuUpdateRequest(
+                source="rtt",
+                updated_at=datetime.now(timezone.utc),
+                imu=ImuSample(
+                    frame_id="imu-link",
+                    timestamp=datetime.now(timezone.utc),
+                    orientation=QuaternionSample(),
+                    angular_velocity=Vector3Sample(),
+                    linear_acceleration=Vector3Sample(),
+                ),
+            )
+        )
+
+        await main_module.switch_system_mode(
+            ModeSwitchRequest(mode="mock", source="test", requested_by="unittest")
+        )
+        latest_imu = await main_module.get_latest_imu()
+
+        self.assertIsNone(latest_imu.data)
 
     async def test_real_mode_forwards_three_commands_to_nuc_and_persists_logs(self) -> None:
         server = _FakeNucMissionServer()

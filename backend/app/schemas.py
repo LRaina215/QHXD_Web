@@ -185,6 +185,57 @@ class NucStateUpdateResponse(ContractModel):
     data: NucStateUpdateResult
 
 
+class QuaternionSample(ContractModel):
+    x: float = Field(default=0.0, description="四元数 x")
+    y: float = Field(default=0.0, description="四元数 y")
+    z: float = Field(default=0.0, description="四元数 z")
+    w: float = Field(default=1.0, description="四元数 w")
+
+
+class Vector3Sample(ContractModel):
+    x: float = Field(default=0.0, description="向量 x")
+    y: float = Field(default=0.0, description="向量 y")
+    z: float = Field(default=0.0, description="向量 z")
+
+
+class ImuSample(ContractModel):
+    frame_id: str = Field(description="IMU 坐标系")
+    timestamp: datetime = Field(description="IMU 样本时间")
+    orientation: QuaternionSample
+    angular_velocity: Vector3Sample
+    linear_acceleration: Vector3Sample
+
+
+class ImuEnvelope(ContractModel):
+    source: str = Field(default="rtt", description="IMU 来源")
+    updated_at: datetime = Field(description="IMU 更新时间")
+    imu: ImuSample
+
+
+class NucImuUpdateRequest(ContractModel):
+    source: str = Field(default="rtt", description="IMU 来源")
+    updated_at: datetime = Field(description="IMU 更新时间")
+    imu: ImuSample
+
+
+class NucImuUpdateResult(ContractModel):
+    accepted: bool = Field(description="是否已接收该 IMU 样本")
+    system_mode: SystemMode
+    imu_updated: bool = Field(description="是否已刷新最新 IMU")
+    received_at: datetime = Field(description="IMU 接收时间")
+    detail: str = Field(description="IMU 接收说明")
+
+
+class NucImuUpdateResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: NucImuUpdateResult
+
+
+class ImuLatestResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: ImuEnvelope | None
+
+
 class NucMissionCommandRequest(ContractModel):
     command: MissionCommandValue = Field(description="转发到 NUC 的命令名称")
     source: str = Field(default="web", description="命令来源")
