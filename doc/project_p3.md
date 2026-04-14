@@ -90,6 +90,13 @@
 - `GET /api/state/latest` 中 `device_status` 为真实值
 - Dashboard 上急停/电量/在线状态变化可见
 
+当前 RK 侧结论：
+
+- RK3588 公开契约无需改动
+- `POST /api/internal/nuc/state` 已能稳定接收 NUC 上送的 `device_status / env_sensor`
+- 只要 NUC 在 Round 3 中把 RT-Thread 低层状态合并进上送包，RK3588 的 `/api/state/latest`、`WS /ws/state` 和 Dashboard 会继续沿用现有链路展示
+- 本轮 RK 侧重点是锁定兼容性与验收路径，不新增 endpoint
+
 ---
 
 ### T3-4：完成 mission 到底层执行的真实闭环

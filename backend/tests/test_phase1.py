@@ -287,6 +287,61 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("alert-real-001", [alert.alert_id for alert in alerts])
         self.assertTrue(latest_state.device_status.online)
 
+    async def test_latest_state_reflects_rtt_derived_device_status_from_nuc_payload(self) -> None:
+        await main_module.switch_system_mode(
+            ModeSwitchRequest(mode="real", source="test", requested_by="unittest")
+        )
+
+        await main_module.ingest_nuc_state(
+            NucStateUpdateRequest(
+                robot_pose=RobotPose(
+                    x=8.8,
+                    y=6.6,
+                    yaw=1.1,
+                    frame_id="map",
+                    timestamp=datetime.now(timezone.utc),
+                ),
+                nav_status=NavStatus(
+                    mode="auto",
+                    state="running",
+                    current_goal="wp-rtt-device-001",
+                    remaining_distance=2.4,
+                ),
+                task_status=TaskStatus(
+                    task_id="task-rtt-device-001",
+                    task_type="go_to_waypoint",
+                    state="running",
+                    progress=55,
+                    source="nuc",
+                ),
+                device_status=DeviceStatus(
+                    battery_percent=42,
+                    emergency_stop=True,
+                    fault_code="rtt-estop-active",
+                    online=False,
+                ),
+                env_sensor=EnvSensor(
+                    temperature_c=None,
+                    humidity_percent=None,
+                    status="offline",
+                ),
+                alerts=[],
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+        latest_response = await main_module.get_latest_state()
+
+        self.assertTrue(latest_response.success)
+        self.assertEqual(latest_response.data.device_status.battery_percent, 42)
+        self.assertTrue(latest_response.data.device_status.emergency_stop)
+        self.assertEqual(latest_response.data.device_status.fault_code, "rtt-estop-active")
+        self.assertFalse(latest_response.data.device_status.online)
+        self.assertIsNone(latest_response.data.env_sensor.temperature_c)
+        self.assertIsNone(latest_response.data.env_sensor.humidity_percent)
+        self.assertEqual(latest_response.data.env_sensor.status, "offline")
+        self.assertEqual(latest_response.data.nav_status.current_goal, "wp-rtt-device-001")
+
     async def test_real_mode_forwards_three_commands_to_nuc_and_persists_logs(self) -> None:
         server = _FakeNucMissionServer()
         server.start()

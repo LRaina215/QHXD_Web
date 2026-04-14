@@ -38,6 +38,9 @@ class NucAdapter:
                 None,
             )
 
+        # Phase 3 继续保持 RK3588 公开契约稳定：
+        # NUC 已归一化后的 device_status / env_sensor 直接进入共享状态，
+        # RK3588 不在这里新增 RT-Thread 平行字段或做二次拆分。
         next_state = RobotState(
             robot_pose=request.robot_pose,
             nav_status=request.nav_status,
