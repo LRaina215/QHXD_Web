@@ -91,6 +91,11 @@ type ImuEnvelope = {
       z: number
       w: number
     }
+    euler_deg?: {
+      yaw: number
+      pitch: number
+      roll: number
+    } | null
     angular_velocity: {
       x: number
       y: number
@@ -417,12 +422,12 @@ async function switchMode(mode: 'mock' | 'real') {
   }
 }
 
-function formatNumber(value: number | null | undefined, suffix = '') {
+function formatNumber(value: number | null | undefined, suffix = '', decimals = 3) {
   if (value === null || value === undefined) {
     return '--'
   }
 
-  return `${value}${suffix}`
+  return `${value.toFixed(decimals)}${suffix}`
 }
 
 function formatTime(value: string) {
@@ -607,28 +612,37 @@ function formatTime(value: string) {
             <strong>{{ formatTime(imu.imu.timestamp) }}</strong>
           </div>
           <div class="detail-item">
+            <span>欧拉角 (deg)</span>
+            <strong v-if="imu.imu.euler_deg" class="value-block">
+              yaw={{ formatNumber(imu.imu.euler_deg.yaw) }}
+              pitch={{ formatNumber(imu.imu.euler_deg.pitch) }}
+              roll={{ formatNumber(imu.imu.euler_deg.roll) }}
+            </strong>
+            <strong v-else>--</strong>
+          </div>
+          <div class="detail-item">
             <span>四元数</span>
-            <strong>
-              {{ formatNumber(imu.imu.orientation.x) }},
-              {{ formatNumber(imu.imu.orientation.y) }},
-              {{ formatNumber(imu.imu.orientation.z) }},
-              {{ formatNumber(imu.imu.orientation.w) }}
+            <strong class="value-block">
+              x={{ formatNumber(imu.imu.orientation.x) }}
+              y={{ formatNumber(imu.imu.orientation.y) }}
+              z={{ formatNumber(imu.imu.orientation.z) }}
+              w={{ formatNumber(imu.imu.orientation.w) }}
             </strong>
           </div>
           <div class="detail-item">
             <span>角速度</span>
-            <strong>
-              {{ formatNumber(imu.imu.angular_velocity.x) }},
-              {{ formatNumber(imu.imu.angular_velocity.y) }},
-              {{ formatNumber(imu.imu.angular_velocity.z) }}
+            <strong class="value-block">
+              x={{ formatNumber(imu.imu.angular_velocity.x) }}
+              y={{ formatNumber(imu.imu.angular_velocity.y) }}
+              z={{ formatNumber(imu.imu.angular_velocity.z) }}
             </strong>
           </div>
           <div class="detail-item">
             <span>线加速度</span>
-            <strong>
-              {{ formatNumber(imu.imu.linear_acceleration.x) }},
-              {{ formatNumber(imu.imu.linear_acceleration.y) }},
-              {{ formatNumber(imu.imu.linear_acceleration.z) }}
+            <strong class="value-block">
+              x={{ formatNumber(imu.imu.linear_acceleration.x) }}
+              y={{ formatNumber(imu.imu.linear_acceleration.y) }}
+              z={{ formatNumber(imu.imu.linear_acceleration.z) }}
             </strong>
           </div>
           <div class="detail-item">

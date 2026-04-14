@@ -12,6 +12,7 @@ import app.main as main_module
 from app.schemas import (
     AlertEvent,
     DeviceStatus,
+    EulerDegSample,
     EnvSensor,
     GoToWaypointRequest,
     ImuSample,
@@ -361,6 +362,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
                     frame_id="gimbal_pitch_odom",
                     timestamp=datetime.now(timezone.utc),
                     orientation=QuaternionSample(x=0.1, y=0.2, z=0.3, w=0.9),
+                    euler_deg=EulerDegSample(yaw=12.5, pitch=-3.2, roll=0.6),
                     angular_velocity=Vector3Sample(x=0.01, y=0.02, z=0.03),
                     linear_acceleration=Vector3Sample(x=1.1, y=1.2, z=1.3),
                 ),
@@ -375,6 +377,8 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(latest_imu.data.source, "rtt")
         self.assertEqual(latest_imu.data.imu.frame_id, "gimbal_pitch_odom")
         self.assertEqual(latest_imu.data.imu.orientation.w, 0.9)
+        self.assertIsNotNone(latest_imu.data.imu.euler_deg)
+        self.assertEqual(latest_imu.data.imu.euler_deg.yaw, 12.5)
         self.assertEqual(latest_imu.data.imu.angular_velocity.z, 0.03)
 
     async def test_switching_back_to_mock_clears_latest_imu_sample(self) -> None:

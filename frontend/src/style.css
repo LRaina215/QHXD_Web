@@ -246,6 +246,12 @@ button:disabled {
   line-height: 1.4;
 }
 
+.value-block {
+  display: block;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .alert-list {
   list-style: none;
   margin: 0;

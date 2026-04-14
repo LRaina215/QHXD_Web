@@ -198,10 +198,17 @@ class Vector3Sample(ContractModel):
     z: float = Field(default=0.0, description="向量 z")
 
 
+class EulerDegSample(ContractModel):
+    yaw: float = Field(default=0.0, description="偏航角，单位 deg")
+    pitch: float = Field(default=0.0, description="俯仰角，单位 deg")
+    roll: float = Field(default=0.0, description="横滚角，单位 deg")
+
+
 class ImuSample(ContractModel):
     frame_id: str = Field(description="IMU 坐标系")
     timestamp: datetime = Field(description="IMU 样本时间")
     orientation: QuaternionSample
+    euler_deg: EulerDegSample | None = Field(default=None, description="欧拉角，单位 deg")
     angular_velocity: Vector3Sample
     linear_acceleration: Vector3Sample
 
