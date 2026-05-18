@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from app.schemas import RobotState, SystemMode
+from app.schemas import DetectionStatus, RobotState, SystemMode
 
 
 class StateStore:
@@ -24,6 +24,16 @@ class StateStore:
 
     def get_system_mode(self) -> SystemMode:
         return self._system_mode.model_copy(deep=True)
+
+    def update_detection_status(self, detection_status: DetectionStatus) -> RobotState:
+        latest_state = self.get_latest_state().model_copy(
+            update={
+                "detection_status": detection_status,
+                "updated_at": self._timestamp(),
+            }
+        )
+        self._latest_state = latest_state
+        return self.get_latest_state()
 
     def switch_mode(self, system_mode: SystemMode) -> RobotState:
         self._system_mode = system_mode.model_copy(deep=True)
@@ -51,9 +61,14 @@ class StateStore:
         return datetime.now(timezone.utc)
 
     def _store_state(self, state: RobotState) -> RobotState:
+        detection_status = state.detection_status
+        if detection_status is None and self._latest_state is not None:
+            detection_status = self._latest_state.detection_status
+
         stored_state = state.model_copy(
             update={
                 "system_mode": self.get_system_mode(),
+                "detection_status": detection_status,
             }
         )
         self._latest_state = stored_state

@@ -11,6 +11,9 @@ from pathlib import Path
 import app.main as main_module
 from app.schemas import (
     AlertEvent,
+    DetectionEvent,
+    DetectionObject,
+    DetectionStatus,
     DeviceStatus,
     EulerDegSample,
     EnvSensor,
@@ -21,12 +24,14 @@ from app.schemas import (
     NucImuUpdateRequest,
     NucStateUpdateRequest,
     PauseMissionRequest,
+    PerceptionDetectionStatusRequest,
     QuaternionSample,
     RobotPose,
     ResumeMissionRequest,
     ReturnHomeRequest,
     TaskStatus,
     Vector3Sample,
+    VoiceTextCommandRequest,
 )
 from app.services.imu_store import imu_store
 from app.services.mock_state import MockStateService
@@ -200,6 +205,89 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(logs), 1)
         self.assertEqual(logs[0].source, "test")
         self.assertEqual(logs[0].payload["waypoint_id"], "mock-waypoint")
+
+    async def test_voice_text_command_routes_to_existing_mission_gateway(self) -> None:
+        response = await main_module.text_command(
+            VoiceTextCommandRequest(
+                text="去一号点",
+                source="test-voice",
+                requested_by="unittest",
+            )
+        )
+        logs = persistence.list_command_logs()
+
+        self.assertTrue(response.success)
+        self.assertTrue(response.data.accepted)
+        self.assertEqual(response.data.intent, "go_to_waypoint")
+        self.assertEqual(response.data.command, "go_to_waypoint")
+        self.assertEqual(response.data.payload["waypoint_id"], "wp_001")
+        self.assertIsNotNone(response.data.task_status)
+        self.assertEqual(response.data.task_status.task_type, "go_to_waypoint")
+        self.assertEqual(logs[0].source, "test-voice")
+
+    async def test_voice_text_command_unknown_does_not_trigger_mission(self) -> None:
+        response = await main_module.text_command(
+            VoiceTextCommandRequest(
+                text="随便转两圈",
+                source="test-voice",
+                requested_by="unittest",
+            )
+        )
+        logs = persistence.list_command_logs()
+
+        self.assertTrue(response.success)
+        self.assertFalse(response.data.accepted)
+        self.assertTrue(response.data.need_confirm)
+        self.assertIsNone(response.data.intent)
+        self.assertEqual(len(logs), 0)
+
+    async def test_asr_text_mock_reuses_text_command_flow(self) -> None:
+        response = await main_module.asr_text_mock(
+            VoiceTextCommandRequest(
+                text="暂停任务",
+                source="asr-text-mock",
+                requested_by="unittest",
+            )
+        )
+
+        self.assertTrue(response.data.accepted)
+        self.assertEqual(response.data.intent, "pause_task")
+        self.assertEqual(response.data.command, "pause_task")
+        self.assertIsNotNone(response.data.task_status)
+        self.assertEqual(response.data.task_status.state, "paused")
+
+    async def test_detection_status_update_is_visible_in_latest_state(self) -> None:
+        response = await main_module.ingest_detection_status(
+            PerceptionDetectionStatusRequest(
+                detection_status=DetectionStatus(
+                    enabled=True,
+                    source="rk3588-rknn-yolo",
+                    model_name="custom_delivery_yolo_rk3588.rknn",
+                    frame_id="camera_front",
+                    timestamp=datetime.now(timezone.utc),
+                    objects=[
+                        DetectionObject(
+                            class_name="person",
+                            confidence=0.86,
+                            bbox_xyxy=[120, 80, 260, 360],
+                        )
+                    ],
+                    events=[
+                        DetectionEvent(
+                            event_type="person_detected",
+                            level="info",
+                            message="检测到人员目标",
+                        )
+                    ],
+                )
+            )
+        )
+        latest_state = state_store.get_latest_state()
+
+        self.assertTrue(response.data.accepted)
+        self.assertIsNotNone(latest_state.detection_status)
+        self.assertEqual(latest_state.detection_status.model_name, "custom_delivery_yolo_rk3588.rknn")
+        self.assertEqual(latest_state.detection_status.objects[0].class_name, "person")
 
     async def test_system_mode_switch_endpoint_updates_contract_state(self) -> None:
         response = await main_module.switch_system_mode(

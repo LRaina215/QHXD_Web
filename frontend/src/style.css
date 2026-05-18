@@ -244,6 +244,15 @@ button:disabled {
 .detail-item strong {
   color: #f5f7fa;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.command-result-grid {
+  margin-top: 16px;
+}
+
+.wide-detail {
+  grid-column: 1 / -1;
 }
 
 .value-block {

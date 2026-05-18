@@ -188,6 +188,83 @@ WS /ws/imu
 - `mode_manager.py`
   负责模式切换、离线判定、恢复判定和 bridge 错误暴露
 
+
+## Phase 4A 语音文本入口与视觉检测原型
+
+### 文本命令入口
+
+Phase 4A 新增了 RK3588 侧的文本任务入口，用于后续 ASR 前置调试。该入口不接入真实麦克风、ASR、LLM 或 OpenClaw，只做规则解析并复用现有 mission gateway。
+
+```text
+POST /api/voice/text_command
+POST /api/voice/asr_text_mock
+```
+
+示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/text_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"去一号点","source":"text-debug","requested_by":"operator"}'
+```
+
+支持的第一版意图：
+
+- `go_to_waypoint`：例如“去一号点”“去 201”“送到实验室”
+- `start_patrol`：例如“开始巡检”
+- `pause_task`：例如“暂停任务”
+- `resume_task`：例如“继续任务”“恢复任务”
+- `return_home`：例如“返回起点”“返航”“回家”
+- `query_status`：例如“当前状态”“现在在哪”
+
+目标点别名配置位于：
+
+```text
+backend/app/config/waypoints.json
+```
+
+未知文本或无法解析目标点时不会触发机器人任务。
+
+### 本地视觉检测状态入口
+
+Phase 4A 为后续 YOLO / RKNN 检测接入预留了可选 `detection_status`，后端启动不依赖 RKNN 环境。调试入口：
+
+```text
+POST /api/internal/perception/detection_status
+```
+
+示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/internal/perception/detection_status \
+  -H 'Content-Type: application/json' \
+  -d '{"detection_status":{"enabled":true,"source":"rk3588-rknn-yolo","model_name":"custom_delivery_yolo_rk3588.rknn","frame_id":"camera_front","timestamp":"2026-04-12T15:20:30Z","objects":[{"class_name":"person","confidence":0.86,"bbox_xyxy":[120,80,260,360]}],"events":[{"event_type":"person_detected","level":"info","message":"检测到人员目标"}]}}'
+```
+
+提交后可通过 `GET /api/state/latest` 和 `WS /ws/state` 观察 `detection_status`。Dashboard 会显示最小视觉检测状态卡片。
+
+### RKNN YOLO 独立实验
+
+RKNN 推理原型位于：
+
+```text
+experiments/rknn_yolo/
+```
+
+该目录只提交脚本、说明和占位文件，不提交 `.pt`、`.onnx`、`.rknn` 等模型文件。将外部训练并转换好的 `.rknn` 放到 `experiments/rknn_yolo/models/` 后，可运行：
+
+```bash
+cd experiments/rknn_yolo
+python3 infer_image.py \
+  --model models/custom_delivery_yolo_rk3588.rknn \
+  --image samples/test.jpg \
+  --labels labels.txt \
+  --conf 0.25 \
+  --format detection_status
+```
+
+缺模型、缺图片或缺 RKNN Runtime 时，脚本会输出明确错误，不影响主后端。
+
 ## 开发调试说明
 
 ### 状态流

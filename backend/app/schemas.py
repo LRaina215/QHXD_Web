@@ -13,6 +13,14 @@ TaskStateValue = Literal["idle", "pending", "running", "paused", "completed", "f
 SensorStatusValue = Literal["mock", "nominal", "warning", "fault", "offline"]
 AlertLevelValue = Literal["info", "warning", "error", "critical"]
 MissionCommandValue = Literal["go_to_waypoint", "start_patrol", "pause_task", "resume_task", "return_home"]
+VoiceIntentValue = Literal[
+    "go_to_waypoint",
+    "start_patrol",
+    "pause_task",
+    "resume_task",
+    "return_home",
+    "query_status",
+]
 
 
 class ContractModel(BaseModel):
@@ -78,6 +86,28 @@ class AlertEvent(ContractModel):
     acknowledged: bool = Field(default=False, description="是否已确认")
 
 
+class DetectionObject(ContractModel):
+    class_name: str = Field(description="检测类别名称")
+    confidence: float = Field(ge=0.0, le=1.0, description="检测置信度")
+    bbox_xyxy: list[float] = Field(description="目标框，格式为 [x1, y1, x2, y2]")
+
+
+class DetectionEvent(ContractModel):
+    event_type: str = Field(description="检测事件类型")
+    level: AlertLevelValue = Field(default="info", description="事件级别")
+    message: str = Field(description="事件说明")
+
+
+class DetectionStatus(ContractModel):
+    enabled: bool = Field(default=True, description="本地检测链路是否启用")
+    source: str = Field(default="rk3588-rknn-yolo", description="检测状态来源")
+    model_name: str | None = Field(default=None, description="模型文件名")
+    frame_id: str = Field(default="camera_front", description="图像坐标系或相机 ID")
+    timestamp: datetime = Field(description="检测状态更新时间")
+    objects: list[DetectionObject] = Field(default_factory=list, description="最近检测目标")
+    events: list[DetectionEvent] = Field(default_factory=list, description="检测派生事件")
+
+
 class RobotState(ContractModel):
     robot_pose: RobotPose
     nav_status: NavStatus
@@ -85,6 +115,7 @@ class RobotState(ContractModel):
     device_status: DeviceStatus
     env_sensor: EnvSensor
     system_mode: SystemMode
+    detection_status: DetectionStatus | None = Field(default=None, description="可选本地视觉检测状态")
     updated_at: datetime = Field(description="状态更新时间")
 
 
@@ -139,6 +170,28 @@ class MissionActionResult(ContractModel):
 class MissionActionResponse(ContractModel):
     success: bool = Field(default=True)
     data: MissionActionResult
+
+
+class VoiceTextCommandRequest(ContractModel):
+    text: str = Field(min_length=1, description="文本命令内容")
+    source: str = Field(default="text-debug", description="命令来源")
+    requested_by: str | None = Field(default=None, description="命令发起人")
+
+
+class VoiceCommandResult(ContractModel):
+    accepted: bool = Field(description="是否已受理或成功查询")
+    intent: VoiceIntentValue | None = Field(default=None, description="解析出的意图")
+    command: str | None = Field(default=None, description="实际任务命令或查询命令")
+    payload: dict[str, JsonScalar] = Field(default_factory=dict, description="解析出的命令参数")
+    confidence: float = Field(ge=0.0, le=1.0, description="规则解析置信度")
+    need_confirm: bool = Field(default=False, description="是否需要人工确认")
+    detail: str = Field(description="解析或执行说明")
+    task_status: TaskStatus | None = Field(default=None, description="任务执行后的任务状态")
+
+
+class VoiceCommandResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: VoiceCommandResult
 
 
 class ModeSwitchRequest(ContractModel):
@@ -241,6 +294,22 @@ class NucImuUpdateResponse(ContractModel):
 class ImuLatestResponse(ContractModel):
     success: bool = Field(default=True)
     data: ImuEnvelope | None
+
+
+class PerceptionDetectionStatusRequest(ContractModel):
+    detection_status: DetectionStatus
+
+
+class PerceptionDetectionStatusResult(ContractModel):
+    accepted: bool = Field(description="是否已接收检测状态")
+    state_updated: bool = Field(description="是否已刷新共享状态")
+    received_at: datetime = Field(description="检测状态接收时间")
+    detail: str = Field(description="检测状态处理说明")
+
+
+class PerceptionDetectionStatusResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: PerceptionDetectionStatusResult
 
 
 class NucMissionCommandRequest(ContractModel):

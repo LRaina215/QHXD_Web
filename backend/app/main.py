@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -18,17 +19,24 @@ from app.schemas import (
     NucStateUpdateRequest,
     NucStateUpdateResponse,
     PauseMissionRequest,
+    PerceptionDetectionStatusRequest,
+    PerceptionDetectionStatusResponse,
+    PerceptionDetectionStatusResult,
     ResumeMissionRequest,
     ReturnHomeRequest,
     StartPatrolRequest,
     StateLatestResponse,
+    VoiceCommandResponse,
+    VoiceTextCommandRequest,
 )
+from app.services.asr_service import asr_service
 from app.services.imu_store import imu_store
 from app.services.mission_gateway import mission_gateway
 from app.services.mode_manager import mode_manager
 from app.services.mock_state import mock_state_service
 from app.services.nuc_adapter import nuc_adapter
 from app.services.state_store import state_store
+from app.services.voice_entry import voice_entry_service
 from app.services.ws_manager import ws_manager
 
 
@@ -101,6 +109,23 @@ async def get_latest_imu() -> ImuLatestResponse:
     return ImuLatestResponse(data=imu_store.get_latest())
 
 
+@app.post("/api/voice/text_command", response_model=VoiceCommandResponse)
+async def text_command(request: VoiceTextCommandRequest) -> VoiceCommandResponse:
+    result, state = voice_entry_service.handle_text_command(request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    return VoiceCommandResponse(data=result)
+
+
+@app.post("/api/voice/asr_text_mock", response_model=VoiceCommandResponse)
+async def asr_text_mock(request: VoiceTextCommandRequest) -> VoiceCommandResponse:
+    text_request = asr_service.transcribe_text_mock(request)
+    result, state = voice_entry_service.handle_text_command(text_request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    return VoiceCommandResponse(data=result)
+
+
 @app.post("/api/mission/go_to_waypoint", response_model=MissionActionResponse)
 async def go_to_waypoint(request: GoToWaypointRequest) -> MissionActionResponse:
     result, state = mission_gateway.go_to_waypoint(request)
@@ -153,6 +178,22 @@ async def switch_system_mode(request: ModeSwitchRequest) -> ModeSwitchResponse:
         await ws_manager.broadcast_imu(None)
     await ws_manager.broadcast_state(latest_state)
     return response
+
+
+@app.post("/api/internal/perception/detection_status", response_model=PerceptionDetectionStatusResponse)
+async def ingest_detection_status(
+    request: PerceptionDetectionStatusRequest,
+) -> PerceptionDetectionStatusResponse:
+    latest_state = state_store.update_detection_status(request.detection_status)
+    await ws_manager.broadcast_state(latest_state)
+    return PerceptionDetectionStatusResponse(
+        data=PerceptionDetectionStatusResult(
+            accepted=True,
+            state_updated=True,
+            received_at=datetime.now(timezone.utc),
+            detail="已接收本地视觉检测状态并刷新共享状态。",
+        )
+    )
 
 
 @app.post("/api/internal/nuc/state", response_model=NucStateUpdateResponse)

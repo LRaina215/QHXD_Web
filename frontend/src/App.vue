@@ -1,6 +1,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
+type DetectionStatus = {
+  enabled: boolean
+  source: string
+  model_name: string | null
+  frame_id: string
+  timestamp: string
+  objects: Array<{
+    class_name: string
+    confidence: number
+    bbox_xyxy: number[]
+  }>
+  events: Array<{
+    event_type: string
+    level: string
+    message: string
+  }>
+}
+
 type RobotState = {
   robot_pose: {
     x: number
@@ -37,6 +55,7 @@ type RobotState = {
     mode: string
     updated_at: string
   }
+  detection_status: DetectionStatus | null
   updated_at: string
 }
 
@@ -65,6 +84,25 @@ type MissionActionResponse = {
     accepted: boolean
     command: string
     detail: string
+  }
+}
+
+type VoiceCommandResponse = {
+  success: boolean
+  data: {
+    accepted: boolean
+    intent: string | null
+    command: string | null
+    payload: Record<string, string | number | boolean | null>
+    confidence: number
+    need_confirm: boolean
+    detail: string
+    task_status: {
+      task_type: string
+      state: string
+      progress: number
+      source: string
+    } | null
   }
 }
 
@@ -118,10 +156,13 @@ const state = ref<RobotState | null>(null)
 const alerts = ref<AlertEvent[]>([])
 const imu = ref<ImuEnvelope | null>(null)
 const waypointId = ref('mock-waypoint')
+const textCommand = ref('去一号点')
+const voiceResult = ref<VoiceCommandResponse['data'] | null>(null)
 const connectionLabel = ref('连接中')
 const imuConnectionLabel = ref('IMU 流连接中')
 const actionMessage = ref('等待命令')
 const isSending = ref(false)
+const isSendingTextCommand = ref(false)
 const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
 const imuWsConnected = ref(false)
@@ -228,6 +269,29 @@ const imuUpdatedLabel = computed(() => {
   }
 
   return formatTime(imu.value.updated_at)
+})
+
+const detectionStatusLabel = computed(() => {
+  const detection = state.value?.detection_status
+  if (!detection) {
+    return 'offline'
+  }
+
+  return detection.enabled ? 'enabled' : 'offline'
+})
+
+const latestDetectionObjectLabel = computed(() => {
+  const object = state.value?.detection_status?.objects[0]
+  if (!object) {
+    return 'no object'
+  }
+
+  return `${object.class_name} ${object.confidence.toFixed(2)}`
+})
+
+const latestDetectionEventLabel = computed(() => {
+  const event = state.value?.detection_status?.events[0]
+  return event ? event.message : 'no event'
 })
 
 onMounted(async () => {
@@ -393,6 +457,42 @@ async function sendMission(
   }
 }
 
+async function sendTextCommand() {
+  if (!textCommand.value.trim()) {
+    voiceResult.value = null
+    actionMessage.value = '请输入文本命令'
+    return
+  }
+
+  isSendingTextCommand.value = true
+
+  try {
+    const response = await fetch('/api/voice/text_command', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: textCommand.value,
+        source: 'dashboard-text',
+        requested_by: 'dashboard',
+      }),
+    })
+    if (!response.ok) {
+      throw new Error('文本命令接口调用失败')
+    }
+
+    const payload = (await response.json()) as VoiceCommandResponse
+    voiceResult.value = payload.data
+    actionMessage.value = payload.data.detail
+    await Promise.all([loadState(), loadAlerts()])
+  } catch (error) {
+    actionMessage.value = error instanceof Error ? error.message : '文本命令发送失败'
+  } finally {
+    isSendingTextCommand.value = false
+  }
+}
+
 async function switchMode(mode: 'mock' | 'real') {
   isSwitchingMode.value = true
 
@@ -552,6 +652,51 @@ function formatTime(value: string) {
       <article class="panel section-panel">
         <div class="section-header">
           <div>
+            <p class="section-kicker">Voice</p>
+            <h2>语音/文本任务入口</h2>
+          </div>
+          <span class="hint-text">{{ voiceResult?.accepted ? 'accepted=true' : voiceResult?.need_confirm ? '需要确认' : '等待输入' }}</span>
+        </div>
+
+        <label class="field">
+          <span>文本命令</span>
+          <input v-model="textCommand" type="text" placeholder="例如 去一号点" @keyup.enter="sendTextCommand" />
+        </label>
+
+        <div class="button-row">
+          <button :disabled="isSendingTextCommand || !textCommand.trim()" @click="sendTextCommand">
+            发送
+          </button>
+        </div>
+
+        <div v-if="voiceResult" class="detail-grid command-result-grid">
+          <div class="detail-item">
+            <span>Intent</span>
+            <strong>{{ voiceResult.intent ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>Command</span>
+            <strong>{{ voiceResult.command ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>Waypoint</span>
+            <strong>{{ voiceResult.payload.waypoint_id ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>Accepted</span>
+            <strong>{{ String(voiceResult.accepted) }}</strong>
+          </div>
+          <div class="detail-item wide-detail">
+            <span>Detail</span>
+            <strong>{{ voiceResult.detail }}</strong>
+          </div>
+        </div>
+        <div v-else class="empty-state">等待文本命令</div>
+      </article>
+
+      <article class="panel section-panel">
+        <div class="section-header">
+          <div>
             <p class="section-kicker">Sensors</p>
             <h2>环境传感器</h2>
           </div>
@@ -651,6 +796,39 @@ function formatTime(value: string) {
           </div>
         </div>
         <div v-else class="empty-state">当前暂无 IMU 样本</div>
+      </article>
+
+      <article class="panel section-panel">
+        <div class="section-header">
+          <div>
+            <p class="section-kicker">Perception</p>
+            <h2>视觉检测状态</h2>
+          </div>
+          <span class="hint-text">{{ detectionStatusLabel }}</span>
+        </div>
+
+        <div class="detail-grid">
+          <div class="detail-item">
+            <span>来源</span>
+            <strong>{{ state?.detection_status?.source ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>模型</span>
+            <strong>{{ state?.detection_status?.model_name ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>最近目标</span>
+            <strong>{{ latestDetectionObjectLabel }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>最近事件</span>
+            <strong>{{ latestDetectionEventLabel }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>更新时间</span>
+            <strong>{{ state?.detection_status ? formatTime(state.detection_status.timestamp) : '--' }}</strong>
+          </div>
+        </div>
       </article>
 
       <article class="panel section-panel alerts-panel">
