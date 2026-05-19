@@ -2,11 +2,13 @@ import json
 import os
 import sqlite3
 import tempfile
+import wave
 import threading
 import unittest
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from uuid import uuid4
 
 import app.main as main_module
 from app.schemas import (
@@ -158,6 +160,51 @@ class _FakeNucMissionServer:
         return Handler
 
 
+class _FakeMultipartRequest:
+    def __init__(self, *, filename: str, content: bytes, fields: dict[str, str] | None = None) -> None:
+        self._boundary = f"----test-boundary-{uuid4().hex}"
+        self.headers = {"content-type": f"multipart/form-data; boundary={self._boundary}"}
+        self._body = self._build_body(filename, content, fields or {})
+
+    async def body(self) -> bytes:
+        return self._body
+
+    def _build_body(self, filename: str, content: bytes, fields: dict[str, str]) -> bytes:
+        chunks: list[bytes] = []
+        boundary = self._boundary.encode("utf-8")
+        for name, value in fields.items():
+            chunks.extend([
+                b"--" + boundary,
+                f'Content-Disposition: form-data; name="{name}"'.encode("utf-8"),
+                b"",
+                value.encode("utf-8"),
+            ])
+        chunks.extend([
+            b"--" + boundary,
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"'.encode("utf-8"),
+            b"Content-Type: audio/wav",
+            b"",
+            content,
+            b"--" + boundary + b"--",
+        ])
+        return b"\r\n".join(chunks) + b"\r\n"
+
+
+def _tiny_wav_bytes() -> bytes:
+    temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    temp_path = Path(temp.name)
+    temp.close()
+    try:
+        with wave.open(str(temp_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(b"\x00\x00" * 1600)
+        return temp_path.read_bytes()
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._temp_dir = tempfile.TemporaryDirectory()
@@ -167,6 +214,10 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self._original_nuc_mission_path = os.environ.get("NUC_MISSION_PATH")
         self._original_nuc_timeout = os.environ.get("NUC_TIMEOUT_SECONDS")
         self._original_real_stale_after = os.environ.get("REAL_STATE_STALE_AFTER_SECONDS")
+        self._original_asr_backend = os.environ.get("ASR_BACKEND")
+        self._original_voice_mock_text = os.environ.get("VOICE_MOCK_RECOGNIZED_TEXT")
+        self._original_voice_max_seconds = os.environ.get("VOICE_MAX_AUDIO_SECONDS")
+        self._original_voice_max_mb = os.environ.get("VOICE_MAX_UPLOAD_MB")
 
         persistence._db_path = Path(self._temp_dir.name) / "phase1-test.db"
         main_module.mock_state_service = MockStateService()
@@ -182,6 +233,10 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self._restore_env("NUC_MISSION_PATH", self._original_nuc_mission_path)
         self._restore_env("NUC_TIMEOUT_SECONDS", self._original_nuc_timeout)
         self._restore_env("REAL_STATE_STALE_AFTER_SECONDS", self._original_real_stale_after)
+        self._restore_env("ASR_BACKEND", self._original_asr_backend)
+        self._restore_env("VOICE_MOCK_RECOGNIZED_TEXT", self._original_voice_mock_text)
+        self._restore_env("VOICE_MAX_AUDIO_SECONDS", self._original_voice_max_seconds)
+        self._restore_env("VOICE_MAX_UPLOAD_MB", self._original_voice_max_mb)
         self._temp_dir.cleanup()
 
     async def test_health_endpoint_returns_ok(self) -> None:
@@ -288,6 +343,57 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(latest_state.detection_status)
         self.assertEqual(latest_state.detection_status.model_name, "custom_delivery_yolo_rk3588.rknn")
         self.assertEqual(latest_state.detection_status.objects[0].class_name, "person")
+
+
+    async def test_audio_command_mock_asr_routes_to_existing_mission_flow(self) -> None:
+        os.environ["ASR_BACKEND"] = "mock"
+        os.environ["VOICE_MOCK_RECOGNIZED_TEXT"] = "暂停任务"
+        request = _FakeMultipartRequest(
+            filename="pause_task.wav",
+            content=_tiny_wav_bytes(),
+            fields={"source": "audio-test", "requested_by": "unittest"},
+        )
+
+        response = await main_module.audio_command(request)
+        logs = persistence.list_command_logs(limit=5)
+
+        self.assertTrue(response.success)
+        self.assertEqual(response.data.recognized_text, "暂停任务")
+        self.assertEqual(response.data.intent, "pause_task")
+        self.assertTrue(response.data.accepted)
+        self.assertEqual(logs[0].command, "voice_audio_command")
+        self.assertEqual(logs[0].payload["recognized_text"], "暂停任务")
+
+    async def test_audio_command_unknown_text_does_not_trigger_mission(self) -> None:
+        os.environ["ASR_BACKEND"] = "mock"
+        os.environ["VOICE_MOCK_RECOGNIZED_TEXT"] = "打开窗户"
+        request = _FakeMultipartRequest(
+            filename="unknown_command.wav",
+            content=_tiny_wav_bytes(),
+            fields={"source": "audio-test", "requested_by": "unittest"},
+        )
+
+        response = await main_module.audio_command(request)
+        logs = persistence.list_command_logs(limit=5)
+
+        self.assertTrue(response.success)
+        self.assertFalse(response.data.accepted)
+        self.assertTrue(response.data.need_confirm)
+        self.assertIsNone(response.data.intent)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].command, "voice_audio_command")
+        self.assertFalse(logs[0].accepted)
+
+    async def test_audio_command_rejects_non_wav_upload(self) -> None:
+        os.environ["ASR_BACKEND"] = "mock"
+        request = _FakeMultipartRequest(
+            filename="command.txt",
+            content=b"not a wav",
+            fields={"source": "audio-test", "requested_by": "unittest"},
+        )
+
+        with self.assertRaises(main_module.HTTPException):
+            await main_module.audio_command(request)
 
     async def test_system_mode_switch_endpoint_updates_contract_state(self) -> None:
         response = await main_module.switch_system_mode(

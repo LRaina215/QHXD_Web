@@ -45,7 +45,7 @@ class IntentParser:
                 detail="已解析为恢复当前任务。",
             )
 
-        if self._contains_any(normalized, ["返回起点", "回到起点", "返航", "回家", "返回home"]):
+        if self._contains_any(normalized, ["返回起点", "回到起点", "返航", "回家", "返回home", "返回洗脸"]):
             return ParsedIntent(
                 intent="return_home",
                 confidence=0.95,

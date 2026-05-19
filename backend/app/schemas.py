@@ -194,6 +194,28 @@ class VoiceCommandResponse(ContractModel):
     data: VoiceCommandResult
 
 
+class VoiceAudioCommandResult(ContractModel):
+    recognized_text: str = Field(default="", description="ASR 识别出的清洗后文本")
+    raw_text: str | None = Field(default=None, description="ASR 原始文本")
+    asr_backend: str = Field(description="ASR backend 名称")
+    asr_time_s: float | None = Field(default=None, description="ASR 识别耗时，单位秒")
+    model_load_time_s: float | None = Field(default=None, description="模型加载耗时，单位秒")
+    intent: VoiceIntentValue | None = Field(default=None, description="解析出的意图")
+    command: str | None = Field(default=None, description="实际任务命令或查询命令")
+    payload: dict[str, JsonScalar] = Field(default_factory=dict, description="解析出的命令参数")
+    waypoint_id: str | None = Field(default=None, description="解析出的目标点 ID")
+    accepted: bool = Field(default=False, description="是否已受理或成功查询")
+    need_confirm: bool = Field(default=True, description="是否需要人工确认")
+    detail: str = Field(description="ASR、解析或执行说明")
+    error: str | None = Field(default=None, description="失败原因")
+    task_status: TaskStatus | None = Field(default=None, description="任务执行后的任务状态")
+
+
+class VoiceAudioCommandResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: VoiceAudioCommandResult
+
+
 class ModeSwitchRequest(ContractModel):
     mode: SystemModeValue = Field(description="目标系统模式")
     source: str = Field(default="web", description="切换来源")

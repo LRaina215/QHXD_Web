@@ -21,10 +21,18 @@
 
 ### 后端
 
+默认使用系统 Python 启动后端，不要先 `source /home/robomaster/funasr_test/.venv/bin/activate`。该 venv 只包含 FunASR 相关依赖，未安装 `uvicorn` 等后端 Web 依赖。
+
 ```bash
-cd backend
+cd /home/robomaster/QHXD/backend
 python3 -m pip install -r requirements.txt
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+ASR_BACKEND=mock python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+如果你的 shell 已经进入 `(.venv)`，先退出：
+
+```bash
+deactivate
 ```
 
 最小检查：
@@ -42,8 +50,10 @@ backend/data/rk3588_phase1.db
 
 ### 前端
 
+前端也不需要进入 Python venv。另开一个终端执行：
+
 ```bash
-cd frontend
+cd /home/robomaster/QHXD/frontend
 npm install
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
@@ -242,6 +252,101 @@ curl -X POST http://127.0.0.1:8000/api/internal/perception/detection_status \
 ```
 
 提交后可通过 `GET /api/state/latest` 和 `WS /ws/state` 观察 `detection_status`。Dashboard 会显示最小视觉检测状态卡片。
+
+### FunASR 真实语音输入
+
+Phase 4B 新增真实 wav 音频命令入口：
+
+```text
+POST /api/voice/audio_command
+Content-Type: multipart/form-data
+```
+
+该接口只负责“音频 -> 文本 -> 复用现有 text command 链路”，不会直接控制底盘，也不会绕过 `mission_gateway`。
+
+#### mock backend 启动
+
+默认 mock 模式不要求安装 FunASR，适合开发和接口自测：
+
+```bash
+export ASR_BACKEND=mock
+export VOICE_MOCK_RECOGNIZED_TEXT=暂停任务
+cd backend
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+#### FunASR backend 启动
+
+当前机器上 FunASR 安装在 `/home/robomaster/funasr_test/.venv`，但这个 venv 没有安装 `uvicorn` / FastAPI 后端依赖。因此不要 `source` 进入该 venv 后直接启动后端。
+
+推荐方式是：使用系统 Python 启动后端，同时把 FunASR venv 的 `site-packages` 暴露给系统 Python：
+
+```bash
+deactivate 2>/dev/null || true
+
+export ASR_BACKEND=funasr
+export FUNASR_MODEL_PATH=/home/robomaster/.cache/modelscope/hub/models/iic/SenseVoiceSmall
+export FUNASR_VAD_MODEL_PATH=/home/robomaster/.cache/modelscope/hub/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+export FUNASR_DEVICE=cpu
+export FUNASR_LANGUAGE=zh
+export FUNASR_USE_ITN=true
+export FUNASR_DISABLE_UPDATE=true
+export VOICE_MAX_AUDIO_SECONDS=10
+export VOICE_MAX_UPLOAD_MB=20
+export PYTHONPATH=/home/robomaster/funasr_test/.venv/lib/python3.10/site-packages
+
+cd /home/robomaster/QHXD/backend
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+FunASR 模型会在第一次音频识别请求时懒加载一次，后续请求复用同一个 `AutoModel` 实例。
+
+如果你坚持在 FunASR venv 内启动后端，需要先给该 venv 安装后端依赖：
+
+```bash
+source /home/robomaster/funasr_test/.venv/bin/activate
+cd /home/robomaster/QHXD/backend
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+#### curl 上传 wav
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
+  -F "file=@/home/robomaster/QHXD/audio_test/cmd_201.wav" \
+  -F "source=manual-audio-check" \
+  -F "requested_by=operator"
+```
+
+返回中会包含：
+
+- `recognized_text`
+- `asr_backend`
+- `asr_time_s`
+- `intent`
+- `command`
+- `waypoint_id`
+- `accepted`
+- `need_confirm`
+- `detail`
+
+#### 常见问题
+
+1. `ASR_BACKEND=mock` 但返回空文本
+   设置 `VOICE_MOCK_RECOGNIZED_TEXT`，或使用文件名包含 `cmd_201`、`pause_task`、`resume_task`、`return_home`、`start_patrol`、`unknown_command` 的 wav。
+
+2. `ASR_BACKEND=funasr` 提示未安装 FunASR
+   确认启动前设置了 `PYTHONPATH=/home/robomaster/funasr_test/.venv/lib/python3.10/site-packages`，或把 FunASR 安装到当前 Python 环境。
+
+3. 模型路径错误
+   检查 `FUNASR_MODEL_PATH` 和 `FUNASR_VAD_MODEL_PATH` 是否为本机已存在目录。
+
+4. 音频格式错误
+   目前只允许 `.wav`，并限制大小和时长。默认 `VOICE_MAX_UPLOAD_MB=20`、`VOICE_MAX_AUDIO_SECONDS=10`。
+
+5. 识别为空或未知命令
+   不会触发 mission，返回 `accepted=false` / `need_confirm=true`，并写入语音命令日志。
 
 ### RKNN YOLO 独立实验
 
