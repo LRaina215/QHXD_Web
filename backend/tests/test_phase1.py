@@ -33,6 +33,7 @@ from app.schemas import (
     ReturnHomeRequest,
     TaskStatus,
     Vector3Sample,
+    VoiceRecordCommandRequest,
     VoiceTextCommandRequest,
 )
 from app.services.imu_store import imu_store
@@ -394,6 +395,86 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(main_module.HTTPException):
             await main_module.audio_command(request)
+
+    async def test_record_command_reuses_asr_and_deletes_recording_when_requested(self) -> None:
+        os.environ["ASR_BACKEND"] = "mock"
+        os.environ["VOICE_MOCK_RECOGNIZED_TEXT"] = "开始巡检"
+        recorded_path = Path(self._temp_dir.name) / "start_patrol.wav"
+        recorded_path.write_bytes(_tiny_wav_bytes())
+        original_recorder = main_module.audio_recorder
+
+        class FakeRecordResult:
+            success = True
+            audio_path = recorded_path
+            duration = 3
+            audio_device = "fake-device"
+            error = None
+            detail = None
+
+        class WorkingRecorder:
+            def default_duration(self) -> int:
+                return 3
+
+            def default_keep_audio(self) -> bool:
+                return True
+
+            def record(self, duration: int) -> FakeRecordResult:
+                return FakeRecordResult()
+
+        main_module.audio_recorder = WorkingRecorder()
+        try:
+            response = await main_module.record_command(
+                VoiceRecordCommandRequest(
+                    duration=3,
+                    source="record-test",
+                    requested_by="unittest",
+                    keep_audio=False,
+                )
+            )
+        finally:
+            main_module.audio_recorder = original_recorder
+
+        self.assertTrue(response.success)
+        self.assertIsNotNone(response.data)
+        self.assertEqual(response.data.intent, "start_patrol")
+        self.assertTrue(response.data.accepted)
+        self.assertFalse(response.data.audio_retained)
+        self.assertIsNone(response.data.audio_path)
+        self.assertFalse(recorded_path.exists())
+
+    async def test_record_command_recording_failure_does_not_call_asr(self) -> None:
+        os.environ["ASR_BACKEND"] = "mock"
+        os.environ["VOICE_MOCK_RECOGNIZED_TEXT"] = "暂停任务"
+        original_recorder = main_module.audio_recorder
+
+        class FailedRecordResult:
+            success = False
+            audio_path = None
+            duration = 3
+            audio_device = "wrong-device"
+            error = "audio_record_failed"
+            detail = "arecord failed: fake device"
+
+        class FailedRecorder:
+            def default_duration(self) -> int:
+                return 3
+
+            def default_keep_audio(self) -> bool:
+                return True
+
+            def record(self, duration: int) -> FailedRecordResult:
+                return FailedRecordResult()
+
+        main_module.audio_recorder = FailedRecorder()
+        try:
+            response = await main_module.record_command(VoiceRecordCommandRequest(duration=3))
+        finally:
+            main_module.audio_recorder = original_recorder
+
+        self.assertFalse(response.success)
+        self.assertEqual(response.error, "audio_record_failed")
+        self.assertIsNone(response.data)
+        self.assertIn("arecord failed", response.detail)
 
     async def test_system_mode_switch_endpoint_updates_contract_state(self) -> None:
         response = await main_module.switch_system_mode(

@@ -67,8 +67,10 @@ class ASRService:
 
     def _transcribe_funasr(self, audio_path: str) -> ASRResult:
         started_at = time.perf_counter()
+        model_was_loaded = self._model is not None
         try:
             model = self._get_funasr_model()
+            model_load_time_s = 0.0 if model_was_loaded else self._model_load_time_s
             result = model.generate(
                 input=audio_path,
                 language=os.getenv("FUNASR_LANGUAGE", "zh"),
@@ -85,7 +87,7 @@ class ASRService:
                 success=bool(recognized_text),
                 error=None if recognized_text else "FunASR 未识别到有效文本。",
                 asr_time_s=round(time.perf_counter() - started_at, 3),
-                model_load_time_s=self._model_load_time_s,
+                model_load_time_s=model_load_time_s,
             )
         except Exception as exc:
             return ASRResult(
@@ -95,7 +97,7 @@ class ASRService:
                 success=False,
                 error=f"FunASR 识别失败：{exc}",
                 asr_time_s=round(time.perf_counter() - started_at, 3),
-                model_load_time_s=self._model_load_time_s,
+                model_load_time_s=0.0 if model_was_loaded else self._model_load_time_s,
             )
 
     def _get_funasr_model(self):

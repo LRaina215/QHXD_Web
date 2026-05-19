@@ -310,6 +310,67 @@ python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+#### 板端 USB 麦克风录音识别
+
+Phase 4B-1 新增 RK3588 后端直接录音接口：
+
+```text
+POST /api/voice/record_command
+Content-Type: application/json
+```
+
+录音配置环境变量：
+
+```bash
+export AUDIO_DEVICE=plughw:CARD=Device,DEV=0
+export AUDIO_SAMPLE_RATE=16000
+export AUDIO_CHANNELS=1
+export AUDIO_FORMAT=S16_LE
+export AUDIO_RECORD_SECONDS=3
+export VOICE_RECORD_DIR=/home/robomaster/QHXD/backend/data/voice_records
+export VOICE_KEEP_RECORDINGS=true
+```
+
+请求示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/record_command \
+  -H "Content-Type: application/json" \
+  -d '{"duration":3,"source":"rk3588-usb-mic","requested_by":"operator","keep_audio":true}'
+```
+
+字段说明：
+
+- `duration`：录音秒数，范围 `1..10`，不传时使用 `AUDIO_RECORD_SECONDS`。
+- `source`：任务来源，默认 `rk3588-record-command`。
+- `requested_by`：发起人，默认 `operator`。
+- `keep_audio`：是否保留录音文件；不传时使用 `VOICE_KEEP_RECORDINGS`。
+
+接口内部等价于：
+
+```bash
+arecord -D "$AUDIO_DEVICE" -r "$AUDIO_SAMPLE_RATE" -c "$AUDIO_CHANNELS" -f "$AUDIO_FORMAT" -d 3 output.wav
+```
+
+返回中会比 `audio_command` 多出：
+
+- `audio_path`
+- `duration`
+- `audio_device`
+- `audio_retained`
+
+如果 `keep_audio=false`，识别完成后会删除录音文件，并返回 `audio_path=null`、`audio_retained=false`。
+
+错误设备验证：
+
+```bash
+AUDIO_DEVICE=plughw:CARD=WrongDevice,DEV=0 curl -X POST http://127.0.0.1:8000/api/voice/record_command \
+  -H "Content-Type: application/json" \
+  -d '{"duration":3,"source":"wrong-device-check","requested_by":"operator","keep_audio":false}'
+```
+
+预期返回 `success=false`、`error=audio_record_failed`，且不会调用 ASR 或触发 mission。
+
 #### curl 上传 wav
 
 ```bash

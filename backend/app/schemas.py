@@ -216,6 +216,27 @@ class VoiceAudioCommandResponse(ContractModel):
     data: VoiceAudioCommandResult
 
 
+class VoiceRecordCommandRequest(ContractModel):
+    duration: int | None = Field(default=None, ge=1, le=10, description="录音时长，单位秒")
+    source: str = Field(default="rk3588-record-command", description="命令来源")
+    requested_by: str | None = Field(default="operator", description="命令发起人")
+    keep_audio: bool | None = Field(default=None, description="是否保留录音文件")
+
+
+class VoiceRecordCommandResult(VoiceAudioCommandResult):
+    audio_path: str | None = Field(default=None, description="录音文件路径")
+    duration: int = Field(description="实际录音时长，单位秒")
+    audio_device: str = Field(description="arecord 使用的音频设备")
+    audio_retained: bool = Field(default=True, description="录音文件是否已保留")
+
+
+class VoiceRecordCommandResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: VoiceRecordCommandResult | None = Field(default=None)
+    error: str | None = Field(default=None)
+    detail: str | None = Field(default=None)
+
+
 class ModeSwitchRequest(ContractModel):
     mode: SystemModeValue = Field(description="目标系统模式")
     source: str = Field(default="web", description="切换来源")

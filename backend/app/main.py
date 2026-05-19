@@ -35,9 +35,13 @@ from app.schemas import (
     VoiceAudioCommandResponse,
     VoiceAudioCommandResult,
     VoiceCommandResponse,
+    VoiceRecordCommandRequest,
+    VoiceRecordCommandResponse,
+    VoiceRecordCommandResult,
     VoiceTextCommandRequest,
 )
-from app.services.asr_service import asr_service
+from app.services.asr_service import ASRResult, asr_service
+from app.services.audio_recorder import audio_recorder
 from app.services.imu_store import imu_store
 from app.services.mission_gateway import mission_gateway
 from app.services.mode_manager import mode_manager
@@ -203,6 +207,72 @@ def _save_audio_command_log(
     )
 
 
+def _voice_result_from_asr(
+    asr_result: ASRResult,
+    *,
+    source: str,
+    requested_by: str | None,
+) -> tuple[VoiceAudioCommandResult, object | None]:
+    if not asr_result.success or not asr_result.recognized_text.strip():
+        return (
+            VoiceAudioCommandResult(
+                recognized_text=asr_result.recognized_text,
+                raw_text=asr_result.raw_text,
+                asr_backend=asr_result.backend,
+                asr_time_s=asr_result.asr_time_s,
+                model_load_time_s=asr_result.model_load_time_s,
+                accepted=False,
+                need_confirm=True,
+                detail=asr_result.error or "ASR 未识别到有效文本，未触发任务。",
+                error=asr_result.error or "empty-recognized-text",
+            ),
+            None,
+        )
+
+    text_request = VoiceTextCommandRequest(
+        text=asr_result.recognized_text,
+        source=source,
+        requested_by=requested_by,
+    )
+    voice_result, state = voice_entry_service.handle_text_command(text_request)
+    return (
+        VoiceAudioCommandResult(
+            recognized_text=asr_result.recognized_text,
+            raw_text=asr_result.raw_text,
+            asr_backend=asr_result.backend,
+            asr_time_s=asr_result.asr_time_s,
+            model_load_time_s=asr_result.model_load_time_s,
+            intent=voice_result.intent,
+            command=voice_result.command,
+            payload=voice_result.payload,
+            waypoint_id=voice_result.payload.get("waypoint_id") if voice_result.payload else None,
+            accepted=voice_result.accepted,
+            need_confirm=voice_result.need_confirm,
+            detail=voice_result.detail,
+            error=None if voice_result.accepted else voice_result.detail,
+            task_status=voice_result.task_status,
+        ),
+        state,
+    )
+
+
+def _record_result_from_audio_result(
+    audio_result: VoiceAudioCommandResult,
+    *,
+    audio_path: Path | None,
+    duration: int,
+    audio_device: str,
+    audio_retained: bool,
+) -> VoiceRecordCommandResult:
+    return VoiceRecordCommandResult(
+        **audio_result.model_dump(),
+        audio_path=str(audio_path) if audio_path is not None and audio_retained else None,
+        duration=duration,
+        audio_device=audio_device,
+        audio_retained=audio_retained,
+    )
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse()
@@ -261,53 +331,74 @@ async def audio_command(request: Request) -> VoiceAudioCommandResponse:
     try:
         temp_path = _save_temp_wav(upload["file_bytes"])
         audio_duration_s = _validate_wav_duration(temp_path)
-        asr_result = asr_service.transcribe_audio_file(str(temp_path))
-
-        if not asr_result.success or not asr_result.recognized_text.strip():
-            result = VoiceAudioCommandResult(
-                recognized_text=asr_result.recognized_text,
-                raw_text=asr_result.raw_text,
-                asr_backend=asr_result.backend,
-                asr_time_s=asr_result.asr_time_s,
-                model_load_time_s=asr_result.model_load_time_s,
-                accepted=False,
-                need_confirm=True,
-                detail=asr_result.error or "ASR 未识别到有效文本，未触发任务。",
-                error=asr_result.error or "empty-recognized-text",
-            )
-            _save_audio_command_log(result, source, requested_by, upload["filename"], audio_duration_s)
-            return VoiceAudioCommandResponse(data=result)
-
-        text_request = VoiceTextCommandRequest(
-            text=asr_result.recognized_text,
+        result, state = _voice_result_from_asr(
+            asr_service.transcribe_audio_file(str(temp_path)),
             source=source,
             requested_by=requested_by,
         )
-        voice_result, state = voice_entry_service.handle_text_command(text_request)
         if state is not None:
             await ws_manager.broadcast_state(state)
-
-        result = VoiceAudioCommandResult(
-            recognized_text=asr_result.recognized_text,
-            raw_text=asr_result.raw_text,
-            asr_backend=asr_result.backend,
-            asr_time_s=asr_result.asr_time_s,
-            model_load_time_s=asr_result.model_load_time_s,
-            intent=voice_result.intent,
-            command=voice_result.command,
-            payload=voice_result.payload,
-            waypoint_id=voice_result.payload.get("waypoint_id") if voice_result.payload else None,
-            accepted=voice_result.accepted,
-            need_confirm=voice_result.need_confirm,
-            detail=voice_result.detail,
-            error=None if voice_result.accepted else voice_result.detail,
-            task_status=voice_result.task_status,
-        )
         _save_audio_command_log(result, source, requested_by, upload["filename"], audio_duration_s)
         return VoiceAudioCommandResponse(data=result)
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
+
+
+@app.post("/api/voice/record_command", response_model=VoiceRecordCommandResponse)
+async def record_command(request: VoiceRecordCommandRequest) -> VoiceRecordCommandResponse:
+    duration = request.duration if request.duration is not None else audio_recorder.default_duration()
+    keep_audio = request.keep_audio if request.keep_audio is not None else audio_recorder.default_keep_audio()
+    source = request.source or "rk3588-record-command"
+    requested_by = request.requested_by
+    record_result = audio_recorder.record(duration)
+
+    if not record_result.success:
+        if record_result.audio_path is not None and not keep_audio:
+            record_result.audio_path.unlink(missing_ok=True)
+        return VoiceRecordCommandResponse(
+            success=False,
+            error=record_result.error or "audio_record_failed",
+            detail=record_result.detail or "录音失败。",
+        )
+
+    audio_path = record_result.audio_path
+    if audio_path is None:
+        return VoiceRecordCommandResponse(
+            success=False,
+            error="empty_audio_file",
+            detail="录音文件不存在。",
+        )
+
+    result, state = _voice_result_from_asr(
+        asr_service.transcribe_audio_file(str(audio_path)),
+        source=source,
+        requested_by=requested_by,
+    )
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+
+    error_code = "asr_failed" if result.error and not result.recognized_text else result.error
+    record_response = _record_result_from_audio_result(
+        result.model_copy(update={"error": error_code}),
+        audio_path=audio_path,
+        duration=duration,
+        audio_device=record_result.audio_device,
+        audio_retained=keep_audio,
+    )
+    _save_audio_command_log(record_response, source, requested_by, audio_path.name, float(duration))
+
+    if not keep_audio:
+        audio_path.unlink(missing_ok=True)
+
+    if result.error and not result.recognized_text:
+        return VoiceRecordCommandResponse(
+            success=False,
+            data=record_response,
+            error="asr_failed",
+            detail=result.detail,
+        )
+    return VoiceRecordCommandResponse(data=record_response)
 
 
 @app.post("/api/mission/go_to_waypoint", response_model=MissionActionResponse)
