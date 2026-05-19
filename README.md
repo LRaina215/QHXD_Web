@@ -581,7 +581,7 @@ Phase 4C 的 RKNN YOLO26 单图推理入口位于：
 experiments/rknn_yolo/
 ```
 
-当前验收模型与样例路径：
+当前验收模型、标签与样例路径：
 
 ```text
 experiments/rknn_yolo/models/yolo26n_fp32.rknn
@@ -589,7 +589,19 @@ experiments/rknn_yolo/models/labels.txt
 experiments/rknn_yolo/samples/test.jpg
 ```
 
-运行单图推理并输出 `detection_status`：
+当前已验证推理配置：
+
+```text
+输入尺寸：640x640
+输入格式：RGB
+输入 layout：NHWC
+输入 dtype：float32
+输入范围：0.0 ~ 1.0
+输出 shape：(1, 300, 6)
+推荐输出 layout：xyxy_score_class
+```
+
+推荐运行单图推理并输出 `detection_status`：
 
 ```bash
 cd /home/robomaster/QHXD/experiments/rknn_yolo
@@ -599,29 +611,27 @@ python3 infer_image.py \
   --labels models/labels.txt \
   --conf 0.25 \
   --format detection_status \
-  --draw-output outputs/test_detections.jpg \
-  --output-layout auto \
-  --max-det 50 \
-  > outputs/detection_status.json
+  --output-layout xyxy_score_class \
+  --max-det 20 \
+  --draw-output outputs/test_fixed_preprocess.jpg \
+  > outputs/detection_status_fixed_preprocess.json
 ```
 
-脚本会在终端打印 RKNN 输出 shape 调试信息，当前已观察到：
+`infer_image.py` 会在 OpenCV 分支和 Pillow fallback 分支统一执行 RGB、NHWC、`float32 / 255.0`、640x640 预处理。需要诊断输入时增加 `--debug-raw`，stderr 会打印 `input_tensor shape/dtype/min/max`，stdout 仍保持纯 JSON。
 
-```text
-Output 0: shape=(1, 300, 6), dtype=float32
-```
+`models/labels.txt` 必须与导出 ONNX / RKNN 的模型类别顺序一致。COCO 80 类 labels 只适用于 COCO 预训练模型；自训练 `best.pt` 必须从同一个模型或训练配置导出 labels。labels 错误通常只影响类别名，不应导致框位置整体错乱。
 
 输出 JSON 可提交给后端状态流：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/internal/perception/detection_status \
   -H "Content-Type: application/json" \
-  -d @outputs/detection_status.json
+  -d @outputs/detection_status_fixed_preprocess.json
 ```
 
 提交后可通过 `GET /api/state/latest`、`WS /ws/state` 和 Dashboard “视觉检测状态”卡片观察。YOLO 结果只更新 `detection_status`，不直接控制底盘、导航或 mission。
 
-更详细的运行说明见 `experiments/rknn_yolo/README.md`。
+更详细的 labels 生成方法、调试命令和人工验收清单见 `experiments/rknn_yolo/README.md`。
 
 ## 开发调试说明
 

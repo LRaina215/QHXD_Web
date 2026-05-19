@@ -74,6 +74,8 @@ def main() -> int:
         input_tensor, image_meta = _load_and_preprocess_image(image_path, np)
     except RuntimeError as exc:
         return _fail(str(exc))
+    if args.debug_raw:
+        _print_input_tensor_debug(input_tensor, np)
     try:
         with _capture_native_stdout_to_stderr():
             outputs = _run_rknn_inference(RKNNLite, model_path, input_tensor)
@@ -180,7 +182,7 @@ def _load_and_preprocess_image(image_path: Path, np) -> tuple[Any, ImageMeta]:
     height, width = image.shape[:2]
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(rgb_image, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_LINEAR)
-    input_tensor = np.expand_dims(resized, axis=0).astype(np.uint8)
+    input_tensor = np.expand_dims(resized.astype(np.float32) / 255.0, axis=0)
     return input_tensor, ImageMeta(original_width=width, original_height=height)
 
 
@@ -200,7 +202,8 @@ def _load_and_preprocess_with_pillow(image_path: Path, np) -> tuple[Any, ImageMe
 
     width, height = image.size
     resized = image.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR)
-    input_tensor = np.expand_dims(np.asarray(resized), axis=0).astype(np.uint8)
+    resized_array = np.asarray(resized)
+    input_tensor = np.expand_dims(resized_array.astype(np.float32) / 255.0, axis=0)
     return input_tensor, ImageMeta(original_width=width, original_height=height)
 
 
@@ -248,6 +251,23 @@ def _color_for_label(label: str) -> tuple[int, int, int]:
         (20, 184, 166),
     ]
     return palette[sum(ord(char) for char in label) % len(palette)]
+
+
+def _print_input_tensor_debug(input_tensor: Any, np) -> None:
+    array = np.asarray(input_tensor)
+    if array.size == 0:
+        print(f"input_tensor shape={array.shape}", file=sys.stderr)
+        print(f"input_tensor dtype={array.dtype}", file=sys.stderr)
+        print("input_tensor min=nan", file=sys.stderr)
+        print("input_tensor max=nan", file=sys.stderr)
+        return
+    finite = array[np.isfinite(array)]
+    min_value = float(finite.min()) if finite.size else float("nan")
+    max_value = float(finite.max()) if finite.size else float("nan")
+    print(f"input_tensor shape={array.shape}", file=sys.stderr)
+    print(f"input_tensor dtype={array.dtype}", file=sys.stderr)
+    print(f"input_tensor min={min_value:.6f}", file=sys.stderr)
+    print(f"input_tensor max={max_value:.6f}", file=sys.stderr)
 
 
 def _print_output_debug(outputs: Any, np) -> None:

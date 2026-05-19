@@ -1,0 +1,65 @@
+{
+  "timestamp": "2026-05-19T06:13:23.876249+00:00",
+  "objects": [
+    {
+      "class_name": "person",
+      "confidence": 0.9224,
+      "bbox_xyxy": [
+        125.0,
+        424.42,
+        597.5,
+        1703.0
+      ]
+    },
+    {
+      "class_name": "person",
+      "confidence": 0.8784,
+      "bbox_xyxy": [
+        446.25,
+        397.08,
+        1138.0,
+        1701.67
+      ]
+    },
+    {
+      "class_name": "cup",
+      "confidence": 0.4148,
+      "bbox_xyxy": [
+        240.12,
+        892.17,
+        358.25,
+        1186.23
+      ]
+    },
+    {
+      "class_name": "chair",
+      "confidence": 0.3916,
+      "bbox_xyxy": [
+        0.19,
+        1301.59,
+        169.88,
+        1705.67
+      ]
+    },
+    {
+      "class_name": "tv",
+      "confidence": 0.3606,
+      "bbox_xyxy": [
+        778.0,
+        1.42,
+        1053.0,
+        144.78
+      ]
+    },
+    {
+      "class_name": "book",
+      "confidence": 0.3508,
+      "bbox_xyxy": [
+        1183.0,
+        406.75,
+        1275.0,
+        784.15
+      ]
+    }
+  ]
+}
