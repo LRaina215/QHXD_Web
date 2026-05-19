@@ -60,7 +60,7 @@ Output 0: shape=(1, 300, 6), dtype=float32, min=..., max=..., mean=...
 =============================
 ```
 
-`stdout` 只输出 JSON，因此可以安全重定向到文件。
+`stdout` 只输出 JSON，因此可以安全重定向到文件。需要人工查看检测框时，加 `--draw-output outputs/test_detections.jpg`，脚本会保存画框后的图片，不会覆盖 `samples/test.jpg`。 如果画框明显不合理，使用 `--debug-raw` 查看原始输出，并用 `--output-layout` 在 `auto`、`xyxy_score_class`、`xyxy_class_score`、`class_score_xyxy` 之间切换验证。
 
 ## 3. 输出 detection_status
 
@@ -72,6 +72,9 @@ python3 infer_image.py \
   --conf 0.25 \
   --frame-id camera_front \
   --format detection_status \
+  --draw-output outputs/test_detections.jpg \
+  --output-layout auto \
+  --max-det 50 \
   > outputs/detection_status.json
 ```
 
@@ -145,7 +148,7 @@ Output 0: shape=(1, 300, 6), dtype=float32
 - [ ] `infer_image.py --format detections` 能输出合法 JSON。
 - [ ] `infer_image.py --format detection_status` 能输出合法 JSON。
 - [ ] 终端能看到 RKNN output debug shape。
-- [ ] 有明显目标的图片能输出非空 `objects`。
+- [ ] 有明显目标的图片能输出非空 `objects`，并可通过 `outputs/test_detections.jpg` 人工查看检测框。
 - [ ] 无检测时输出 `objects=[]`，不报错。
 - [ ] POST 到 `/api/internal/perception/detection_status` 后，`GET /api/state/latest` 能看到 `detection_status`。
 - [ ] Dashboard 能显示视觉检测状态，不显示视频流，不影响 mission UI。

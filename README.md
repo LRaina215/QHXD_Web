@@ -599,6 +599,9 @@ python3 infer_image.py \
   --labels models/labels.txt \
   --conf 0.25 \
   --format detection_status \
+  --draw-output outputs/test_detections.jpg \
+  --output-layout auto \
+  --max-det 50 \
   > outputs/detection_status.json
 ```
 

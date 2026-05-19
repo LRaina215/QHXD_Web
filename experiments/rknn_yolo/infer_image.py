@@ -14,6 +14,7 @@ from detection_status_builder import build_detection_status
 
 INPUT_SIZE = 640
 DEFAULT_IOU_THRESHOLD = 0.45
+OUTPUT_LAYOUTS = ("auto", "xyxy_score_class", "xyxy_class_score", "class_score_xyxy")
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,10 @@ def main() -> int:
     parser.add_argument("--labels", required=True, help="Path to a labels.txt file.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
     parser.add_argument("--frame-id", default="camera_front", help="Frame ID for detection_status output.")
+    parser.add_argument("--draw-output", default=None, help="Optional path to save an image with detection boxes drawn.")
+    parser.add_argument("--debug-raw", action="store_true", help="Print raw RKNN output rows and per-column stats to stderr.")
+    parser.add_argument("--output-layout", choices=OUTPUT_LAYOUTS, default="auto", help="6-column RKNN output layout.")
+    parser.add_argument("--max-det", type=int, default=50, help="Maximum detections kept after NMS.")
     parser.add_argument(
         "--format",
         choices=["detections", "detection_status"],
@@ -76,7 +81,23 @@ def main() -> int:
         return _fail(f"RKNN 推理失败：{exc}")
 
     _print_output_debug(outputs, np)
-    objects = _parse_outputs(outputs, labels, args.conf, DEFAULT_IOU_THRESHOLD, image_meta, np)
+    if args.debug_raw:
+        _print_raw_output_debug(outputs, np)
+    objects = _parse_outputs(
+        outputs,
+        labels,
+        args.conf,
+        DEFAULT_IOU_THRESHOLD,
+        image_meta,
+        args.output_layout,
+        max(0, args.max_det),
+        np,
+    )
+    if args.draw_output:
+        try:
+            _draw_detections(image_path, Path(args.draw_output), objects)
+        except RuntimeError as exc:
+            return _fail(str(exc))
     timestamp = datetime.now(timezone.utc).isoformat()
     if args.format == "detection_status":
         payload = {
@@ -183,6 +204,52 @@ def _load_and_preprocess_with_pillow(image_path: Path, np) -> tuple[Any, ImageMe
     return input_tensor, ImageMeta(original_width=width, original_height=height)
 
 
+def _draw_detections(image_path: Path, output_path: Path, objects: list[dict[str, Any]]) -> None:
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as exc:
+        raise RuntimeError("保存画框图片需要 Pillow。") from exc
+
+    try:
+        image = Image.open(image_path).convert("RGB")
+    except Exception as exc:
+        raise RuntimeError(f"无法读取待画框图片：{image_path}，原始错误：{exc}") from exc
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 16)
+    except Exception:
+        font = ImageFont.load_default()
+
+    for item in objects:
+        x1, y1, x2, y2 = [float(value) for value in item["bbox_xyxy"]]
+        label = f'{item["class_name"]} {float(item["confidence"]):.2f}'
+        color = _color_for_label(item["class_name"])
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+        text_box = draw.textbbox((x1, y1), label, font=font)
+        text_w = text_box[2] - text_box[0]
+        text_h = text_box[3] - text_box[1]
+        label_y = max(0, y1 - text_h - 4)
+        draw.rectangle([x1, label_y, x1 + text_w + 6, label_y + text_h + 4], fill=color)
+        draw.text((x1 + 3, label_y + 2), label, fill=(255, 255, 255), font=font)
+
+    image.save(output_path)
+    print(f"Saved detection visualization: {output_path}", file=sys.stderr)
+
+
+def _color_for_label(label: str) -> tuple[int, int, int]:
+    palette = [
+        (239, 68, 68),
+        (34, 197, 94),
+        (59, 130, 246),
+        (245, 158, 11),
+        (168, 85, 247),
+        (20, 184, 166),
+    ]
+    return palette[sum(ord(char) for char in label) % len(palette)]
+
+
 def _print_output_debug(outputs: Any, np) -> None:
     print("===== RKNN output debug =====", file=sys.stderr)
     if outputs is None:
@@ -205,16 +272,25 @@ def _print_output_debug(outputs: Any, np) -> None:
     print("=============================", file=sys.stderr)
 
 
-def _parse_outputs(outputs: Any, labels: list[str], conf_threshold: float, iou_threshold: float, image_meta: ImageMeta, np) -> list[dict[str, Any]]:
+def _parse_outputs(
+    outputs: Any,
+    labels: list[str],
+    conf_threshold: float,
+    iou_threshold: float,
+    image_meta: ImageMeta,
+    output_layout: str,
+    max_det: int,
+    np,
+) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    if not outputs:
+    if not outputs or max_det == 0:
         return []
 
     for output in outputs:
         for matrix in _output_to_prediction_matrices(output, labels, np):
-            candidates.extend(_decode_prediction_matrix(matrix, labels, conf_threshold, image_meta, np))
+            candidates.extend(_decode_prediction_matrix(matrix, labels, conf_threshold, image_meta, output_layout, np))
 
-    return _nms(candidates, iou_threshold)
+    return _nms(candidates, iou_threshold)[:max_det]
 
 
 def _output_to_prediction_matrices(output: Any, labels: list[str], np) -> list[Any]:
@@ -256,28 +332,35 @@ def _looks_like_channel_first(shape: tuple[int, ...], labels: list[str]) -> bool
     return 6 <= channel_count <= max(6, len(labels) + 5)
 
 
-def _decode_prediction_matrix(matrix, labels: list[str], conf_threshold: float, image_meta: ImageMeta, np) -> list[dict[str, Any]]:
+def _decode_prediction_matrix(
+    matrix,
+    labels: list[str],
+    conf_threshold: float,
+    image_meta: ImageMeta,
+    output_layout: str,
+    np,
+) -> list[dict[str, Any]]:
     if matrix.ndim != 2 or matrix.shape[1] < 6:
         return []
 
     detections: list[dict[str, Any]] = []
     class_count = len(labels)
     feature_count = matrix.shape[1]
+    six_column_layout = None
+    if feature_count == 6:
+        six_column_layout = _resolve_six_column_layout(matrix, labels, output_layout, np)
 
     for raw_row in matrix:
         row = np.asarray(raw_row, dtype=np.float32)
         if not np.isfinite(row).all():
             continue
-        bbox_values: Any
-        confidence: float
-        class_id: int
-        assume_xywh = True
 
         if feature_count == 6:
-            bbox_values = row[:4]
-            confidence = float(row[4])
-            class_id = int(round(float(row[5])))
-            assume_xywh = not _looks_like_xyxy(bbox_values)
+            decoded = _decode_six_column_row(row, six_column_layout)
+            if decoded is None:
+                continue
+            bbox_values, confidence, class_id = decoded
+            assume_xywh = False
         elif feature_count >= class_count + 5:
             bbox_values = row[:4]
             objectness = float(row[4])
@@ -286,6 +369,7 @@ def _decode_prediction_matrix(matrix, labels: list[str], conf_threshold: float, 
                 continue
             class_id = int(class_scores.argmax())
             confidence = objectness * float(class_scores[class_id])
+            assume_xywh = True
         elif feature_count >= class_count + 4:
             bbox_values = row[:4]
             class_scores = row[4:4 + class_count]
@@ -293,6 +377,7 @@ def _decode_prediction_matrix(matrix, labels: list[str], conf_threshold: float, 
                 continue
             class_id = int(class_scores.argmax())
             confidence = float(class_scores[class_id])
+            assume_xywh = True
         else:
             continue
 
@@ -314,6 +399,129 @@ def _decode_prediction_matrix(matrix, labels: list[str], conf_threshold: float, 
         )
 
     return detections
+
+
+def _print_raw_output_debug(outputs: Any, np) -> None:
+    print("===== RKNN raw output debug =====", file=sys.stderr)
+    if outputs is None:
+        print("No outputs", file=sys.stderr)
+        print("=================================", file=sys.stderr)
+        return
+
+    for index, output in enumerate(outputs):
+        array = np.asarray(output)
+        print(f"Output {index}: shape={array.shape}, dtype={array.dtype}", file=sys.stderr)
+        matrix = _raw_debug_matrix(array, np)
+        if matrix is None or matrix.size == 0:
+            print("  empty or unsupported raw layout", file=sys.stderr)
+            continue
+        print("  first 20 raw rows:", file=sys.stderr)
+        for row_index, row in enumerate(matrix[:20]):
+            print(f"  row {row_index}: {_format_debug_row(row)}", file=sys.stderr)
+        print("  per-column stats:", file=sys.stderr)
+        for column_index in range(matrix.shape[1]):
+            column = matrix[:, column_index]
+            finite = column[np.isfinite(column)]
+            if finite.size == 0:
+                print(f"  col {column_index}: min=nan max=nan mean=nan finite=0/{len(column)}", file=sys.stderr)
+                continue
+            print(
+                f"  col {column_index}: "
+                f"min={float(finite.min()):.6f} "
+                f"max={float(finite.max()):.6f} "
+                f"mean={float(finite.mean()):.6f} "
+                f"finite={finite.size}/{len(column)}",
+                file=sys.stderr,
+            )
+    print("=================================", file=sys.stderr)
+
+
+def _raw_debug_matrix(array, np):
+    if array.ndim == 3 and array.shape[0] == 1:
+        array = array[0]
+    elif array.ndim > 2:
+        squeezed = array.squeeze()
+        if squeezed.ndim == 2:
+            array = squeezed
+        elif array.shape[-1] <= 256:
+            array = array.reshape(-1, array.shape[-1])
+        else:
+            return None
+    if array.ndim != 2:
+        return None
+    return np.asarray(array, dtype=np.float32)
+
+
+def _format_debug_row(row) -> str:
+    return "[" + ", ".join(f"{float(value):.6g}" for value in row) + "]"
+
+
+def _resolve_six_column_layout(matrix, labels: list[str], requested_layout: str, np) -> str:
+    if requested_layout != "auto":
+        return requested_layout
+
+    scores = {
+        layout: _score_six_column_layout(matrix, layout, len(labels), np)
+        for layout in OUTPUT_LAYOUTS
+        if layout != "auto"
+    }
+    best_layout = max(scores, key=scores.get)
+    print(f"Inferred 6-column output layout: {best_layout} (scores={scores})", file=sys.stderr)
+    return best_layout
+
+
+def _score_six_column_layout(matrix, layout: str, class_count: int, np) -> float:
+    rows = np.asarray(matrix, dtype=np.float32)
+    rows = rows[np.isfinite(rows).all(axis=1)]
+    if rows.size == 0:
+        return -1.0
+
+    if layout == "xyxy_score_class":
+        coords = rows[:, :4]
+        score_values = rows[:, 4]
+        class_values = rows[:, 5]
+    elif layout == "xyxy_class_score":
+        coords = rows[:, :4]
+        class_values = rows[:, 4]
+        score_values = rows[:, 5]
+    elif layout == "class_score_xyxy":
+        class_values = rows[:, 0]
+        score_values = rows[:, 1]
+        coords = rows[:, 2:6]
+    else:
+        return -1.0
+
+    score_ratio = _ratio((score_values >= 0.0) & (score_values <= 1.0))
+    class_ratio = _ratio((class_values >= 0.0) & (class_values < class_count) & (np.abs(class_values - np.round(class_values)) < 0.01))
+    coord_ratio = _coordinate_valid_ratio(coords, np)
+    return score_ratio * 0.4 + class_ratio * 0.4 + coord_ratio * 0.2
+
+
+def _coordinate_valid_ratio(coords, np) -> float:
+    if coords.shape[1] != 4:
+        return 0.0
+    x1 = coords[:, 0]
+    y1 = coords[:, 1]
+    x2 = coords[:, 2]
+    y2 = coords[:, 3]
+    plausible_range = (np.abs(coords) <= INPUT_SIZE * 4).all(axis=1)
+    valid_xyxy = (x2 > x1) & (y2 > y1) & plausible_range
+    normalized = (coords >= -0.01).all(axis=1) & (coords <= 1.5).all(axis=1)
+    return _ratio(valid_xyxy | normalized)
+
+
+def _ratio(mask) -> float:
+    return float(mask.mean()) if len(mask) else 0.0
+
+
+def _decode_six_column_row(row, layout: str):
+    if layout == "xyxy_score_class":
+        return row[:4], float(row[4]), int(round(float(row[5])))
+    if layout == "xyxy_class_score":
+        return row[:4], float(row[5]), int(round(float(row[4])))
+    if layout == "class_score_xyxy":
+        return row[2:6], float(row[1]), int(round(float(row[0])))
+    return None
 
 
 def _looks_like_xyxy(values) -> bool:
