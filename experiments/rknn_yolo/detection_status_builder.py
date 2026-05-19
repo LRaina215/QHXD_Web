@@ -10,7 +10,7 @@ def build_detection_status(
     *,
     model_name: str,
     frame_id: str = "camera_front",
-    source: str = "rk3588-rknn-yolo",
+    source: str = "rk3588-rknn-yolo26",
     enabled: bool = True,
     timestamp: str | None = None,
     blockage_frames: int = 0,
@@ -39,25 +39,24 @@ def _normalize_object(item: dict[str, Any]) -> dict[str, Any]:
 
 def _build_events(objects: list[dict[str, Any]], blockage_frames: int) -> list[dict[str, str]]:
     events: list[dict[str, str]] = []
-    has_obstacle = False
+    has_person = any(item["class_name"] == "person" for item in objects)
+    obstacle_names = sorted({item["class_name"] for item in objects if item["class_name"] in OBSTACLE_CLASSES})
 
-    for item in objects:
-        class_name = item["class_name"]
-        if class_name == "person":
-            events.append({
-                "event_type": "person_detected",
-                "level": "info",
-                "message": "检测到人员目标",
-            })
-        elif class_name in OBSTACLE_CLASSES:
-            has_obstacle = True
-            events.append({
-                "event_type": "obstacle_detected",
-                "level": "warning",
-                "message": f"检测到可能障碍物：{class_name}",
-            })
+    if has_person:
+        events.append({
+            "event_type": "person_detected",
+            "level": "info",
+            "message": "检测到人员目标",
+        })
 
-    if has_obstacle and blockage_frames >= 3:
+    if obstacle_names:
+        events.append({
+            "event_type": "obstacle_detected",
+            "level": "warning",
+            "message": f"检测到可能障碍物：{', '.join(obstacle_names)}",
+        })
+
+    if obstacle_names and blockage_frames >= 3:
         events.append({
             "event_type": "possible_blockage",
             "level": "warning",

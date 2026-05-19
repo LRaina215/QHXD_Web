@@ -253,16 +253,54 @@ curl -X POST http://127.0.0.1:8000/api/internal/perception/detection_status \
 
 提交后可通过 `GET /api/state/latest` 和 `WS /ws/state` 观察 `detection_status`。Dashboard 会显示最小视觉检测状态卡片。
 
-### FunASR 真实语音输入
+### FunASR 真实语音输入与板端录音验收
 
-Phase 4B 新增真实 wav 音频命令入口：
+Phase 4B 语音模块已经形成两条入口，二者都会复用同一条安全链路：
 
 ```text
-POST /api/voice/audio_command
-Content-Type: multipart/form-data
+音频输入
+-> ASR 得到 recognized_text
+-> intent_parser / waypoint_resolver
+-> voice_entry_service
+-> mission_gateway
+-> 返回 accepted / task_status
 ```
 
-该接口只负责“音频 -> 文本 -> 复用现有 text command 链路”，不会直接控制底盘，也不会绕过 `mission_gateway`。
+该链路不会绕过 `mission_gateway`，也不会在前端或 ASR 层直接控制底盘。
+
+#### 支持的语音命令
+
+当前规则解析支持以下第一版命令：
+
+| 命令类别 | intent / command | 示例说法 | 行为 |
+| --- | --- | --- | --- |
+| 前往目标点 | `go_to_waypoint` | `去二零一实验室`、`去201`、`去一号点`、`送到实验室` | 解析目标点后提交导航任务 |
+| 开始巡检 | `start_patrol` | `开始巡检` | 提交巡检任务 |
+| 暂停任务 | `pause_task` | `暂停任务` | 暂停当前任务 |
+| 继续任务 | `resume_task` | `继续任务`、`恢复任务` | 恢复当前任务 |
+| 返回起点 | `return_home` | `返回起点`、`返航`、`回家` | 提交返航任务 |
+| 查询状态 | `query_status` | `当前状态`、`现在在哪` | 查询当前状态，不发起新导航 |
+
+未知命令、空识别文本、无法解析目标点的指令会返回 `accepted=false` 或 `intent=unknown`，不会触发 mission。
+
+#### 目标点与别名
+
+目标点别名配置位于：
+
+```text
+backend/app/config/waypoints.json
+```
+
+当前配置摘要：
+
+| waypoint_id | 名称 | aliases |
+| --- | --- | --- |
+| `wp_201` | 二零一实验室 | `二零一实验室`、`201实验室`、`二零一`、`201` |
+| `wp_001` | 一号点 | `一号点`、`1号点`、`1 号点`、`一号`、`201`、`实验室`、`送到实验室` |
+| `wp_002` | 二号点 | `二号点`、`2号点`、`2 号点`、`二号`、`202` |
+| `home` | 起点 | `起点`、`home`、`家` |
+
+解析规则会按 `waypoints.json` 中的顺序匹配 `waypoint_id`、`name` 和 `aliases`。如果多个地点包含同一个别名，排在前面的地点优先生效。当前 `wp_201` 位于 `wp_001` 之前，因此“201”会优先解析为 `wp_201`。
 
 #### mock backend 启动
 
@@ -271,9 +309,24 @@ Content-Type: multipart/form-data
 ```bash
 export ASR_BACKEND=mock
 export VOICE_MOCK_RECOGNIZED_TEXT=暂停任务
-cd backend
+cd /home/robomaster/QHXD/backend
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+mock ASR 的推荐验收方式是按场景设置 `VOICE_MOCK_RECOGNIZED_TEXT`，例如已知命令设置为 `去二零一实验室`，未知命令设置为 `打开窗户`。这样 `/api/voice/audio_command` 和 `/api/voice/record_command` 都能得到稳定结果。
+
+如果直接调用 ASR service 并传入原始文件路径，mock ASR 也保留了按文件名推断文本的调试映射：
+
+| 文件名片段 | mock recognized_text |
+| --- | --- |
+| `cmd_201` | `去二零一实验室` |
+| `pause_task` | `暂停任务` |
+| `resume_task` | `继续任务` |
+| `return_home` | `返回起点` |
+| `start_patrol` | `开始巡检` |
+| `unknown_command` | `打开窗户` |
+
+注意：`/api/voice/audio_command` 会先把上传文件保存为后端临时文件，因此接口级 mock 验收不要依赖上传文件名推断，应该显式设置 `VOICE_MOCK_RECOGNIZED_TEXT`。
 
 #### FunASR backend 启动
 
@@ -299,7 +352,7 @@ cd /home/robomaster/QHXD/backend
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-FunASR 模型会在第一次音频识别请求时懒加载一次，后续请求复用同一个 `AutoModel` 实例。
+模型缓存行为：FunASR 模型在当前后端进程第一次音频识别请求时懒加载；首次返回的 `model_load_time_s` 是实际加载耗时。后续请求复用同一个 `AutoModel` 实例，`model_load_time_s=0.0`。如果重启后端进程，第一次请求会重新加载模型。
 
 如果你坚持在 FunASR venv 内启动后端，需要先给该 venv 安装后端依赖：
 
@@ -310,14 +363,73 @@ python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-#### 板端 USB 麦克风录音识别
+#### `/api/voice/audio_command`：上传 wav 音频命令
 
-Phase 4B-1 新增 RK3588 后端直接录音接口：
+```text
+POST /api/voice/audio_command
+Content-Type: multipart/form-data
+```
+
+用途：上传已有 `.wav` 文件，后端完成 ASR 并复用文本语音命令链路。
+
+请求示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
+  -F "file=@/home/robomaster/QHXD/audio_test/cmd_201.wav" \
+  -F "source=manual-audio-check" \
+  -F "requested_by=operator"
+```
+
+常用测试样例：
+
+```bash
+# 已知命令：应解析为 go_to_waypoint / wp_201 / accepted=true
+curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
+  -F "file=@/home/robomaster/QHXD/audio_test/cmd_201.wav" \
+  -F "source=acceptance-audio-known" \
+  -F "requested_by=operator"
+
+# 未知命令：应返回 accepted=false 或 intent=unknown，且不触发 mission
+curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
+  -F "file=@/home/robomaster/QHXD/audio_test/unknown_command.wav" \
+  -F "source=acceptance-audio-unknown" \
+  -F "requested_by=operator"
+```
+
+返回字段包括：
+
+- `recognized_text` / `raw_text`
+- `asr_backend`
+- `asr_time_s`
+- `model_load_time_s`
+- `intent`
+- `command`
+- `payload`
+- `waypoint_id`
+- `accepted`
+- `need_confirm`
+- `detail`
+- `error`
+- `task_status`
+
+上传限制由以下环境变量控制：
+
+```bash
+export VOICE_MAX_AUDIO_SECONDS=10
+export VOICE_MAX_UPLOAD_MB=20
+```
+
+当前只接受 `.wav` 文件。超过大小或时长限制会返回错误，不会触发 mission。
+
+#### `/api/voice/record_command`：RK3588 后端 USB 麦克风录音识别
 
 ```text
 POST /api/voice/record_command
 Content-Type: application/json
 ```
+
+用途：前端或 curl 触发后端在 RK3588 板端调用 `arecord`，使用 USB 麦克风录音，然后走 FunASR / mock ASR 和同一条任务解析链路。本接口不是浏览器麦克风录音。
 
 录音配置环境变量：
 
@@ -331,6 +443,16 @@ export VOICE_RECORD_DIR=/home/robomaster/QHXD/backend/data/voice_records
 export VOICE_KEEP_RECORDINGS=true
 ```
 
+字段说明：
+
+- `AUDIO_DEVICE`：`arecord -D` 使用的输入设备，当前 USB 麦克风验收值为 `plughw:CARD=Device,DEV=0`。
+- `AUDIO_SAMPLE_RATE`：采样率，默认 `16000`。
+- `AUDIO_CHANNELS`：通道数，默认 `1`。
+- `AUDIO_FORMAT`：采样格式，默认 `S16_LE`。
+- `AUDIO_RECORD_SECONDS`：请求不传 `duration` 时使用的默认录音秒数。
+- `VOICE_RECORD_DIR`：临时/保留 wav 文件目录。
+- `VOICE_KEEP_RECORDINGS`：请求不传 `keep_audio` 时是否保留录音文件。
+
 请求示例：
 
 ```bash
@@ -339,12 +461,16 @@ curl -X POST http://127.0.0.1:8000/api/voice/record_command \
   -d '{"duration":3,"source":"rk3588-usb-mic","requested_by":"operator","keep_audio":true}'
 ```
 
-字段说明：
+前端 Dashboard 的“语音任务入口”按钮使用的请求体：
 
-- `duration`：录音秒数，范围 `1..10`，不传时使用 `AUDIO_RECORD_SECONDS`。
-- `source`：任务来源，默认 `rk3588-record-command`。
-- `requested_by`：发起人，默认 `operator`。
-- `keep_audio`：是否保留录音文件；不传时使用 `VOICE_KEEP_RECORDINGS`。
+```json
+{
+  "duration": 3,
+  "source": "dashboard-record-button",
+  "requested_by": "operator",
+  "keep_audio": true
+}
+```
 
 接口内部等价于：
 
@@ -352,14 +478,27 @@ curl -X POST http://127.0.0.1:8000/api/voice/record_command \
 arecord -D "$AUDIO_DEVICE" -r "$AUDIO_SAMPLE_RATE" -c "$AUDIO_CHANNELS" -f "$AUDIO_FORMAT" -d 3 output.wav
 ```
 
-返回中会比 `audio_command` 多出：
+`record_command` 返回字段包含 `audio_command` 的全部语义字段，并额外包含：
 
 - `audio_path`
 - `duration`
 - `audio_device`
 - `audio_retained`
 
-如果 `keep_audio=false`，识别完成后会删除录音文件，并返回 `audio_path=null`、`audio_retained=false`。
+#### `voice_records` 目录行为
+
+`record_command` 会在 `VOICE_RECORD_DIR` 下创建唯一 wav 文件，文件名形如：
+
+```text
+voice_YYYYMMDD_HHMMSS_mmm_<uuid8>.wav
+```
+
+行为规则：
+
+- `keep_audio=true`：识别完成后保留 wav，返回真实 `audio_path` 和 `audio_retained=true`。
+- `keep_audio=false`：识别完成后删除 wav，返回 `audio_path=null` 和 `audio_retained=false`。
+- 录音失败、设备错误、空文件等情况返回 `success=false`，不会调用 mission。
+- 目录不存在时后端会按需创建。
 
 错误设备验证：
 
@@ -371,31 +510,56 @@ AUDIO_DEVICE=plughw:CARD=WrongDevice,DEV=0 curl -X POST http://127.0.0.1:8000/ap
 
 预期返回 `success=false`、`error=audio_record_failed`，且不会调用 ASR 或触发 mission。
 
-#### curl 上传 wav
+#### 前端入口
+
+Dashboard 已提供“语音任务入口”卡片：
+
+- 点击“开始板端录音识别”后调用 `/api/voice/record_command`。
+- 请求中按钮 disabled，并提示“正在录音并识别，请说话...”。
+- 返回后显示 `recognized_text`、`intent`、`command`、`waypoint_id`、`accepted`、`detail`、`asr_backend`、`asr_time_s`、`model_load_time_s`、`audio_path` 和 `task_status`。
+- 未知命令显示“未识别到可执行任务命令”，不会显示为任务执行成功。
+
+#### 已知限制
+
+Phase 4B 到此只完成“点击/上传 -> 离线识别 -> 规则意图 -> mission_gateway”的验收链路，明确不包含：
+
+- 无唤醒词。
+- 无流式 ASR。
+- 无浏览器麦克风录音，网页按钮触发的是 RK3588 后端 USB 麦克风录音。
+- 无多轮语音对话。
+- 无 LLM 自由任务规划。
+- 无 OpenClaw。
+- 无语音直接控制电机。
+- 不改变现有 mission 行为。
+
+#### Phase 4B 手工验收清单
+
+后端启动：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
-  -F "file=@/home/robomaster/QHXD/audio_test/cmd_201.wav" \
-  -F "source=manual-audio-check" \
-  -F "requested_by=operator"
+cd /home/robomaster/QHXD/backend
+ASR_BACKEND=mock VOICE_MOCK_RECOGNIZED_TEXT=去二零一实验室 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-返回中会包含：
+未知命令验收时，把 `VOICE_MOCK_RECOGNIZED_TEXT` 改为 `打开窗户` 后重新启动后端。
 
-- `recognized_text`
-- `asr_backend`
-- `asr_time_s`
-- `intent`
-- `command`
-- `waypoint_id`
-- `accepted`
-- `need_confirm`
-- `detail`
+- [ ] `GET /api/state/latest` 返回 `success=true`。
+- [ ] `/api/voice/audio_command` 上传任意有效测试 wav 后，已知命令场景返回 `recognized_text` 包含 `201` 或 `二零一`。
+- [ ] `/api/voice/audio_command` 已知命令场景返回 `intent=go_to_waypoint`、`waypoint_id=wp_201`、`accepted=true`。
+- [ ] `/api/voice/audio_command` 未知命令场景返回 `accepted=false` 或 `intent=unknown`，不触发 mission。
+- [ ] `/api/voice/record_command` 使用 `AUDIO_DEVICE=plughw:CARD=Device,DEV=0` 能完成板端录音并返回识别结果。
+- [ ] `/api/voice/record_command` 请求中 `keep_audio=false` 时录音文件会被删除，返回 `audio_path=null`。
+- [ ] 错误 `AUDIO_DEVICE` 会返回 `audio_record_failed`，页面/接口不崩溃。
+- [ ] Dashboard 出现“语音任务入口”卡片，点击按钮会调用 `/api/voice/record_command`。
+- [ ] Dashboard 请求中按钮 disabled，结束后恢复可点击。
+- [ ] Dashboard 对未知命令显示“未识别到可执行任务命令”。
+- [ ] FunASR 模式下，第一次请求 `model_load_time_s>0`，同一后端进程后续请求 `model_load_time_s=0.0`。
+- [ ] 原有 Dashboard 状态显示、mission 按钮、文本命令入口不受影响。
 
 #### 常见问题
 
 1. `ASR_BACKEND=mock` 但返回空文本
-   设置 `VOICE_MOCK_RECOGNIZED_TEXT`，或使用文件名包含 `cmd_201`、`pause_task`、`resume_task`、`return_home`、`start_patrol`、`unknown_command` 的 wav。
+   设置 `VOICE_MOCK_RECOGNIZED_TEXT`；接口级 mock 验收不要依赖上传文件名推断。
 
 2. `ASR_BACKEND=funasr` 提示未安装 FunASR
    确认启动前设置了 `PYTHONPATH=/home/robomaster/funasr_test/.venv/lib/python3.10/site-packages`，或把 FunASR 安装到当前 Python 环境。
@@ -409,27 +573,52 @@ curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
 5. 识别为空或未知命令
    不会触发 mission，返回 `accepted=false` / `need_confirm=true`，并写入语音命令日志。
 
-### RKNN YOLO 独立实验
+### RKNN YOLO26 本地推理接入
 
-RKNN 推理原型位于：
+Phase 4C 的 RKNN YOLO26 单图推理入口位于：
 
 ```text
 experiments/rknn_yolo/
 ```
 
-该目录只提交脚本、说明和占位文件，不提交 `.pt`、`.onnx`、`.rknn` 等模型文件。将外部训练并转换好的 `.rknn` 放到 `experiments/rknn_yolo/models/` 后，可运行：
+当前验收模型与样例路径：
 
-```bash
-cd experiments/rknn_yolo
-python3 infer_image.py \
-  --model models/custom_delivery_yolo_rk3588.rknn \
-  --image samples/test.jpg \
-  --labels labels.txt \
-  --conf 0.25 \
-  --format detection_status
+```text
+experiments/rknn_yolo/models/yolo26n_fp32.rknn
+experiments/rknn_yolo/models/labels.txt
+experiments/rknn_yolo/samples/test.jpg
 ```
 
-缺模型、缺图片或缺 RKNN Runtime 时，脚本会输出明确错误，不影响主后端。
+运行单图推理并输出 `detection_status`：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 infer_image.py \
+  --model models/yolo26n_fp32.rknn \
+  --image samples/test.jpg \
+  --labels models/labels.txt \
+  --conf 0.25 \
+  --format detection_status \
+  > outputs/detection_status.json
+```
+
+脚本会在终端打印 RKNN 输出 shape 调试信息，当前已观察到：
+
+```text
+Output 0: shape=(1, 300, 6), dtype=float32
+```
+
+输出 JSON 可提交给后端状态流：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/internal/perception/detection_status \
+  -H "Content-Type: application/json" \
+  -d @outputs/detection_status.json
+```
+
+提交后可通过 `GET /api/state/latest`、`WS /ws/state` 和 Dashboard “视觉检测状态”卡片观察。YOLO 结果只更新 `detection_status`，不直接控制底盘、导航或 mission。
+
+更详细的运行说明见 `experiments/rknn_yolo/README.md`。
 
 ## 开发调试说明
 
