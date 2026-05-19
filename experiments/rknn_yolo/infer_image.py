@@ -135,6 +135,119 @@ def _write_json(payload: dict[str, Any], json_stdout_fd: int) -> None:
     os.close(json_stdout_fd)
 
 
+class RknnYoloRunner:
+    def __init__(
+        self,
+        model_path: str | Path,
+        labels_path: str | Path,
+        *,
+        conf: float = 0.25,
+        output_layout: str = "xyxy_score_class",
+        max_det: int = 20,
+        frame_id: str = "camera_front",
+        source: str = "rk3588-rknn-yolo26",
+    ) -> None:
+        self.model_path = Path(model_path)
+        self.labels_path = Path(labels_path)
+        self.conf = conf
+        self.output_layout = output_layout
+        self.max_det = max_det
+        self.frame_id = frame_id
+        self.source = source
+        self.labels: list[str] = []
+        self.np = None
+        self.rknn_cls = None
+        self.rknn = None
+
+    @property
+    def model_name(self) -> str:
+        return self.model_path.name
+
+    def load(self) -> "RknnYoloRunner":
+        if not self.model_path.exists():
+            raise RuntimeError(f"模型文件不存在：{self.model_path}")
+        if not self.labels_path.exists():
+            raise RuntimeError(f"标签文件不存在：{self.labels_path}")
+
+        try:
+            import numpy as np
+            from rknnlite.api import RKNNLite
+        except ImportError as exc:
+            raise RuntimeError(
+                "缺少 RKNN Runtime / RKNN-Toolkit-Lite2 或 numpy。"
+                "请在 RK3588 设备端安装 rknn-toolkit-lite2 和 numpy 后再运行。"
+                f" 原始错误：{exc}"
+            ) from exc
+
+        labels = _load_labels(self.labels_path)
+        if not labels:
+            raise RuntimeError(f"标签文件为空：{self.labels_path}")
+
+        rknn = RKNNLite()
+        try:
+            with _capture_native_stdout_to_stderr():
+                ret = rknn.load_rknn(str(self.model_path))
+                if ret != 0:
+                    raise RuntimeError(f"RKNN 模型加载失败，返回码：{ret}")
+                ret = rknn.init_runtime(core_mask=RKNNLite.NPU_CORE_AUTO)
+                if ret != 0:
+                    raise RuntimeError(f"RKNN Runtime 初始化失败，返回码：{ret}")
+        except Exception:
+            try:
+                rknn.release()
+            except Exception:
+                pass
+            raise
+
+        self.np = np
+        self.rknn_cls = RKNNLite
+        self.rknn = rknn
+        self.labels = labels
+        return self
+
+    def infer_frame(self, frame: Any, *, color_order: str = "bgr") -> list[dict[str, Any]]:
+        if self.rknn is None or self.np is None:
+            raise RuntimeError("RKNN YOLO runner 尚未 load()")
+        input_tensor, image_meta = _preprocess_frame_array(frame, self.np, color_order=color_order)
+        with _capture_native_stdout_to_stderr():
+            outputs = self.rknn.inference(inputs=[input_tensor])
+        return _parse_outputs(
+            outputs,
+            self.labels,
+            self.conf,
+            DEFAULT_IOU_THRESHOLD,
+            image_meta,
+            self.output_layout,
+            max(0, self.max_det),
+            self.np,
+        )
+
+    def build_status(
+        self,
+        objects: list[dict[str, Any]],
+        *,
+        enabled: bool = True,
+        timestamp: str | None = None,
+        blockage_frames: int = 0,
+    ) -> dict[str, Any]:
+        return build_detection_status(
+            objects,
+            model_name=self.model_name,
+            frame_id=self.frame_id,
+            source=self.source,
+            enabled=enabled,
+            timestamp=timestamp,
+            blockage_frames=blockage_frames,
+        )
+
+    def release(self) -> None:
+        if self.rknn is not None:
+            try:
+                self.rknn.release()
+            finally:
+                self.rknn = None
+
+
 def _run_rknn_inference(rknn_cls, model_path: Path, input_tensor):
     rknn = rknn_cls()
     try:
@@ -179,11 +292,7 @@ def _load_and_preprocess_image(image_path: Path, np) -> tuple[Any, ImageMeta]:
     image = cv2.imread(str(image_path))
     if image is None:
         raise RuntimeError(f"无法读取图片：{image_path}")
-    height, width = image.shape[:2]
-    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    resized = cv2.resize(rgb_image, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_LINEAR)
-    input_tensor = np.expand_dims(resized.astype(np.float32) / 255.0, axis=0)
-    return input_tensor, ImageMeta(original_width=width, original_height=height)
+    return _preprocess_frame_array(image, np, color_order="bgr")
 
 
 def _load_and_preprocess_with_pillow(image_path: Path, np) -> tuple[Any, ImageMeta]:
@@ -200,16 +309,44 @@ def _load_and_preprocess_with_pillow(image_path: Path, np) -> tuple[Any, ImageMe
     except Exception as exc:
         raise RuntimeError(f"无法读取图片：{image_path}，原始错误：{exc}") from exc
 
-    width, height = image.size
-    resized = image.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR)
-    resized_array = np.asarray(resized)
-    input_tensor = np.expand_dims(resized_array.astype(np.float32) / 255.0, axis=0)
+    return _preprocess_frame_array(np.asarray(image), np, color_order="rgb")
+
+
+def _preprocess_frame_array(frame: Any, np, *, color_order: str = "bgr") -> tuple[Any, ImageMeta]:
+    array = np.asarray(frame)
+    if array.ndim != 3 or array.shape[2] < 3:
+        raise RuntimeError(f"图像帧格式不支持：shape={array.shape}")
+
+    height, width = array.shape[:2]
+    color_order = color_order.lower()
+    if color_order == "bgr":
+        rgb_image = array[:, :, :3][:, :, ::-1]
+    elif color_order == "rgb":
+        rgb_image = array[:, :, :3]
+    else:
+        raise RuntimeError(f"不支持的颜色顺序：{color_order}")
+
+    rgb_image = np.ascontiguousarray(rgb_image)
+    resized = _resize_rgb_image(rgb_image, np)
+    input_tensor = np.expand_dims(resized.astype(np.float32) / 255.0, axis=0)
     return input_tensor, ImageMeta(original_width=width, original_height=height)
+
+
+def _resize_rgb_image(rgb_image: Any, np):
+    try:
+        import cv2
+    except ImportError:
+        from PIL import Image
+
+        image = Image.fromarray(np.asarray(rgb_image).astype("uint8"), mode="RGB")
+        return np.asarray(image.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR))
+
+    return cv2.resize(rgb_image, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_LINEAR)
 
 
 def _draw_detections(image_path: Path, output_path: Path, objects: list[dict[str, Any]]) -> None:
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image
     except ImportError as exc:
         raise RuntimeError("保存画框图片需要 Pillow。") from exc
 
@@ -217,6 +354,37 @@ def _draw_detections(image_path: Path, output_path: Path, objects: list[dict[str
         image = Image.open(image_path).convert("RGB")
     except Exception as exc:
         raise RuntimeError(f"无法读取待画框图片：{image_path}，原始错误：{exc}") from exc
+
+    _save_detection_visualization(image, output_path, objects)
+
+
+def draw_detections_on_array(image_array: Any, output_path: Path, objects: list[dict[str, Any]], *, color_order: str = "bgr") -> None:
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("保存画框图片需要 numpy 和 Pillow。") from exc
+
+    array = np.asarray(image_array)
+    if array.ndim != 3 or array.shape[2] < 3:
+        raise RuntimeError(f"图像帧格式不支持：shape={array.shape}")
+
+    if color_order.lower() == "bgr":
+        rgb_array = array[:, :, :3][:, :, ::-1]
+    elif color_order.lower() == "rgb":
+        rgb_array = array[:, :, :3]
+    else:
+        raise RuntimeError(f"不支持的颜色顺序：{color_order}")
+
+    image = Image.fromarray(np.ascontiguousarray(rgb_array).astype("uint8"), mode="RGB")
+    _save_detection_visualization(image, output_path, objects)
+
+
+def _save_detection_visualization(image, output_path: Path, objects: list[dict[str, Any]]) -> None:
+    try:
+        from PIL import ImageDraw, ImageFont
+    except ImportError as exc:
+        raise RuntimeError("保存画框图片需要 Pillow。") from exc
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     draw = ImageDraw.Draw(image)

@@ -633,6 +633,43 @@ curl -X POST http://127.0.0.1:8000/api/internal/perception/detection_status \
 
 更详细的 labels 生成方法、调试命令和人工验收清单见 `experiments/rknn_yolo/README.md`。
 
+### RKNN YOLO26 摄像头连续检测
+
+Phase 4D 新增连续检测脚本：
+
+```text
+experiments/rknn_yolo/camera_detect_service.py
+```
+
+dry-run：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py \
+  --model models/yolo26n_fp32.rknn \
+  --labels models/labels.txt \
+  --camera 0 \
+  --fps 1 \
+  --dry-run \
+  --save-latest outputs/latest_camera_detection.jpg
+```
+
+提交后端：
+
+```bash
+python3 camera_detect_service.py \
+  --model models/yolo26n_fp32.rknn \
+  --labels models/labels.txt \
+  --camera 0 \
+  --fps 1 \
+  --backend-url http://127.0.0.1:8000 \
+  --submit \
+  --save-latest outputs/latest_camera_detection.jpg
+```
+
+查看摄像头设备用 `ls /dev/video*` 和 `lsusb`。本阶段只更新 `detection_status`，Dashboard 显示检测状态，不展示视频流；YOLO 结果不直接控制底盘或 mission。当前 USB 摄像头路径为 OpenCV/ffmpeg 采集层，后续 Hik 相机可在该层替换 adapter 并保持 detection_status 合约不变。
+
+
 ## 开发调试说明
 
 ### 状态流

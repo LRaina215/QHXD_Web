@@ -250,3 +250,140 @@ curl http://127.0.0.1:8027/api/state/latest
 - 不做视频流 / 摄像头循环。
 - 不把 YOLO 结果直接接入导航、急停或电机控制。
 - 不修改 RKNN runtime、backend state_store、Dashboard 或 mission bridge。
+
+## 9. Phase 4D 摄像头连续检测服务
+
+Phase 4D 在单图推理基础上新增：
+
+```text
+USB 摄像头 -> 连续采帧 -> RKNN YOLO26 -> detection_status -> 后端 state_store -> Dashboard
+```
+
+当前脚本：
+
+```text
+experiments/rknn_yolo/camera_detect_service.py
+experiments/rknn_yolo/camera_config.example.json
+```
+
+现阶段默认使用 USB / UVC 摄像头。脚本优先使用 OpenCV `VideoCapture`；如果当前 Python 没有 `cv2`，会尝试用系统 `ffmpeg` 从 `/dev/videoN` 抓帧。后续如切换 Hik 相机，应在相机采集层新增 Hik adapter，但保持 `detection_status` 输出结构不变。
+
+### 查看摄像头设备
+
+```bash
+ls /dev/video*
+lsusb
+```
+
+正常 USB 摄像头通常会出现 `/dev/video0`、`/dev/video1` 等节点。如果只看到 `/dev/video-dec0`、`/dev/video-enc0`，那是 Rockchip 编解码节点，不是普通 USB 摄像头采集节点。
+
+### dry-run 模式
+
+只打印 `detection_status`，不提交后端：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py \
+  --model models/yolo26n_fp32.rknn \
+  --labels models/labels.txt \
+  --camera 0 \
+  --conf 0.25 \
+  --fps 1 \
+  --frame-id camera_front \
+  --dry-run \
+  --save-latest outputs/latest_camera_detection.jpg
+```
+
+终端 stderr 会周期性打印摘要，例如：
+
+```text
+[timestamp] enabled=True objects=2 top=person:0.91 events=person_detected
+```
+
+stdout 在 `--dry-run` 下输出完整 JSON，便于人工检查。`Ctrl+C` 会释放摄像头和 RKNN runtime。
+
+### submit 模式
+
+先启动后端：
+
+```bash
+cd /home/robomaster/QHXD/backend
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+再运行摄像头服务：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py \
+  --model models/yolo26n_fp32.rknn \
+  --labels models/labels.txt \
+  --camera 0 \
+  --conf 0.25 \
+  --fps 1 \
+  --frame-id camera_front \
+  --backend-url http://127.0.0.1:8000 \
+  --submit \
+  --save-latest outputs/latest_camera_detection.jpg
+```
+
+检查后端接收：
+
+```bash
+curl http://127.0.0.1:8000/api/state/latest
+```
+
+通过标准：`detection_status.source = rk3588-rknn-yolo26`，`model_name = yolo26n_fp32.rknn`，`timestamp` 周期更新，`objects` 随画面变化。
+
+### 事件节流
+
+连续检测服务会节流同类视觉事件，避免 Dashboard 和日志被每帧重复事件刷屏：
+
+```text
+person_detected: 5 秒内最多触发一次
+obstacle_detected: 5 秒内最多触发一次
+possible_blockage: 10 秒内最多触发一次
+```
+
+节流只影响 `events`；`objects` 仍可每帧刷新。
+
+### 摄像头异常状态
+
+错误摄像头编号测试：
+
+```bash
+python3 camera_detect_service.py \
+  --model models/yolo26n_fp32.rknn \
+  --labels models/labels.txt \
+  --camera 99 \
+  --dry-run
+```
+
+应输出 `enabled=false`、`event_type=camera_unavailable`，不会出现难以理解的 traceback。如果加 `--submit`，后端会收到 offline / unavailable 状态。
+
+### Dashboard
+
+Dashboard 现有“视觉检测状态”卡片会显示：
+
+- enabled / offline；
+- source；
+- model_name；
+- 最近检测对象；
+- 最近视觉事件；
+- 更新时间。
+
+本阶段不提供摄像头视频流，不做 MJPEG / RTSP / WebRTC，也不会把 YOLO 结果直接控制底盘。
+
+### 常见问题
+
+1. 没有 `/dev/video0`
+   先检查 USB 摄像头是否被内核识别：`lsusb`。如果 `ls /dev/video*` 只出现 `/dev/video-dec0` 和 `/dev/video-enc0`，当前还没有可用 UVC 摄像头采集节点；正常接入后应能看到 `/dev/video0` 或类似节点。
+
+2. `OpenCV is not installed`
+   脚本会自动尝试 ffmpeg fallback。本机已验证在无 `cv2` 时可通过 ffmpeg 从 `/dev/video0` 采帧；若需要更高效采集，可在当前 Python 环境安装 `opencv-python` 或系统包 `python3-opencv`。
+
+3. 后端提交失败
+   检查 `--backend-url` 是否正确，确认 `curl http://127.0.0.1:8000/api/state/latest` 可访问。提交失败不会导致摄像头服务崩溃。
+
+4. 没有视频画面
+   这是本阶段预期行为。Phase 4D 只提交检测状态，不做视频流展示。
