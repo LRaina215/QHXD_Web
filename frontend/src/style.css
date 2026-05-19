@@ -173,7 +173,8 @@ h2 {
   font-size: 0.9rem;
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   border: 1px solid rgba(115, 147, 179, 0.26);
   border-radius: 10px;
@@ -249,6 +250,38 @@ button:disabled {
 
 .command-result-grid {
   margin-top: 16px;
+}
+
+.voice-record-toolbar {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(180px, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.compact-field {
+  margin-bottom: 0;
+}
+
+.inline-status {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  color: #b7d8ff;
+  background: rgba(45, 108, 223, 0.14);
+  border: 1px solid rgba(124, 194, 255, 0.2);
+}
+
+.warn-status {
+  color: #fde68a;
+  background: rgba(180, 83, 9, 0.16);
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.error-status {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.22);
+  border-color: rgba(248, 113, 113, 0.28);
 }
 
 .wide-detail {
@@ -334,7 +367,9 @@ button:disabled {
     padding: 18px;
   }
 
-  .button-row {
+  .button-row,
+  .voice-record-toolbar {
+    grid-template-columns: 1fr;
     flex-direction: column;
   }
 

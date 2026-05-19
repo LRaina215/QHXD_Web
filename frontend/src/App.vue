@@ -87,6 +87,13 @@ type MissionActionResponse = {
   }
 }
 
+type VoiceTaskStatus = {
+  task_type: string
+  state: string
+  progress: number
+  source: string
+}
+
 type VoiceCommandResponse = {
   success: boolean
   data: {
@@ -97,13 +104,36 @@ type VoiceCommandResponse = {
     confidence: number
     need_confirm: boolean
     detail: string
-    task_status: {
-      task_type: string
-      state: string
-      progress: number
-      source: string
-    } | null
+    task_status: VoiceTaskStatus | null
   }
+}
+
+type VoiceRecordCommandResult = {
+  recognized_text: string
+  raw_text: string
+  asr_backend: string
+  asr_time_s: number
+  model_load_time_s: number | null
+  intent: string | null
+  command: string | null
+  payload: Record<string, string | number | boolean | null>
+  waypoint_id: string | null
+  accepted: boolean
+  need_confirm: boolean
+  detail: string
+  error: string | null
+  task_status: VoiceTaskStatus | null
+  audio_path: string | null
+  duration: number
+  audio_device: string
+  audio_retained: boolean
+}
+
+type VoiceRecordCommandResponse = {
+  success: boolean
+  data: VoiceRecordCommandResult | null
+  error: string | null
+  detail: string | null
 }
 
 type ModeSwitchResponse = {
@@ -158,11 +188,16 @@ const imu = ref<ImuEnvelope | null>(null)
 const waypointId = ref('mock-waypoint')
 const textCommand = ref('去一号点')
 const voiceResult = ref<VoiceCommandResponse['data'] | null>(null)
+const voiceRecordResult = ref<VoiceRecordCommandResult | null>(null)
+const voiceRecordError = ref('')
+const voiceRecordStatus = ref('空闲')
+const voiceRecordDuration = ref(3)
 const connectionLabel = ref('连接中')
 const imuConnectionLabel = ref('IMU 流连接中')
 const actionMessage = ref('等待命令')
 const isSending = ref(false)
 const isSendingTextCommand = ref(false)
+const isRecordingVoice = ref(false)
 const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
 const imuWsConnected = ref(false)
@@ -292,6 +327,42 @@ const latestDetectionObjectLabel = computed(() => {
 const latestDetectionEventLabel = computed(() => {
   const event = state.value?.detection_status?.events[0]
   return event ? event.message : 'no event'
+})
+
+const voiceRecordStatusHint = computed(() => {
+  if (isRecordingVoice.value) {
+    return '正在录音并识别，请说话...'
+  }
+
+  if (voiceRecordError.value) {
+    return '失败'
+  }
+
+  if (voiceRecordResult.value) {
+    return voiceRecordResult.value.accepted ? '已受理' : '未受理'
+  }
+
+  return '空闲'
+})
+
+const voiceRecordAcceptedLabel = computed(() => {
+  if (!voiceRecordResult.value) {
+    return '--'
+  }
+
+  return voiceRecordResult.value.accepted ? '已受理' : '未受理'
+})
+
+const voiceRecordNoCommandLabel = computed(() => {
+  if (!voiceRecordResult.value) {
+    return ''
+  }
+
+  if (!voiceRecordResult.value.accepted || voiceRecordResult.value.intent === 'unknown') {
+    return '未识别到可执行任务命令'
+  }
+
+  return ''
 })
 
 onMounted(async () => {
@@ -490,6 +561,68 @@ async function sendTextCommand() {
     actionMessage.value = error instanceof Error ? error.message : '文本命令发送失败'
   } finally {
     isSendingTextCommand.value = false
+  }
+}
+
+async function recordVoiceCommand() {
+  if (isRecordingVoice.value) {
+    return
+  }
+
+  isRecordingVoice.value = true
+  voiceRecordStatus.value = '录音识别中'
+  voiceRecordError.value = ''
+  voiceRecordResult.value = null
+
+  try {
+    const response = await fetch('/api/voice/record_command', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        duration: voiceRecordDuration.value,
+        source: 'dashboard-record-button',
+        requested_by: 'operator',
+        keep_audio: true,
+      }),
+    })
+
+    let payload: VoiceRecordCommandResponse | null = null
+    try {
+      payload = (await response.json()) as VoiceRecordCommandResponse
+    } catch {
+      payload = null
+    }
+
+    if (!response.ok) {
+      throw new Error(payload?.detail || payload?.error || '板端录音接口调用失败')
+    }
+
+    if (!payload?.success) {
+      voiceRecordResult.value = payload?.data ?? null
+      const message = payload?.detail || payload?.error || payload?.data?.error || '板端录音识别失败'
+      voiceRecordError.value = message
+      voiceRecordStatus.value = '失败'
+      actionMessage.value = message
+      return
+    }
+
+    if (!payload.data) {
+      throw new Error('板端录音接口未返回识别结果')
+    }
+
+    voiceRecordResult.value = payload.data
+    voiceRecordStatus.value = payload.data.accepted && payload.data.intent !== 'unknown' ? '成功' : '未受理'
+    actionMessage.value = payload.data.accepted ? payload.data.detail : '未识别到可执行任务命令'
+    await Promise.all([loadState(), loadAlerts()])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '板端录音识别失败'
+    voiceRecordError.value = message
+    voiceRecordStatus.value = '失败'
+    actionMessage.value = message
+  } finally {
+    isRecordingVoice.value = false
   }
 }
 
@@ -692,6 +825,101 @@ function formatTime(value: string) {
           </div>
         </div>
         <div v-else class="empty-state">等待文本命令</div>
+      </article>
+
+      <article class="panel section-panel voice-record-panel">
+        <div class="section-header">
+          <div>
+            <p class="section-kicker">Server Voice</p>
+            <h2>语音任务入口</h2>
+          </div>
+          <span class="hint-text">{{ voiceRecordStatusHint }}</span>
+        </div>
+
+        <div class="voice-record-toolbar">
+          <label class="field compact-field">
+            <span>录音时长</span>
+            <select v-model.number="voiceRecordDuration" :disabled="isRecordingVoice">
+              <option :value="2">2 秒</option>
+              <option :value="3">3 秒</option>
+              <option :value="5">5 秒</option>
+            </select>
+          </label>
+
+          <button :disabled="isRecordingVoice" @click="recordVoiceCommand">
+            {{ isRecordingVoice ? '录音识别中...' : '开始板端录音识别' }}
+          </button>
+        </div>
+
+        <p v-if="isRecordingVoice" class="inline-status">正在录音并识别，请说话...</p>
+        <p v-if="voiceRecordNoCommandLabel" class="inline-status warn-status">
+          {{ voiceRecordNoCommandLabel }}
+        </p>
+        <p v-if="voiceRecordError" class="inline-status error-status">错误信息：{{ voiceRecordError }}</p>
+
+        <div v-if="voiceRecordResult" class="detail-grid command-result-grid">
+          <div class="detail-item">
+            <span>状态</span>
+            <strong>{{ voiceRecordStatus }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>识别文本</span>
+            <strong>{{ voiceRecordResult.recognized_text || '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>解析意图</span>
+            <strong>{{ voiceRecordResult.intent ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>命令</span>
+            <strong>{{ voiceRecordResult.command ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>目标点</span>
+            <strong>{{ voiceRecordResult.waypoint_id ?? voiceRecordResult.payload.waypoint_id ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>是否受理</span>
+            <strong>{{ voiceRecordAcceptedLabel }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>ASR 后端</span>
+            <strong>{{ voiceRecordResult.asr_backend }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>ASR 耗时</span>
+            <strong>{{ formatNumber(voiceRecordResult.asr_time_s, ' s') }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>模型加载</span>
+            <strong>{{ formatNumber(voiceRecordResult.model_load_time_s, ' s') }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>任务状态</span>
+            <strong>{{ voiceRecordResult.task_status?.state ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>任务类型</span>
+            <strong>{{ voiceRecordResult.task_status?.task_type ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>任务进度</span>
+            <strong>{{ formatNumber(voiceRecordResult.task_status?.progress, '%') }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>任务来源</span>
+            <strong>{{ voiceRecordResult.task_status?.source ?? '--' }}</strong>
+          </div>
+          <div class="detail-item wide-detail">
+            <span>提示信息</span>
+            <strong>{{ voiceRecordResult.detail || voiceRecordResult.error || '--' }}</strong>
+          </div>
+          <div class="detail-item wide-detail">
+            <span>音频文件</span>
+            <strong>{{ voiceRecordResult.audio_path ?? '--' }}</strong>
+          </div>
+        </div>
+        <div v-else class="empty-state">等待板端录音识别</div>
       </article>
 
       <article class="panel section-panel">
