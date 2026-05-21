@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from detection_status_builder import build_detection_status
+from detection_status_builder import OBSTACLE_CLASSES, build_detection_status
 from infer_image import OUTPUT_LAYOUTS, RknnYoloRunner, draw_detections_on_array
 
 SOURCE = "rk3588-rknn-yolo26"
@@ -39,6 +39,17 @@ CONFIG_FIELDS = {
     "submit_interval",
     "read_fail_limit",
     "max_frames",
+    "save_debug_frames",
+    "debug_frame_dir",
+    "debug_every_n",
+    "hold_seconds",
+    "hold_classes",
+    "event_min_confidence",
+    "event_min_area_ratio",
+    "blockage_frames_required",
+    "person_event_interval",
+    "obstacle_event_interval",
+    "blockage_event_interval",
 }
 DEFAULT_OPTIONS: dict[str, Any] = {
     "model": None,
@@ -56,6 +67,17 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "submit_interval": 0.0,
     "read_fail_limit": 5,
     "max_frames": 0,
+    "save_debug_frames": False,
+    "debug_frame_dir": "outputs/debug_frames",
+    "debug_every_n": 1,
+    "hold_seconds": 2.0,
+    "hold_classes": ["person", "obstacle"],
+    "event_min_confidence": 0.25,
+    "event_min_area_ratio": 0.001,
+    "blockage_frames_required": 3,
+    "person_event_interval": EVENT_THROTTLE_SECONDS["person_detected"],
+    "obstacle_event_interval": EVENT_THROTTLE_SECONDS["obstacle_detected"],
+    "blockage_event_interval": EVENT_THROTTLE_SECONDS["possible_blockage"],
 }
 
 
@@ -75,6 +97,61 @@ class EventThrottler:
             self.last_emit[event_type] = now
             kept.append(event)
         return kept
+
+
+class RecentDetectionHold:
+    def __init__(self, duration_s: float, hold_classes: set[str]) -> None:
+        self.duration_s = max(0.0, duration_s)
+        self.hold_classes = hold_classes
+        self._cache: dict[str, dict[str, Any]] = {}
+
+    def update(self, objects: list[dict[str, Any]], *, timestamp: str, now: float) -> list[dict[str, Any]]:
+        current_objects: list[dict[str, Any]] = []
+        current_hold_keys: set[str] = set()
+        for item in objects:
+            annotated = dict(item)
+            annotated["current_frame"] = True
+            annotated["recently_seen"] = False
+            annotated["last_seen_at"] = timestamp
+            annotated["age_s"] = 0.0
+            current_objects.append(annotated)
+            hold_key = self._hold_key(item)
+            if hold_key is None:
+                continue
+            current_hold_keys.add(hold_key)
+            cached = dict(annotated)
+            cached["last_seen_monotonic"] = now
+            self._cache[hold_key] = cached
+
+        if self.duration_s <= 0:
+            self._cache = {key: value for key, value in self._cache.items() if key in current_hold_keys}
+            return current_objects
+
+        recent_objects: list[dict[str, Any]] = []
+        expired_keys: list[str] = []
+        for key, cached in self._cache.items():
+            age_s = now - float(cached.get("last_seen_monotonic", now))
+            if age_s > self.duration_s:
+                expired_keys.append(key)
+                continue
+            if key in current_hold_keys:
+                continue
+            recent = {name: value for name, value in cached.items() if name != "last_seen_monotonic"}
+            recent["current_frame"] = False
+            recent["recently_seen"] = True
+            recent["age_s"] = round(age_s, 3)
+            recent_objects.append(recent)
+        for key in expired_keys:
+            self._cache.pop(key, None)
+        return current_objects + recent_objects
+
+    def _hold_key(self, item: dict[str, Any]) -> str | None:
+        class_name = str(item.get("class_name", ""))
+        if class_name in self.hold_classes:
+            return class_name
+        if "obstacle" in self.hold_classes and class_name in OBSTACLE_CLASSES:
+            return f"obstacle:{class_name}"
+        return None
 
 
 class CameraSource:
@@ -176,6 +253,17 @@ def main() -> int:
     parser.add_argument("--submit-interval", type=float, default=None, help="Minimum seconds between backend submissions. Default follows FPS.")
     parser.add_argument("--read-fail-limit", type=int, default=None, help="Consecutive frame read failures before reporting camera offline.")
     parser.add_argument("--max-frames", type=int, default=None, help="Optional validation limit. 0 means run until Ctrl+C.")
+    parser.add_argument("--save-debug-frames", action="store_true", default=None, help="Save per-frame input image, output image, and detection JSON.")
+    parser.add_argument("--debug-frame-dir", default=None, help="Directory for debug frame files.")
+    parser.add_argument("--debug-every-n", type=int, default=None, help="Save one debug frame set every N frames.")
+    parser.add_argument("--hold-seconds", type=float, default=None, help="Seconds to keep selected detections for display stability.")
+    parser.add_argument("--hold-classes", default=None, help="Comma-separated classes to hold, e.g. person,obstacle.")
+    parser.add_argument("--event-min-confidence", type=float, default=None, help="Minimum confidence for visual events.")
+    parser.add_argument("--event-min-area-ratio", type=float, default=None, help="Minimum bbox area ratio for obstacle events.")
+    parser.add_argument("--blockage-frames-required", type=int, default=None, help="Consecutive obstacle frames required for possible_blockage.")
+    parser.add_argument("--person-event-interval", type=float, default=None, help="Minimum seconds between person_detected events.")
+    parser.add_argument("--obstacle-event-interval", type=float, default=None, help="Minimum seconds between obstacle_detected events.")
+    parser.add_argument("--blockage-event-interval", type=float, default=None, help="Minimum seconds between possible_blockage events.")
     raw_args = parser.parse_args()
 
     try:
@@ -236,7 +324,28 @@ def _merge_config(raw_args: argparse.Namespace) -> argparse.Namespace:
     values["submit_interval"] = float(values["submit_interval"])
     values["read_fail_limit"] = int(values["read_fail_limit"])
     values["max_frames"] = int(values["max_frames"])
+    values["save_debug_frames"] = bool(values["save_debug_frames"])
+    values["debug_frame_dir"] = str(values["debug_frame_dir"])
+    values["debug_every_n"] = max(1, int(values["debug_every_n"]))
+    values["hold_seconds"] = float(values["hold_seconds"])
+    values["hold_classes"] = _normalize_hold_classes(values["hold_classes"])
+    values["event_min_confidence"] = float(values["event_min_confidence"])
+    values["event_min_area_ratio"] = float(values["event_min_area_ratio"])
+    values["blockage_frames_required"] = int(values["blockage_frames_required"])
+    values["person_event_interval"] = float(values["person_event_interval"])
+    values["obstacle_event_interval"] = float(values["obstacle_event_interval"])
+    values["blockage_event_interval"] = float(values["blockage_event_interval"])
     return argparse.Namespace(**values)
+
+
+def _normalize_hold_classes(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    raise RuntimeError("hold_classes 必须是逗号分隔字符串或字符串数组")
 
 
 def run_service(args: argparse.Namespace) -> int:
@@ -262,11 +371,13 @@ def run_service(args: argparse.Namespace) -> int:
             source=SOURCE,
         ).load()
 
-        throttler = EventThrottler(EVENT_THROTTLE_SECONDS)
+        throttler = EventThrottler(_event_intervals_from_args(args))
+        hold_cache = RecentDetectionHold(args.hold_seconds, set(args.hold_classes))
         frame_interval = 1.0 / max(args.fps, 0.1)
         submit_interval = args.submit_interval if args.submit_interval > 0 else frame_interval
         last_submit_at = 0.0
         frame_count = 0
+        blockage_frames = 0
         read_failures = 0
 
         print(
@@ -292,10 +403,31 @@ def run_service(args: argparse.Namespace) -> int:
                 continue
 
             read_failures = 0
+            frame_count += 1
+            frame_seq = frame_count
+            timestamp = _utc_now()
+            width, height = _frame_dimensions(frame)
+            current_objects: list[dict[str, Any]] = []
+            stats = None
             try:
-                objects = runner.infer_frame(frame, color_order=camera.color_order)
-                status = runner.build_status(objects, timestamp=_utc_now())
+                current_objects, stats = runner.infer_frame_with_stats(frame, color_order=camera.color_order)
+                if _has_current_event_obstacle(current_objects, args, width, height):
+                    blockage_frames += 1
+                else:
+                    blockage_frames = 0
+                display_objects = hold_cache.update(current_objects, timestamp=timestamp, now=time.monotonic())
+                status = runner.build_status(
+                    display_objects,
+                    timestamp=timestamp,
+                    blockage_frames=blockage_frames,
+                    blockage_frames_required=args.blockage_frames_required,
+                    event_min_confidence=args.event_min_confidence,
+                    event_min_area_ratio=args.event_min_area_ratio,
+                    image_width=width,
+                    image_height=height,
+                )
                 status["events"] = throttler.filter(status.get("events", []), time.monotonic())
+                _print_frame_stats(frame_seq, stats, current_objects)
             except Exception as exc:
                 status = _service_status(args, False, "yolo_inference_error", "error", f"YOLO 推理失败：{exc}")
                 print(status["events"][0]["message"], file=sys.stderr)
@@ -306,13 +438,18 @@ def run_service(args: argparse.Namespace) -> int:
                 except Exception as exc:
                     print(f"Save latest detection image failed: {exc}", file=sys.stderr)
 
+            if args.save_debug_frames and frame_seq % args.debug_every_n == 0:
+                try:
+                    _save_debug_frame_set(args, frame_seq, frame, camera.color_order, current_objects, status, stats)
+                except Exception as exc:
+                    print(f"Save debug frame set failed: {exc}", file=sys.stderr)
+
             _emit_status(status, dry_run=args.dry_run)
             now = time.monotonic()
             if args.submit and not args.dry_run and now - last_submit_at >= submit_interval:
                 _submit_status(args.backend_url, status)
                 last_submit_at = now
 
-            frame_count += 1
             if args.max_frames > 0 and frame_count >= args.max_frames:
                 final_status = _service_status(args, False, "service_stopped", "info", "摄像头检测服务已按 max-frames 结束")
                 return 0
@@ -332,6 +469,105 @@ def run_service(args: argparse.Namespace) -> int:
         if camera is not None:
             camera.release()
         print("Camera and RKNN runtime released.", file=sys.stderr)
+
+
+def _event_intervals_from_args(args: argparse.Namespace) -> dict[str, float]:
+    return {
+        "person_detected": args.person_event_interval,
+        "obstacle_detected": args.obstacle_event_interval,
+        "possible_blockage": args.blockage_event_interval,
+    }
+
+
+def _frame_dimensions(frame: Any) -> tuple[int | None, int | None]:
+    shape = getattr(frame, "shape", None)
+    if shape is None or len(shape) < 2:
+        return None, None
+    return int(shape[1]), int(shape[0])
+
+
+def _has_current_event_obstacle(objects: list[dict[str, Any]], args: argparse.Namespace, width: int | None, height: int | None) -> bool:
+    return any(
+        item.get("class_name") in OBSTACLE_CLASSES
+        and float(item.get("confidence", 0.0)) >= args.event_min_confidence
+        and _bbox_area_ratio(item.get("bbox_xyxy", []), width, height) >= args.event_min_area_ratio
+        for item in objects
+    )
+
+
+def _bbox_area_ratio(bbox: list[float], width: int | None, height: int | None) -> float:
+    if not width or not height or len(bbox) < 4:
+        return 1.0
+    x1, y1, x2, y2 = [float(value) for value in bbox[:4]]
+    area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    frame_area = float(width * height)
+    return area / frame_area if frame_area > 0 else 0.0
+
+
+def _print_frame_stats(frame_seq: int, stats: Any, objects: list[dict[str, Any]]) -> None:
+    top = ", ".join(f"{item['class_name']}:{float(item['confidence']):.2f}" for item in objects[:3]) or "none"
+    if stats is None:
+        print(f"frame={frame_seq} raw=unknown conf=unknown nms=unknown final={len(objects)} top={top}", file=sys.stderr)
+        return
+    print(
+        f"frame={frame_seq} raw={stats.raw_candidate_count} "
+        f"conf={stats.confidence_passed_count} nms={stats.nms_passed_count} "
+        f"final={stats.final_detection_count} top={top}",
+        file=sys.stderr,
+    )
+
+
+def _save_debug_frame_set(
+    args: argparse.Namespace,
+    frame_seq: int,
+    frame: Any,
+    color_order: str,
+    current_objects: list[dict[str, Any]],
+    status: dict[str, Any],
+    stats: Any,
+) -> None:
+    debug_dir = Path(args.debug_frame_dir)
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    prefix = debug_dir / f"frame_{frame_seq:06d}"
+    _save_frame_array(frame, prefix.with_name(prefix.name + "_input.jpg"), color_order=color_order)
+    draw_detections_on_array(frame, prefix.with_name(prefix.name + "_output.jpg"), current_objects, color_order=color_order)
+    payload = {
+        "frame_seq": frame_seq,
+        "stats": _stats_to_dict(stats),
+        "current_objects": current_objects,
+        "detection_status": status,
+    }
+    prefix.with_name(prefix.name + "_detection.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _save_frame_array(frame: Any, output_path: Path, *, color_order: str) -> None:
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(f"保存 debug 输入帧需要 numpy 和 Pillow：{exc}") from exc
+    array = np.asarray(frame)
+    if array.ndim != 3 or array.shape[2] < 3:
+        raise RuntimeError(f"图像帧格式不支持：shape={array.shape}")
+    if color_order.lower() == "bgr":
+        rgb_array = array[:, :, :3][:, :, ::-1]
+    elif color_order.lower() == "rgb":
+        rgb_array = array[:, :, :3]
+    else:
+        raise RuntimeError(f"不支持的颜色顺序：{color_order}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.ascontiguousarray(rgb_array).astype("uint8"), mode="RGB").save(output_path)
+
+
+def _stats_to_dict(stats: Any) -> dict[str, int]:
+    if stats is None:
+        return {}
+    return {
+        "raw_candidate_count": int(stats.raw_candidate_count),
+        "confidence_passed_count": int(stats.confidence_passed_count),
+        "nms_passed_count": int(stats.nms_passed_count),
+        "final_detection_count": int(stats.final_detection_count),
+    }
 
 
 def _open_camera(camera_arg: str) -> CameraSource | None:

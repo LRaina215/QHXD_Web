@@ -63,14 +63,22 @@ class IntentParser:
             )
 
         if self._contains_any(normalized, ["去", "到", "前往", "送到"]):
-            waypoint_id, waypoint_name = waypoint_resolver.resolve(text)
-            if waypoint_id is not None:
+            waypoint = waypoint_resolver.resolve_detail(text)
+            if waypoint.ambiguous:
+                names = "、".join(f"{item['name']}({item['waypoint_id']})" for item in waypoint.matches)
                 return ParsedIntent(
                     intent="go_to_waypoint",
-                    payload={"waypoint_id": waypoint_id},
+                    confidence=0.4,
+                    need_confirm=True,
+                    detail=f"目标点存在歧义：{names}，未触发任务。",
+                )
+            if waypoint.waypoint_id is not None:
+                return ParsedIntent(
+                    intent="go_to_waypoint",
+                    payload={"waypoint_id": waypoint.waypoint_id},
                     confidence=0.95,
                     need_confirm=False,
-                    detail=f"已解析为前往{waypoint_name or waypoint_id}任务。",
+                    detail=f"已解析为前往{waypoint.name or waypoint.waypoint_id}任务。",
                 )
             return ParsedIntent(
                 intent="go_to_waypoint",

@@ -25,6 +25,18 @@ class ImageMeta:
     input_height: int = INPUT_SIZE
 
 
+@dataclass
+class DetectionPipelineStats:
+    raw_candidate_count: int = 0
+    confidence_passed_count: int = 0
+    nms_passed_count: int = 0
+    final_detection_count: int = 0
+
+    def add(self, other: "DetectionPipelineStats") -> None:
+        self.raw_candidate_count += other.raw_candidate_count
+        self.confidence_passed_count += other.confidence_passed_count
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one RKNN YOLO image inference on RK3588.")
     parser.add_argument("--model", required=True, help="Path to a .rknn model file.")
@@ -206,12 +218,16 @@ class RknnYoloRunner:
         return self
 
     def infer_frame(self, frame: Any, *, color_order: str = "bgr") -> list[dict[str, Any]]:
+        objects, _stats = self.infer_frame_with_stats(frame, color_order=color_order)
+        return objects
+
+    def infer_frame_with_stats(self, frame: Any, *, color_order: str = "bgr") -> tuple[list[dict[str, Any]], DetectionPipelineStats]:
         if self.rknn is None or self.np is None:
             raise RuntimeError("RKNN YOLO runner 尚未 load()")
         input_tensor, image_meta = _preprocess_frame_array(frame, self.np, color_order=color_order)
         with _capture_native_stdout_to_stderr():
             outputs = self.rknn.inference(inputs=[input_tensor])
-        return _parse_outputs(
+        return _parse_outputs_with_stats(
             outputs,
             self.labels,
             self.conf,
@@ -229,6 +245,11 @@ class RknnYoloRunner:
         enabled: bool = True,
         timestamp: str | None = None,
         blockage_frames: int = 0,
+        blockage_frames_required: int = 3,
+        event_min_confidence: float = 0.0,
+        event_min_area_ratio: float = 0.0,
+        image_width: int | None = None,
+        image_height: int | None = None,
     ) -> dict[str, Any]:
         return build_detection_status(
             objects,
@@ -238,6 +259,11 @@ class RknnYoloRunner:
             enabled=enabled,
             timestamp=timestamp,
             blockage_frames=blockage_frames,
+            blockage_frames_required=blockage_frames_required,
+            event_min_confidence=event_min_confidence,
+            event_min_area_ratio=event_min_area_ratio,
+            image_width=image_width,
+            image_height=image_height,
         )
 
     def release(self) -> None:
@@ -470,15 +496,40 @@ def _parse_outputs(
     max_det: int,
     np,
 ) -> list[dict[str, Any]]:
+    objects, _stats = _parse_outputs_with_stats(
+        outputs, labels, conf_threshold, iou_threshold, image_meta, output_layout, max_det, np
+    )
+    return objects
+
+
+def _parse_outputs_with_stats(
+    outputs: Any,
+    labels: list[str],
+    conf_threshold: float,
+    iou_threshold: float,
+    image_meta: ImageMeta,
+    output_layout: str,
+    max_det: int,
+    np,
+) -> tuple[list[dict[str, Any]], DetectionPipelineStats]:
     candidates: list[dict[str, Any]] = []
+    stats = DetectionPipelineStats()
     if not outputs or max_det == 0:
-        return []
+        return [], stats
 
     for output in outputs:
         for matrix in _output_to_prediction_matrices(output, labels, np):
-            candidates.extend(_decode_prediction_matrix(matrix, labels, conf_threshold, image_meta, output_layout, np))
+            decoded, matrix_stats = _decode_prediction_matrix_with_stats(
+                matrix, labels, conf_threshold, image_meta, output_layout, np
+            )
+            candidates.extend(decoded)
+            stats.add(matrix_stats)
 
-    return _nms(candidates, iou_threshold)[:max_det]
+    nms_objects = _nms(candidates, iou_threshold)
+    stats.nms_passed_count = len(nms_objects)
+    final_objects = nms_objects[:max_det]
+    stats.final_detection_count = len(final_objects)
+    return final_objects, stats
 
 
 def _output_to_prediction_matrices(output: Any, labels: list[str], np) -> list[Any]:
@@ -528,8 +579,23 @@ def _decode_prediction_matrix(
     output_layout: str,
     np,
 ) -> list[dict[str, Any]]:
+    detections, _stats = _decode_prediction_matrix_with_stats(
+        matrix, labels, conf_threshold, image_meta, output_layout, np
+    )
+    return detections
+
+
+def _decode_prediction_matrix_with_stats(
+    matrix,
+    labels: list[str],
+    conf_threshold: float,
+    image_meta: ImageMeta,
+    output_layout: str,
+    np,
+) -> tuple[list[dict[str, Any]], DetectionPipelineStats]:
+    stats = DetectionPipelineStats()
     if matrix.ndim != 2 or matrix.shape[1] < 6:
-        return []
+        return [], stats
 
     detections: list[dict[str, Any]] = []
     class_count = len(labels)
@@ -542,6 +608,7 @@ def _decode_prediction_matrix(
         row = np.asarray(raw_row, dtype=np.float32)
         if not np.isfinite(row).all():
             continue
+        stats.raw_candidate_count += 1
 
         if feature_count == 6:
             decoded = _decode_six_column_row(row, six_column_layout)
@@ -571,6 +638,7 @@ def _decode_prediction_matrix(
 
         if confidence < conf_threshold:
             continue
+        stats.confidence_passed_count += 1
         if not 0 <= class_id < class_count:
             continue
 
@@ -586,7 +654,7 @@ def _decode_prediction_matrix(
             }
         )
 
-    return detections
+    return detections, stats
 
 
 def _print_raw_output_debug(outputs: Any, np) -> None:

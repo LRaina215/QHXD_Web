@@ -1,0 +1,42 @@
+{
+  "version": "phase5-v1",
+  "policy": {
+    "unknown_command": "reject",
+    "ambiguous_waypoint": "reject",
+    "low_confidence_or_failed_asr": "reject",
+    "wake_word_required": false,
+    "llm_enabled": false
+  },
+  "commands": [
+    {
+      "intent": "go_to_waypoint",
+      "examples": ["去二零一实验室", "去201实验室", "去装载点"],
+      "strategy": "execute_when_unique_waypoint"
+    },
+    {
+      "intent": "pause_task",
+      "examples": ["暂停", "暂停任务", "停一下"],
+      "strategy": "execute_directly"
+    },
+    {
+      "intent": "resume_task",
+      "examples": ["继续", "继续任务", "恢复任务"],
+      "strategy": "execute_directly"
+    },
+    {
+      "intent": "return_home",
+      "examples": ["返回起点", "返航", "回到起点"],
+      "strategy": "execute_directly_in_current_backend"
+    },
+    {
+      "intent": "start_patrol",
+      "examples": ["开始巡检", "执行巡检", "巡视"],
+      "strategy": "execute_directly_in_current_backend"
+    },
+    {
+      "intent": "query_status",
+      "examples": ["当前状态", "现在在哪", "状态"],
+      "strategy": "query_only"
+    }
+  ]
+}

@@ -4,18 +4,28 @@
 
 本项目用于把 RK3588 做成 RoboMaster 车载系统的交互与状态中台。
 
-当前已完成 Phase 2 的核心目标：
+基础系统最初完成 Phase 2 的核心目标：
 
 - 保留 Phase 1 的 mock 中台能力
 - 接入 `NUC -> RK3588` 的真实状态上送
 - 接入 `RK3588 -> NUC` 的 mission bridge
 - 让 Dashboard 通过 REST / WebSocket 观察 mock 与 real 两种模式
 
-当前范围仍然只覆盖 Phase 2：
+后续 Phase 4 / Phase 5 已在此基础上增加语音入口、RKNN YOLO26 视觉检测、USB 摄像头抽帧检测、最新检测图片接口与 Dashboard 展示。当前仍不做 RT-Thread 直连、视频流、LLM/OpenClaw 或 YOLO 直接控制底盘。
 
-- 不接 RT-Thread 直连
-- 不做语音、图传、视觉增强能力
-- 不扩展到多页面复杂前端
+## Phase 5 快速启动总览
+
+当前推荐优先使用项目根目录下的脚本启动和检查服务：
+
+```bash
+./scripts/start_backend.sh
+./scripts/start_frontend.sh
+./scripts/start_yolo_camera.sh
+./scripts/status_all.sh
+./scripts/stop_all.sh
+```
+
+三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。Phase 5 的 YOLO 调试帧、短时保持、视觉事件策略和语音安全边界说明见文末“Phase 5：语音与视觉工程收口”。
 
 ## 快速运行
 
@@ -833,3 +843,197 @@ Phase 2 已达到可交接、可验收状态：
 - NUC 状态上送与 mission bridge 已打通
 - Dashboard 能观察到命令和状态反馈闭环
 - 最小自检和手工复验路径已经写入本 README
+
+## Phase 5：语音与视觉工程收口
+
+Phase 5 将 Phase 4 已跑通的语音与视觉能力整理为更适合现场演示和交接的工程模块。本阶段不改变 mission、NUC bridge、RT-Thread 控制语义，也不会让 YOLO 结果直接控制底盘。
+
+### 统一启动脚本
+
+项目根目录新增 `scripts/`：
+
+```bash
+# 启动后端
+./scripts/start_backend.sh
+
+# 启动前端
+./scripts/start_frontend.sh
+
+# 启动 YOLO 摄像头检测服务
+./scripts/start_yolo_camera.sh
+
+# 一键启动三项服务
+./scripts/start_all.sh
+
+# 查看状态
+./scripts/status_all.sh
+
+# 停止由脚本启动的服务
+./scripts/stop_all.sh
+```
+
+脚本默认配置：
+
+- 后端端口：`BACKEND_PORT=8000`
+- 前端端口：`FRONTEND_PORT=5173`
+- YOLO 配置：`YOLO_CONFIG=/home/robomaster/QHXD/experiments/rknn_yolo/camera_config.json`
+- pid 目录：`.runtime/`
+- 日志目录：`logs/`
+
+如果服务已经由其他方式启动，脚本会尽量识别端口可用状态并输出提示。
+
+### YOLO 调试帧保存
+
+`camera_detect_service.py` 新增调试帧参数，默认关闭，不会占用磁盘：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+
+python3 camera_detect_service.py \
+  --config camera_config.json \
+  --dry-run \
+  --max-frames 2 \
+  --save-debug-frames \
+  --debug-frame-dir outputs/debug_frames_phase5 \
+  --debug-every-n 1
+```
+
+启用后，每个保存周期会生成：
+
+- `frame_000001_input.jpg`：送入 YOLO 前的原始输入帧；
+- `frame_000001_output.jpg`：当前帧检测框可视化；
+- `frame_000001_detection.json`：当前帧目标、display status 和 pipeline stats。
+
+每帧 stderr 日志会输出：
+
+```text
+frame=1 raw=299 conf=0 nms=0 final=0 top=none
+```
+
+字段含义：
+
+- `raw`：RKNN 输出中可解析的原始候选行数量；
+- `conf`：通过置信度阈值的候选数量；
+- `nms`：NMS 后数量；
+- `final`：受 `--max-det` 限制后的最终当前帧检测数量；
+- `top`：当前帧最高置信度类别摘要。
+
+预处理链路保持 Phase 4C 已验证配置：`RGB + NHWC + float32 / 255.0 + 640x640`，推荐输出布局仍为 `xyxy_score_class`。
+
+### 短时保持与防闪烁
+
+摄像头服务新增显示层短时保持，默认配置在 `experiments/rknn_yolo/camera_config.json`：
+
+```json
+{
+  "hold_seconds": 2.0,
+  "hold_classes": ["person", "obstacle"]
+}
+```
+
+短时保持只影响 `detection_status` 展示和 Dashboard 稳定性，不参与底盘控制。`detection_status.objects` 中会带上可选字段：
+
+- `current_frame=true`：当前帧直接检测到；
+- `recently_seen=true`：当前帧漏检，但仍在短时保持窗口内；
+- `last_seen_at`：上次直接检测到的时间；
+- `age_s`：距离上次检测到的秒数。
+
+Dashboard 会分开显示“当前检测”和“最近检测”，避免把短时保持目标误认为当前帧直接检测。
+
+### 视觉事件策略
+
+保留事件类型：
+
+- `person_detected`
+- `obstacle_detected`
+- `possible_blockage`
+
+可配置项：
+
+```json
+{
+  "event_min_confidence": 0.25,
+  "event_min_area_ratio": 0.001,
+  "blockage_frames_required": 3,
+  "person_event_interval": 5.0,
+  "obstacle_event_interval": 5.0,
+  "blockage_event_interval": 10.0
+}
+```
+
+含义：
+
+- 低于 `event_min_confidence` 的目标不触发视觉事件；
+- 面积过小的 obstacle 类目标不触发 `obstacle_detected`；
+- 障碍连续出现达到 `blockage_frames_required` 后才触发 `possible_blockage`；
+- 同类事件按 interval 节流，避免每帧刷屏。
+
+### 语音命令词表与安全边界
+
+第一版命令词表记录在：
+
+```text
+backend/app/config/voice_commands.json
+```
+
+支持意图：
+
+- `go_to_waypoint`
+- `pause_task`
+- `resume_task`
+- `return_home`
+- `start_patrol`
+- `query_status`
+
+安全边界：
+
+- 未知命令不触发 mission；
+- ASR 失败或空文本不触发 mission；
+- 目标点无法解析不触发 mission；
+- 目标点存在歧义不触发 mission，例如当前 `去201` 会同时命中 `wp_201` 和 `wp_001`，因此被拒绝；
+- `去二零一实验室` 会按最长 alias 匹配到 `wp_201`。
+
+测试示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/text_command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"去二零一实验室","source":"manual-test","requested_by":"operator"}'
+
+curl -X POST http://127.0.0.1:8000/api/voice/text_command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"去201","source":"manual-test","requested_by":"operator"}'
+```
+
+### voice_records 清理
+
+录音目录默认位于：
+
+```text
+backend/data/voice_records/
+```
+
+新增清理脚本，默认 dry-run：
+
+```bash
+./scripts/cleanup_voice_records.sh
+
+# 删除 7 天前的 wav
+./scripts/cleanup_voice_records.sh --delete
+
+# 删除 3 天前的 wav
+DAYS=3 ./scripts/cleanup_voice_records.sh --delete
+```
+
+### Phase 5 不包含
+
+本阶段仍不做：
+
+- 长时间稳定性测试；
+- systemd 服务化或开机自启；
+- Hik SDK 正式接入；
+- OpenClaw / LLM 多轮对话；
+- 浏览器麦克风录音；
+- MJPEG / RTSP / WebRTC 视频流；
+- YOLO 结果直接控制底盘；
+- 重新训练模型、重新导出 ONNX、重新转换 RKNN 或 INT8 量化。

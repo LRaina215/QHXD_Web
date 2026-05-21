@@ -10,5 +10,19 @@
   "max_det": 20,
   "backend_url": "http://127.0.0.1:8000",
   "save_latest": "outputs/latest_camera_detection.jpg",
-  "future_camera_note": "Current Phase 4D uses USB/OpenCV VideoCapture. A later Hik camera adapter can keep the same detection_status output contract."
+  "future_camera_note": "Current Phase 4D uses USB/OpenCV VideoCapture. A later Hik camera adapter can keep the same detection_status output contract.",
+  "save_debug_frames": false,
+  "debug_frame_dir": "outputs/debug_frames",
+  "debug_every_n": 1,
+  "hold_seconds": 2.0,
+  "hold_classes": [
+    "person",
+    "obstacle"
+  ],
+  "event_min_confidence": 0.25,
+  "event_min_area_ratio": 0.001,
+  "blockage_frames_required": 3,
+  "person_event_interval": 5.0,
+  "obstacle_event_interval": 5.0,
+  "blockage_event_interval": 10.0
 }

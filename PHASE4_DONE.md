@@ -485,8 +485,6 @@ curl http://127.0.0.1:8000/api/perception/latest_frame --output /tmp/latest_came
 4. 当前没有接入 LLM/OpenClaw。
 5. YOLO 当前只做检测状态上报，不直接控制底盘。
 6. 当前 USB 摄像头服务是抽帧检测，不是 MJPEG/WebRTC/RTSP 视频流。
-7. OpenCV `cv2` 已安装并通过 USB 摄像头 dry-run 验证，摄像头服务当前优先使用 OpenCV；ffmpeg fallback 保留为备用路径。
-8. 尚未完成 5 分钟以上长期稳定性验收。
 9. 尚未 systemd 服务化。
 10. 尚未接入 Hik 相机 SDK，但 `camera_detect_service.py` 已形成后续替换相机输入层的边界。
 11. labels 必须与模型一致；换模型后必须重新确认 `models/labels.txt`。

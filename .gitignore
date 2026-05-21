@@ -15,3 +15,6 @@ experiments/rknn_yolo/outputs/*
 
 # Generic runtime logs
 *.log
+.runtime/
+logs/
+experiments/rknn_yolo/outputs/debug_frames/

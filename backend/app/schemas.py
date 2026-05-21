@@ -90,6 +90,10 @@ class DetectionObject(ContractModel):
     class_name: str = Field(description="检测类别名称")
     confidence: float = Field(ge=0.0, le=1.0, description="检测置信度")
     bbox_xyxy: list[float] = Field(description="目标框，格式为 [x1, y1, x2, y2]")
+    current_frame: bool = Field(default=True, description="是否为当前帧直接检测到的目标")
+    recently_seen: bool = Field(default=False, description="是否为短时保持的最近目标")
+    last_seen_at: datetime | None = Field(default=None, description="短时保持目标上次被检测到的时间")
+    age_s: float | None = Field(default=None, ge=0.0, description="距离上次检测到的秒数")
 
 
 class DetectionEvent(ContractModel):

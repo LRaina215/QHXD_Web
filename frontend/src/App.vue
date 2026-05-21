@@ -11,6 +11,10 @@ type DetectionStatus = {
     class_name: string
     confidence: number
     bbox_xyxy: number[]
+    current_frame?: boolean
+    recently_seen?: boolean
+    last_seen_at?: string | null
+    age_s?: number | null
   }>
   events: Array<{
     event_type: string
@@ -318,18 +322,52 @@ const detectionStatusLabel = computed(() => {
   return detection.enabled ? 'enabled' : 'offline'
 })
 
+const currentDetectionObjects = computed(() => {
+  return state.value?.detection_status?.objects.filter((object) => object.current_frame !== false) ?? []
+})
+
+const recentDetectionObjects = computed(() => {
+  return state.value?.detection_status?.objects.filter((object) => object.recently_seen && object.current_frame === false) ?? []
+})
+
 const latestDetectionObjectLabel = computed(() => {
-  const object = state.value?.detection_status?.objects[0]
+  const object = currentDetectionObjects.value[0] ?? recentDetectionObjects.value[0]
   if (!object) {
     return 'no object'
   }
 
-  return `${object.class_name} ${object.confidence.toFixed(2)}`
+  return formatDetectionObject(object)
+})
+
+const currentDetectionLabel = computed(() => {
+  if (currentDetectionObjects.value.length === 0) {
+    return '当前帧无目标'
+  }
+  return currentDetectionObjects.value.slice(0, 3).map(formatDetectionObject).join(' / ')
+})
+
+const recentDetectionLabel = computed(() => {
+  if (recentDetectionObjects.value.length === 0) {
+    return '无短时保持目标'
+  }
+  return recentDetectionObjects.value.slice(0, 3).map(formatDetectionObject).join(' / ')
 })
 
 const latestDetectionEventLabel = computed(() => {
   const event = state.value?.detection_status?.events[0]
-  return event ? event.message : 'no event'
+  return event ? `${event.event_type} · ${event.message}` : 'no event'
+})
+
+const detectionEventItems = computed(() => state.value?.detection_status?.events ?? [])
+
+const latestVoiceSummary = computed(() => {
+  if (voiceRecordResult.value) {
+    return `${voiceRecordResult.value.recognized_text || '--'} / ${voiceRecordResult.value.intent ?? '--'} / ${voiceRecordResult.value.accepted ? '已受理' : '未受理'}`
+  }
+  if (voiceResult.value) {
+    return `${textCommand.value || '--'} / ${voiceResult.value.intent ?? '--'} / ${voiceResult.value.accepted ? '已受理' : '未受理'}`
+  }
+  return '暂无语音或文本结果'
 })
 
 const voiceRecordStatusHint = computed(() => {
@@ -688,6 +726,11 @@ function formatNumber(value: number | null | undefined, suffix = '', decimals = 
 function formatTime(value: string) {
   return new Date(value).toLocaleTimeString('zh-CN', { hour12: false })
 }
+
+function formatDetectionObject(object: { class_name: string; confidence: number; age_s?: number | null }) {
+  const age = object.age_s && object.age_s > 0 ? ` / ${object.age_s.toFixed(1)}s 前` : ''
+  return `${object.class_name} ${object.confidence.toFixed(2)}${age}`
+}
 </script>
 
 <template>
@@ -810,7 +853,7 @@ function formatTime(value: string) {
             <p class="section-kicker">Voice</p>
             <h2>语音/文本任务入口</h2>
           </div>
-          <span class="hint-text">{{ voiceResult?.accepted ? 'accepted=true' : voiceResult?.need_confirm ? '需要确认' : '等待输入' }}</span>
+          <span class="hint-text">{{ latestVoiceSummary }}</span>
         </div>
 
         <label class="field">
@@ -1082,12 +1125,29 @@ function formatTime(value: string) {
             <strong>{{ latestDetectionObjectLabel }}</strong>
           </div>
           <div class="detail-item">
+            <span>当前检测</span>
+            <strong>{{ currentDetectionLabel }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>最近检测</span>
+            <strong>{{ recentDetectionLabel }}</strong>
+          </div>
+          <div class="detail-item">
             <span>最近事件</span>
             <strong>{{ latestDetectionEventLabel }}</strong>
           </div>
           <div class="detail-item">
             <span>更新时间</span>
             <strong>{{ state?.detection_status ? formatTime(state.detection_status.timestamp) : '--' }}</strong>
+          </div>
+          <div class="detail-item wide-detail">
+            <span>视觉事件</span>
+            <strong v-if="detectionEventItems.length === 0">暂无事件</strong>
+            <strong v-else class="value-block">
+              <span v-for="event in detectionEventItems" :key="`${event.event_type}-${event.message}`">
+                {{ event.level }} / {{ event.event_type }} / {{ event.message }}
+              </span>
+            </strong>
           </div>
         </div>
       </article>
