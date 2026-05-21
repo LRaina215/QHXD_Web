@@ -670,6 +670,41 @@ python3 camera_detect_service.py \
 查看摄像头设备用 `ls /dev/video*` 和 `lsusb`。本阶段只更新 `detection_status`，Dashboard 显示检测状态，不展示视频流；YOLO 结果不直接控制底盘或 mission。当前 USB 摄像头路径为 OpenCV/ffmpeg 采集层，后续 Hik 相机可在该层替换 adapter 并保持 detection_status 合约不变。
 
 
+
+
+### RKNN YOLO26 识别图像流
+
+Phase 4D_2 使用“最新识别图片”方案，不做 WebRTC / RTSP / MJPEG。YOLO 服务保存：
+
+```text
+experiments/rknn_yolo/outputs/latest_camera_detection.jpg
+```
+
+后端提供：
+
+```http
+GET /api/perception/latest_frame
+```
+
+推荐启动：
+
+```bash
+cd /home/robomaster/QHXD/backend
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+```bash
+cd /home/robomaster/QHXD/frontend
+npm run dev -- --host 0.0.0.0 --port 5173
+```
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py --config camera_config.json
+```
+
+Dashboard 的视觉检测卡片会显示 `/api/perception/latest_frame?t=...`，每 2 秒刷新一次，同时保留 detection_status 的 objects / events 显示。更完整的配置和排障说明见 `experiments/rknn_yolo/README.md`。
+
 ## 开发调试说明
 
 ### 状态流

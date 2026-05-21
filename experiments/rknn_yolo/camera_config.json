@@ -1,0 +1,13 @@
+{
+  "model": "models/yolo26n_fp32.rknn",
+  "labels": "models/labels.txt",
+  "camera": 0,
+  "conf": 0.25,
+  "fps": 1,
+  "frame_id": "camera_front",
+  "backend_url": "http://127.0.0.1:8000",
+  "submit": true,
+  "save_latest": "outputs/latest_camera_detection.jpg",
+  "max_det": 20,
+  "output_layout": "xyxy_score_class"
+}

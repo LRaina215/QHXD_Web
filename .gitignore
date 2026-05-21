@@ -1,4 +1,17 @@
 frontend/node_modules/
-backend/data/*.db
 __pycache__/
 *.pyc
+
+# Runtime data and generated artifacts
+backend/data/*.db
+backend/data/*.sqlite
+backend/data/*.sqlite3
+backend/data/voice_records/*
+!backend/data/voice_records/.gitkeep
+
+# RKNN YOLO runtime outputs: JSON logs and annotated images
+experiments/rknn_yolo/outputs/*
+!experiments/rknn_yolo/outputs/.gitkeep
+
+# Generic runtime logs
+*.log

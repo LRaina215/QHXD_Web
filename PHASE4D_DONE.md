@@ -25,7 +25,7 @@ USB 摄像头 / 本地摄像头
 - `experiments/rknn_yolo/camera_detect_service.py`
   - 新增连续检测服务。
   - 支持 `--camera`、`--fps`、`--dry-run`、`--submit`、`--backend-url`、`--save-latest`、`--max-det`、`--output-layout`。
-  - 优先使用 OpenCV `VideoCapture`；当前 Python 未安装 `cv2` 时 fallback 到系统 `ffmpeg` 读取 `/dev/videoN`。
+  - 优先使用 OpenCV `VideoCapture`；如果 `cv2` 不可用或 OpenCV 打不开相机，则 fallback 到系统 `ffmpeg` 读取 `/dev/videoN`。
   - 支持事件节流、异常状态、后端提交失败不崩溃、Ctrl+C 释放资源。
 - `experiments/rknn_yolo/camera_config.example.json`
   - 新增 USB 摄像头连续检测配置示例，并记录后续 Hik 相机 adapter 伏笔。
@@ -124,7 +124,7 @@ python3 -c 'import cv2'
 Bus 007 Device 005: ID 32e6:9221 WebCamera WebCamera
 ```
 
-当前 Python 环境仍未安装 `cv2`，摄像头服务已使用 ffmpeg fallback 从 `/dev/video0` 成功采帧、推理、保存画框并提交后端。
+补充验证：当前 Python 环境已可导入 `cv2`，摄像头服务已使用 `OpenCvCameraSource` 从 `/dev/video0` 成功采帧、推理并保存画框。ffmpeg fallback 仍作为备用路径保留。
 
 ### dry-run 验证
 
@@ -270,7 +270,7 @@ possible_blockage: 10 秒
 
 ## 已知问题
 
-- 当前 Python 环境未安装 `cv2`，服务实际使用 ffmpeg fallback 采帧；功能已通过，但实时频率受 ffmpeg 单帧抓取开销影响，实测 40 帧约 64 秒。
+- OpenCV `cv2` 已安装并验证，服务当前优先使用 OpenCV 采帧；ffmpeg fallback 仍保留用于无 `cv2` 或 OpenCV 打不开相机的情况。首次 1 分钟 ffmpeg fallback 验收记录为 40 帧约 64 秒。
 - 当前完成了超过 1 分钟连续运行验收；5 分钟长稳仍建议人工在最终场地再跑一次。
 - 停止服务后的 offline 状态依赖服务收到 Ctrl+C 或正常退出并提交 `service_stopped`；如果进程被强杀，后端不会自动得知服务停止。
 

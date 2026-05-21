@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.schemas import (
     AlertsResponse,
@@ -90,6 +91,31 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="RK3588 Middleware", version="0.1.0", lifespan=lifespan)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_LATEST_FRAME_PATH = PROJECT_ROOT / "experiments" / "rknn_yolo" / "outputs" / "latest_camera_detection.jpg"
+
+
+def _latest_frame_path() -> Path:
+    return Path(os.getenv("PERCEPTION_LATEST_FRAME_PATH", str(DEFAULT_LATEST_FRAME_PATH))).expanduser()
+
+
+def _latest_frame_response():
+    frame_path = _latest_frame_path()
+    if not frame_path.exists() or not frame_path.is_file():
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success": False,
+                "error": "latest_frame_not_found",
+                "detail": f"最新识别图片不存在：{frame_path}",
+            },
+        )
+    return FileResponse(
+        frame_path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _voice_max_upload_bytes() -> int:
@@ -276,6 +302,16 @@ def _record_result_from_audio_result(
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse()
+
+
+@app.get("/api/perception/latest_frame")
+async def get_latest_perception_frame():
+    return _latest_frame_response()
+
+
+@app.head("/api/perception/latest_frame")
+async def head_latest_perception_frame():
+    return _latest_frame_response()
 
 
 @app.get("/api/state/latest", response_model=StateLatestResponse)

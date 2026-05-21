@@ -202,11 +202,14 @@ const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
 const imuWsConnected = ref(false)
 const shouldReconnect = ref(true)
+const latestFrameUrl = ref('')
+const latestFrameAvailable = ref(false)
 
 let socket: WebSocket | null = null
 let imuSocket: WebSocket | null = null
 let alertsTimer: number | null = null
 let stateTimer: number | null = null
+let latestFrameTimer: number | null = null
 
 const onlineStatus = computed(() => {
   if (!state.value) {
@@ -372,6 +375,8 @@ onMounted(async () => {
   alertsTimer = window.setInterval(() => {
     void loadAlerts()
   }, 5000)
+  refreshLatestFrame()
+  latestFrameTimer = window.setInterval(refreshLatestFrame, 2000)
   stateTimer = window.setInterval(() => {
     void Promise.all([loadState(), loadImu()])
   }, 4000)
@@ -394,6 +399,10 @@ onBeforeUnmount(() => {
 
   if (stateTimer !== null) {
     window.clearInterval(stateTimer)
+  }
+
+  if (latestFrameTimer !== null) {
+    window.clearInterval(latestFrameTimer)
   }
 })
 
@@ -437,6 +446,19 @@ async function loadImu() {
   } catch {
     imu.value = null
   }
+}
+
+function refreshLatestFrame() {
+  latestFrameAvailable.value = true
+  latestFrameUrl.value = `/api/perception/latest_frame?t=${Date.now()}`
+}
+
+function handleLatestFrameError() {
+  latestFrameAvailable.value = false
+}
+
+function handleLatestFrameLoad() {
+  latestFrameAvailable.value = true
 }
 
 function connectWebSocket() {
@@ -1033,6 +1055,17 @@ function formatTime(value: string) {
             <h2>视觉检测状态</h2>
           </div>
           <span class="hint-text">{{ detectionStatusLabel }}</span>
+        </div>
+
+        <div class="latest-frame-box">
+          <img
+            v-if="latestFrameAvailable && latestFrameUrl"
+            :src="latestFrameUrl"
+            alt="最新识别画面"
+            @error="handleLatestFrameError"
+            @load="handleLatestFrameLoad"
+          />
+          <div v-else class="latest-frame-placeholder">暂无识别画面</div>
         </div>
 
         <div class="detail-grid">

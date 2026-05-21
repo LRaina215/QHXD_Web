@@ -266,7 +266,7 @@ experiments/rknn_yolo/camera_detect_service.py
 experiments/rknn_yolo/camera_config.example.json
 ```
 
-现阶段默认使用 USB / UVC 摄像头。脚本优先使用 OpenCV `VideoCapture`；如果当前 Python 没有 `cv2`，会尝试用系统 `ffmpeg` 从 `/dev/videoN` 抓帧。后续如切换 Hik 相机，应在相机采集层新增 Hik adapter，但保持 `detection_status` 输出结构不变。
+现阶段默认使用 USB / UVC 摄像头。脚本优先使用 OpenCV `VideoCapture`；如果当前 Python 没有 `cv2`，或 OpenCV 无法打开相机，会尝试用系统 `ffmpeg` 从 `/dev/videoN` 抓帧。当前 RK3588 环境已验证 OpenCV 采集路径可用。后续如切换 Hik 相机，应在相机采集层新增 Hik adapter，但保持 `detection_status` 输出结构不变。
 
 ### 查看摄像头设备
 
@@ -379,11 +379,158 @@ Dashboard 现有“视觉检测状态”卡片会显示：
 1. 没有 `/dev/video0`
    先检查 USB 摄像头是否被内核识别：`lsusb`。如果 `ls /dev/video*` 只出现 `/dev/video-dec0` 和 `/dev/video-enc0`，当前还没有可用 UVC 摄像头采集节点；正常接入后应能看到 `/dev/video0` 或类似节点。
 
-2. `OpenCV is not installed`
-   脚本会自动尝试 ffmpeg fallback。本机已验证在无 `cv2` 时可通过 ffmpeg 从 `/dev/video0` 采帧；若需要更高效采集，可在当前 Python 环境安装 `opencv-python` 或系统包 `python3-opencv`。
+2. `OpenCV is not installed` 或 `OpenCV could not open camera`
+   脚本会自动尝试 ffmpeg fallback。当前 RK3588 环境已验证系统包 `python3-opencv` 可用；如果再次出现 `numpy.core.multiarray failed to import`，优先检查用户目录中是否有不兼容的 pip NumPy 覆盖了系统 NumPy。
 
 3. 后端提交失败
    检查 `--backend-url` 是否正确，确认 `curl http://127.0.0.1:8000/api/state/latest` 可访问。提交失败不会导致摄像头服务崩溃。
 
 4. 没有视频画面
    这是本阶段预期行为。Phase 4D 只提交检测状态，不做视频流展示。
+
+## 10. Phase 4D_2 识别图像流
+
+Phase 4D_2 采用“识别图像流”方案：YOLO 摄像头服务周期性保存一张带检测框的最新 JPEG，后端提供单张图片接口，Dashboard 定时刷新显示。它不是 WebRTC、RTSP、MJPEG，也不是完整视频流。
+
+```text
+camera_detect_service.py
+-> outputs/latest_camera_detection.jpg
+-> GET /api/perception/latest_frame
+-> Dashboard 视觉检测卡片
+```
+
+### 最新识别图片路径
+
+默认输出：
+
+```text
+/home/robomaster/QHXD/experiments/rknn_yolo/outputs/latest_camera_detection.jpg
+```
+
+`camera_detect_service.py` 默认 `save_latest` 也是 `outputs/latest_camera_detection.jpg`。如果图片保存失败，服务会打印明确日志，但不会让主检测循环崩溃。
+
+### 后端图片接口
+
+```http
+GET /api/perception/latest_frame
+```
+
+图片存在时返回：
+
+```text
+content-type: image/jpeg
+cache-control: no-store
+```
+
+图片不存在时返回：
+
+```json
+{
+  "success": false,
+  "error": "latest_frame_not_found"
+}
+```
+
+默认读取路径集中在 `backend/app/main.py` 的 `DEFAULT_LATEST_FRAME_PATH`，也可以用环境变量覆盖：
+
+```bash
+PERCEPTION_LATEST_FRAME_PATH=/path/to/latest.jpg python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+### 配置文件启动
+
+推荐配置文件：
+
+```text
+experiments/rknn_yolo/camera_config.json
+```
+
+启动：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py --config camera_config.json
+```
+
+配置文件支持：
+
+```text
+model, labels, camera, conf, fps, frame_id, backend_url, submit,
+save_latest, max_det, dry_run, output_layout, submit_interval,
+read_fail_limit, max_frames
+```
+
+优先级：命令行参数覆盖配置文件，配置文件覆盖内置默认值。例如：
+
+```bash
+python3 camera_detect_service.py --config camera_config.json --max-frames 3
+```
+
+会使用配置文件启动，但只运行 3 帧。
+
+### 推荐启动流程
+
+后端：
+
+```bash
+cd /home/robomaster/QHXD/backend
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+前端：
+
+```bash
+cd /home/robomaster/QHXD/frontend
+npm run dev -- --host 0.0.0.0 --port 5173
+```
+
+YOLO 摄像头服务：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py --config camera_config.json
+```
+
+检查图片接口：
+
+```bash
+curl -I http://127.0.0.1:8000/api/perception/latest_frame
+curl http://127.0.0.1:8000/api/perception/latest_frame --output /tmp/latest_frame.jpg
+file /tmp/latest_frame.jpg
+```
+
+打开 Dashboard：
+
+```text
+http://RK3588_IP:5173
+```
+
+视觉检测卡片会显示最新识别图片，并每 2 秒追加时间戳刷新一次；同时保留 source、model、最近目标、最近事件和更新时间。
+
+### OpenCV 与 fallback
+
+推荐使用 OpenCV 采集路径。当前已验证组合：`python3` + NumPy 1.21.5 + OpenCV 4.5.4。安装命令：
+
+```bash
+sudo apt install python3-opencv
+python3 -c "import cv2; print(cv2.__version__)"
+```
+
+服务启动时优先尝试 OpenCV `VideoCapture`。验证通过时日志会出现 `backend=OpenCvCameraSource`。如果 `cv2` 不可用或摄像头打开失败，会明确打印 fallback 日志，并尝试用 ffmpeg 从 `/dev/videoN` 抓帧。所有采集方式失败时输出 / 提交 `camera_unavailable`。
+
+### 常见问题
+
+1. 图片不更新
+   检查 YOLO 服务是否仍在运行，确认 `ls -lh outputs/latest_camera_detection.jpg` 的修改时间是否变化。
+
+2. 后端返回 `latest_frame_not_found`
+   检查 `outputs/latest_camera_detection.jpg` 是否存在，或检查 `PERCEPTION_LATEST_FRAME_PATH` 是否指向正确文件。
+
+3. Dashboard 显示旧图
+   前端已使用 `/api/perception/latest_frame?t=时间戳` 避免缓存；如果仍旧，检查后端是否读到了同一个图片路径。
+
+4. 摄像头打不开
+   先看 `ls /dev/video*` 和 `lsusb`，确认有 `/dev/video0` 或类似 UVC 节点。OpenCV 不可用或打不开设备时会 fallback 到 ffmpeg。
+
+5. 有 detection_status 但图片没有
+   检查启动命令或配置中的 `save_latest`。detection_status 提交与图片保存是两条路径，图片保存失败不会中断检测服务。

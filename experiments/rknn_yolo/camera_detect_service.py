@@ -23,6 +23,40 @@ EVENT_THROTTLE_SECONDS = {
     "possible_blockage": 10.0,
 }
 JSON_OUTPUT_FD: int | None = None
+CONFIG_FIELDS = {
+    "model",
+    "labels",
+    "camera",
+    "conf",
+    "fps",
+    "frame_id",
+    "backend_url",
+    "submit",
+    "save_latest",
+    "max_det",
+    "dry_run",
+    "output_layout",
+    "submit_interval",
+    "read_fail_limit",
+    "max_frames",
+}
+DEFAULT_OPTIONS: dict[str, Any] = {
+    "model": None,
+    "labels": None,
+    "camera": "0",
+    "conf": 0.25,
+    "fps": 2.0,
+    "frame_id": "camera_front",
+    "backend_url": "http://127.0.0.1:8000",
+    "submit": False,
+    "save_latest": "outputs/latest_camera_detection.jpg",
+    "max_det": 20,
+    "dry_run": False,
+    "output_layout": "xyxy_score_class",
+    "submit_interval": 0.0,
+    "read_fail_limit": 5,
+    "max_frames": 0,
+}
 
 
 class EventThrottler:
@@ -126,22 +160,30 @@ class FfmpegCameraSource(CameraSource):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run continuous RKNN YOLO detection from a USB camera.")
-    parser.add_argument("--model", required=True, help="Path to a .rknn model file.")
-    parser.add_argument("--labels", required=True, help="Path to a labels.txt file.")
-    parser.add_argument("--camera", default="0", help="OpenCV camera index or device path, default 0.")
-    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold.")
-    parser.add_argument("--fps", type=float, default=2.0, help="Detection FPS, default 2.")
-    parser.add_argument("--frame-id", default="camera_front", help="Frame ID for detection_status output.")
-    parser.add_argument("--backend-url", default="http://127.0.0.1:8000", help="Backend base URL.")
-    parser.add_argument("--submit", action="store_true", help="Submit detection_status to backend.")
+    parser.add_argument("--config", default=None, help="Optional JSON config file. CLI values override config values.")
+    parser.add_argument("--model", default=None, help="Path to a .rknn model file.")
+    parser.add_argument("--labels", default=None, help="Path to a labels.txt file.")
+    parser.add_argument("--camera", default=None, help="OpenCV camera index or device path, default 0.")
+    parser.add_argument("--conf", type=float, default=None, help="Confidence threshold.")
+    parser.add_argument("--fps", type=float, default=None, help="Detection FPS, default 2.")
+    parser.add_argument("--frame-id", default=None, help="Frame ID for detection_status output.")
+    parser.add_argument("--backend-url", default=None, help="Backend base URL.")
+    parser.add_argument("--submit", action="store_true", default=None, help="Submit detection_status to backend.")
     parser.add_argument("--save-latest", default=None, help="Optional path to save latest detection image.")
-    parser.add_argument("--max-det", type=int, default=20, help="Maximum detections kept after NMS.")
-    parser.add_argument("--dry-run", action="store_true", help="Print detection_status JSON and do not submit.")
-    parser.add_argument("--output-layout", choices=OUTPUT_LAYOUTS, default="xyxy_score_class", help="6-column RKNN output layout.")
-    parser.add_argument("--submit-interval", type=float, default=0.0, help="Minimum seconds between backend submissions. Default follows FPS.")
-    parser.add_argument("--read-fail-limit", type=int, default=5, help="Consecutive frame read failures before reporting camera offline.")
-    parser.add_argument("--max-frames", type=int, default=0, help="Optional validation limit. 0 means run until Ctrl+C.")
-    args = parser.parse_args()
+    parser.add_argument("--max-det", type=int, default=None, help="Maximum detections kept after NMS.")
+    parser.add_argument("--dry-run", action="store_true", default=None, help="Print detection_status JSON and do not submit.")
+    parser.add_argument("--output-layout", choices=OUTPUT_LAYOUTS, default=None, help="6-column RKNN output layout.")
+    parser.add_argument("--submit-interval", type=float, default=None, help="Minimum seconds between backend submissions. Default follows FPS.")
+    parser.add_argument("--read-fail-limit", type=int, default=None, help="Consecutive frame read failures before reporting camera offline.")
+    parser.add_argument("--max-frames", type=int, default=None, help="Optional validation limit. 0 means run until Ctrl+C.")
+    raw_args = parser.parse_args()
+
+    try:
+        args = _merge_config(raw_args)
+    except RuntimeError as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
+
     if args.dry_run:
         _redirect_stdout_to_stderr_for_jsonl()
 
@@ -153,6 +195,48 @@ def main() -> int:
     except Exception as exc:
         print(f"Camera detection service failed: {exc}", file=sys.stderr)
         return 2
+
+
+def _merge_config(raw_args: argparse.Namespace) -> argparse.Namespace:
+    values = dict(DEFAULT_OPTIONS)
+    config_path = getattr(raw_args, "config", None)
+    if config_path:
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise RuntimeError(f"配置文件不存在：{config_file}")
+        try:
+            config_data = json.loads(config_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"配置文件不是合法 JSON：{exc}") from exc
+        if not isinstance(config_data, dict):
+            raise RuntimeError("配置文件顶层必须是 JSON object")
+        unknown_fields = sorted(set(config_data) - CONFIG_FIELDS)
+        if unknown_fields:
+            raise RuntimeError(f"配置文件包含未知字段：{', '.join(unknown_fields)}")
+        values.update(config_data)
+
+    for key, value in vars(raw_args).items():
+        if key == "config" or value is None:
+            continue
+        values[key] = value
+
+    if not values.get("model"):
+        raise RuntimeError("缺少 model，请通过 --model 或配置文件提供")
+    if not values.get("labels"):
+        raise RuntimeError("缺少 labels，请通过 --labels 或配置文件提供")
+    if values["output_layout"] not in OUTPUT_LAYOUTS:
+        raise RuntimeError(f"output_layout 必须是以下之一：{', '.join(OUTPUT_LAYOUTS)}")
+
+    values["camera"] = str(values["camera"])
+    values["conf"] = float(values["conf"])
+    values["fps"] = float(values["fps"])
+    values["submit"] = bool(values["submit"])
+    values["dry_run"] = bool(values["dry_run"])
+    values["max_det"] = int(values["max_det"])
+    values["submit_interval"] = float(values["submit_interval"])
+    values["read_fail_limit"] = int(values["read_fail_limit"])
+    values["max_frames"] = int(values["max_frames"])
+    return argparse.Namespace(**values)
 
 
 def run_service(args: argparse.Namespace) -> int:
