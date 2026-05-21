@@ -18,3 +18,5 @@ experiments/rknn_yolo/outputs/*
 .runtime/
 logs/
 experiments/rknn_yolo/outputs/debug_frames/
+# Hikrobot/MVS GenICam runtime cache
+experiments/rknn_yolo/$(ALLUSERSPROFILE)/

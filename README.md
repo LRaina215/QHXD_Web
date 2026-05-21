@@ -1,5 +1,34 @@
 # RK3588 Middleware Phase 2
 
+## 快捷启动
+
+在项目根目录 `/home/robomaster/QHXD` 下执行：
+
+```bash
+# 启动后端
+./scripts/start_backend.sh
+
+# 启动前端
+./scripts/start_frontend.sh
+
+# 启动 YOLO 摄像头检测服务，默认使用 USB / UVC 摄像头
+./scripts/start_yolo_camera.sh
+
+# 启动 YOLO 摄像头检测服务，使用 Hikrobot / MVS 相机配置
+./scripts/start_yolo_hik_camera.sh
+
+# 一键启动三项服务，YOLO 默认仍使用 USB / UVC 摄像头
+./scripts/start_all.sh
+
+# 查看状态
+./scripts/status_all.sh
+
+# 停止由脚本启动的服务
+./scripts/stop_all.sh
+```
+
+三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`camera_config.json` 默认保留 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
+
 ## 项目目的
 
 本项目用于把 RK3588 做成 RoboMaster 车载系统的交互与状态中台。
@@ -12,20 +41,6 @@
 - 让 Dashboard 通过 REST / WebSocket 观察 mock 与 real 两种模式
 
 后续 Phase 4 / Phase 5 已在此基础上增加语音入口、RKNN YOLO26 视觉检测、USB 摄像头抽帧检测、最新检测图片接口与 Dashboard 展示。当前仍不做 RT-Thread 直连、视频流、LLM/OpenClaw 或 YOLO 直接控制底盘。
-
-## Phase 5 快速启动总览
-
-当前推荐优先使用项目根目录下的脚本启动和检查服务：
-
-```bash
-./scripts/start_backend.sh
-./scripts/start_frontend.sh
-./scripts/start_yolo_camera.sh
-./scripts/status_all.sh
-./scripts/stop_all.sh
-```
-
-三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。Phase 5 的 YOLO 调试帧、短时保持、视觉事件策略和语音安全边界说明见文末“Phase 5：语音与视觉工程收口”。
 
 ## 快速运行
 
@@ -677,7 +692,7 @@ python3 camera_detect_service.py \
   --save-latest outputs/latest_camera_detection.jpg
 ```
 
-查看摄像头设备用 `ls /dev/video*` 和 `lsusb`。本阶段只更新 `detection_status`，Dashboard 显示检测状态，不展示视频流；YOLO 结果不直接控制底盘或 mission。当前 USB 摄像头路径为 OpenCV/ffmpeg 采集层，后续 Hik 相机可在该层替换 adapter 并保持 detection_status 合约不变。
+查看 USB 摄像头设备用 `ls /dev/video*` 和 `lsusb`。USB 入口默认走 OpenCV，必要时 fallback 到 ffmpeg。Hikrobot 相机入口已接入 MVS SDK，可通过 `camera_backend=hik` 或 `camera_config_hik.example.json` 切换；USB 入口仍保留，`camera_config.json` 默认仍为 `camera_backend=usb`。本阶段只更新 `detection_status`，Dashboard 显示检测状态，不展示视频流；YOLO 结果不直接控制底盘或 mission。
 
 
 
@@ -714,6 +729,32 @@ python3 camera_detect_service.py --config camera_config.json
 ```
 
 Dashboard 的视觉检测卡片会显示 `/api/perception/latest_frame?t=...`，每 2 秒刷新一次，同时保留 detection_status 的 objects / events 显示。更完整的配置和排障说明见 `experiments/rknn_yolo/README.md`。
+
+### Hikrobot 相机入口
+
+Hik 相机作为可选采集后端接入在：
+
+```text
+experiments/rknn_yolo/hik_camera_source.py
+experiments/rknn_yolo/camera_detect_service.py
+experiments/rknn_yolo/camera_config_hik.example.json
+```
+
+USB 与 Hik 的切换只影响采集层，不改变 RKNN 推理、`detection_status`、后端 state_store、Dashboard 或 mission 行为。当前测试记录：Hik 设备曾被识别为 `2bdf:0001 Hikrobot MV-CS060-10UC-PRO`，序列号 `DA8290708`；MVS SDK 首次可枚举/打开/start grabbing，但抓帧超时。随后内核日志持续出现 `usb 6-1: device descriptor read/8, error -110`，当前需要先让 USB3 总线稳定枚举后再做最终出图验收。
+
+Hik dry-run：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py --config camera_config_hik.example.json --dry-run --max-frames 1 --read-fail-limit 1
+```
+
+USB 默认入口：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py --config camera_config.json
+```
 
 ## 开发调试说明
 

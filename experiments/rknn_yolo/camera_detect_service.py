@@ -27,6 +27,10 @@ CONFIG_FIELDS = {
     "model",
     "labels",
     "camera",
+    "hik_timeout_ms",
+    "hik_serial",
+    "hik_index",
+    "camera_backend",
     "conf",
     "fps",
     "frame_id",
@@ -55,6 +59,10 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "model": None,
     "labels": None,
     "camera": "0",
+    "hik_timeout_ms": 1000,
+    "hik_serial": None,
+    "hik_index": 0,
+    "camera_backend": "auto",
     "conf": 0.25,
     "fps": 2.0,
     "frame_id": "camera_front",
@@ -241,6 +249,10 @@ def main() -> int:
     parser.add_argument("--model", default=None, help="Path to a .rknn model file.")
     parser.add_argument("--labels", default=None, help="Path to a labels.txt file.")
     parser.add_argument("--camera", default=None, help="OpenCV camera index or device path, default 0.")
+    parser.add_argument("--camera-backend", choices=["auto", "usb", "hik"], default=None, help="Camera source backend. auto/usb use OpenCV+ffmpeg; hik uses Hikrobot MVS SDK.")
+    parser.add_argument("--hik-index", type=int, default=None, help="Hik SDK camera index after optional serial filtering.")
+    parser.add_argument("--hik-serial", default=None, help="Optional Hik camera serial filter.")
+    parser.add_argument("--hik-timeout-ms", type=int, default=None, help="Hik SDK frame timeout in milliseconds.")
     parser.add_argument("--conf", type=float, default=None, help="Confidence threshold.")
     parser.add_argument("--fps", type=float, default=None, help="Detection FPS, default 2.")
     parser.add_argument("--frame-id", default=None, help="Frame ID for detection_status output.")
@@ -316,6 +328,12 @@ def _merge_config(raw_args: argparse.Namespace) -> argparse.Namespace:
         raise RuntimeError(f"output_layout 必须是以下之一：{', '.join(OUTPUT_LAYOUTS)}")
 
     values["camera"] = str(values["camera"])
+    values["camera_backend"] = str(values["camera_backend"]).lower()
+    if values["camera_backend"] not in {"auto", "usb", "hik"}:
+        raise RuntimeError("camera_backend 必须是 auto、usb 或 hik")
+    values["hik_index"] = int(values["hik_index"])
+    values["hik_serial"] = None if values["hik_serial"] in (None, "") else str(values["hik_serial"])
+    values["hik_timeout_ms"] = int(values["hik_timeout_ms"])
     values["conf"] = float(values["conf"])
     values["fps"] = float(values["fps"])
     values["submit"] = bool(values["submit"])
@@ -349,7 +367,7 @@ def _normalize_hold_classes(value: Any) -> list[str]:
 
 
 def run_service(args: argparse.Namespace) -> int:
-    camera = _open_camera(args.camera)
+    camera = _open_camera(args)
     runner: RknnYoloRunner | None = None
     final_status: dict[str, Any] | None = None
     final_status_submitted = False
@@ -570,7 +588,22 @@ def _stats_to_dict(stats: Any) -> dict[str, int]:
     }
 
 
-def _open_camera(camera_arg: str) -> CameraSource | None:
+def _open_camera(args: argparse.Namespace) -> CameraSource | None:
+    if args.camera_backend == "hik":
+        return _open_hik_camera(args)
+
+    camera = _open_usb_camera(args.camera)
+    if camera is not None:
+        return camera
+
+    if args.camera_backend == "auto":
+        hik_camera = _open_hik_camera(args)
+        if hik_camera is not None:
+            return hik_camera
+    return None
+
+
+def _open_usb_camera(camera_arg: str) -> CameraSource | None:
     source = _parse_camera_source(camera_arg)
     try:
         import cv2
@@ -591,6 +624,23 @@ def _open_camera(camera_arg: str) -> CameraSource | None:
     if camera.is_opened():
         return camera
     print(f"ffmpeg fallback could not open {device}.", file=sys.stderr)
+    return None
+
+
+def _open_hik_camera(args: argparse.Namespace) -> CameraSource | None:
+    try:
+        from hik_camera_source import HikCameraSource
+    except Exception as exc:
+        print(f"Hik camera backend unavailable: {exc}", file=sys.stderr)
+        return None
+    camera = HikCameraSource(index=args.hik_index, serial=args.hik_serial, timeout_ms=args.hik_timeout_ms)
+    if camera.is_opened():
+        label = getattr(camera, "device_label", "")
+        print(f"Hik camera opened via MVS SDK: {label}", file=sys.stderr)
+        return camera
+    error = getattr(camera, "last_error", "unknown error")
+    camera.release()
+    print(f"Hik camera could not open: {error}", file=sys.stderr)
     return None
 
 

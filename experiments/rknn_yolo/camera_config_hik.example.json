@@ -1,13 +1,13 @@
 {
   "model": "models/yolo26n_fp32.rknn",
   "labels": "models/labels.txt",
-  "camera": 0,
+  "camera": "0",
   "conf": 0.25,
   "fps": 1,
   "frame_id": "camera_front",
   "backend_url": "http://127.0.0.1:8000",
   "submit": true,
-  "save_latest": "outputs/latest_camera_detection.jpg",
+  "save_latest": "outputs/latest_hik_detection.jpg",
   "max_det": 20,
   "output_layout": "xyxy_score_class",
   "save_debug_frames": false,
@@ -24,8 +24,8 @@
   "person_event_interval": 5.0,
   "obstacle_event_interval": 5.0,
   "blockage_event_interval": 10.0,
-  "camera_backend": "usb",
+  "camera_backend": "hik",
   "hik_index": 0,
-  "hik_serial": "",
-  "hik_timeout_ms": 1000
+  "hik_serial": "DA8290708",
+  "hik_timeout_ms": 1500
 }

@@ -24,5 +24,8 @@
   "blockage_frames_required": 3,
   "person_event_interval": 5.0,
   "obstacle_event_interval": 5.0,
-  "blockage_event_interval": 10.0
+  "blockage_event_interval": 10.0,
+  "hik_index": 0,
+  "hik_serial": "",
+  "hik_timeout_ms": 1000
 }

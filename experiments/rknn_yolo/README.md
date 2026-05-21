@@ -266,7 +266,9 @@ experiments/rknn_yolo/camera_detect_service.py
 experiments/rknn_yolo/camera_config.example.json
 ```
 
-现阶段默认使用 USB / UVC 摄像头。脚本优先使用 OpenCV `VideoCapture`；如果当前 Python 没有 `cv2`，或 OpenCV 无法打开相机，会尝试用系统 `ffmpeg` 从 `/dev/videoN` 抓帧。当前 RK3588 环境已验证 OpenCV 采集路径可用。后续如切换 Hik 相机，应在相机采集层新增 Hik adapter，但保持 `detection_status` 输出结构不变。
+现阶段默认配置仍使用 USB / UVC 摄像头，脚本优先使用 OpenCV `VideoCapture`；如果当前 Python 没有 `cv2`，或 OpenCV 无法打开相机，会尝试用系统 `ffmpeg` 从 `/dev/videoN` 抓帧。当前 RK3588 环境已验证 OpenCV 采集路径可用。
+
+已预留并接入 Hikrobot/MVS SDK 采集入口，可通过配置切换到 Hik 相机；切换只发生在相机采集层，`RKNN YOLO26 -> detection_status -> 后端 state_store -> Dashboard` 的数据合约不变。USB 入口仍保留，且 `camera_config.json` 默认继续使用 USB。
 
 ### 查看摄像头设备
 
@@ -276,6 +278,62 @@ lsusb
 ```
 
 正常 USB 摄像头通常会出现 `/dev/video0`、`/dev/video1` 等节点。如果只看到 `/dev/video-dec0`、`/dev/video-enc0`，那是 Rockchip 编解码节点，不是普通 USB 摄像头采集节点。
+
+### USB / Hik 采集入口切换
+
+`camera_detect_service.py` 支持三种采集后端：
+
+```text
+camera_backend = usb   # 强制使用原 USB / UVC 摄像头入口
+camera_backend = hik   # 强制使用 Hikrobot MVS SDK 入口
+camera_backend = auto  # 先尝试 USB，USB 不可用时再尝试 Hik
+```
+
+默认配置文件仍保留 USB：
+
+```text
+experiments/rknn_yolo/camera_config.json
+```
+
+Hik 示例配置：
+
+```text
+experiments/rknn_yolo/camera_config_hik.example.json
+```
+
+Hik 入口依赖海康 MVS SDK，当前 RK3588 已发现 SDK 路径：
+
+```text
+/opt/MVS
+/opt/MVS/Samples/aarch64/Python/MvImport
+/opt/MVS/lib/aarch64/libMvCameraControl.so
+```
+
+使用 Hik 相机 dry-run：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py \
+  --config camera_config_hik.example.json \
+  --dry-run \
+  --max-frames 1 \
+  --read-fail-limit 1
+```
+
+或者通过 Hik 快捷启动脚本：
+
+```bash
+cd /home/robomaster/QHXD
+./scripts/start_yolo_hik_camera.sh
+```
+
+如需临时指定另一份 Hik 配置，可覆盖：
+
+```bash
+HIK_YOLO_CONFIG=/path/to/camera_config_hik.json ./scripts/start_yolo_hik_camera.sh
+```
+
+当前这台 Hik USB3 Vision 相机曾被系统识别为 `2bdf:0001 Hikrobot MV-CS060-10UC-PRO`，序列号 `DA8290708`。首次 MVS 探测可以枚举、打开并 start grabbing，但抓帧返回 `0x80000007`。执行 MVS USB 权限和 usbfs 内存设置后，当前内核日志出现反复的 `usb 6-1: device descriptor read/8, error -110`，`lsusb -t` 暂时不再稳定列出该相机。因此软件入口已接入，但 Hik 出图最终验收还需要先让相机在 USB3 总线/MVS SDK 中稳定枚举。
 
 ### dry-run 模式
 
@@ -388,6 +446,9 @@ Dashboard 现有“视觉检测状态”卡片会显示：
 4. 没有视频画面
    这是本阶段预期行为。Phase 4D 只提交检测状态，不做视频流展示。
 
+5. Hik 相机 MVS SDK 枚举不到设备
+   先用 `lsusb -t` 确认 USB3 总线上能稳定看到 Hik 设备；如果内核日志出现 `device descriptor read/8, error -110`，说明相机当前在 USB 枚举层不稳定，优先检查供电、线缆、USB3 口、带宽和物理重插。MVS SDK 枚举不到设备时，服务会输出 `camera_unavailable`，不会影响 USB 摄像头入口。
+
 ## 10. Phase 4D_2 识别图像流
 
 Phase 4D_2 采用“识别图像流”方案：YOLO 摄像头服务周期性保存一张带检测框的最新 JPEG，后端提供单张图片接口，Dashboard 定时刷新显示。它不是 WebRTC、RTSP、MJPEG，也不是完整视频流。
@@ -455,7 +516,8 @@ python3 camera_detect_service.py --config camera_config.json
 配置文件支持：
 
 ```text
-model, labels, camera, conf, fps, frame_id, backend_url, submit,
+model, labels, camera, camera_backend, hik_index, hik_serial,
+hik_timeout_ms, conf, fps, frame_id, backend_url, submit,
 save_latest, max_det, dry_run, output_layout, submit_interval,
 read_fail_limit, max_frames
 ```
