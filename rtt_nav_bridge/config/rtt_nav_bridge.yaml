@@ -1,0 +1,33 @@
+rtt_nav_bridge_node:
+  ros__parameters:
+    port: /dev/ttyACM0
+    baudrate: 115200
+    base_frame_id: base_link
+    odom_frame_id: odom
+    imu_frame_id: imu_link
+    cmd_vel_topic: /cmd_vel
+    odom_topic: /odom
+    imu_topic: /imu/data
+    status_topic: /rtt/status
+    raw_rx_topic: /rtt/raw_rx
+    raw_tx_topic: /rtt/raw_tx
+    publish_raw: true
+    # Current C-board firmware uses the timedserial/transmission 0xA5 binary protocol.
+    # Use text for the Phase6 NAV text protocol, or auto when probing mixed test rigs.
+    rx_protocol: binary_rm
+    binary_angle_unit: degrees
+    binary_yaw_clockwise_positive: true
+    cmd_timeout_ms: 300
+    heartbeat_period_ms: 100
+    reconnect_period_ms: 1000
+    rx_timeout_ms: 1000
+    max_vx: 0.5
+    max_vy: 0.5
+    max_wz: 1.0
+    integrate_odom: true
+    publish_tf: true
+    pose_covariance_diagonal: [0.02, 0.02, 0.0, 0.0, 0.0, 0.05]
+    twist_covariance_diagonal: [0.05, 0.05, 0.0, 0.0, 0.0, 0.1]
+    imu_orientation_covariance_diagonal: [0.05, 0.05, 0.1]
+    imu_angular_velocity_covariance_diagonal: [0.02, 0.02, 0.02]
+    imu_linear_acceleration_covariance_diagonal: [0.2, 0.2, 0.2]

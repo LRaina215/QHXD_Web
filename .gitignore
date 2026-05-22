@@ -20,3 +20,8 @@ logs/
 experiments/rknn_yolo/outputs/debug_frames/
 # Hikrobot/MVS GenICam runtime cache
 experiments/rknn_yolo/$(ALLUSERSPROFILE)/
+
+# ROS2 colcon generated artifacts
+build/
+install/
+log/
