@@ -11,6 +11,9 @@
 # 启动前端
 ./scripts/start_frontend.sh
 
+# 首次部署或更换 USB 摄像头后，绑定稳定设备名 /dev/qhxd-usb-camera
+./scripts/setup_usb_camera_alias.sh
+
 # 启动 YOLO 摄像头检测服务，默认使用 USB / UVC 摄像头
 ./scripts/start_yolo_camera.sh
 
@@ -27,7 +30,7 @@
 ./scripts/stop_all.sh
 ```
 
-三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`camera_config.json` 默认保留 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
+三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`setup_usb_camera_alias.sh` 会写入 udev 规则，执行时需要 sudo。`camera_config.json` 默认使用稳定设备名 `/dev/qhxd-usb-camera` 作为 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
 
 ## 项目目的
 
@@ -673,7 +676,7 @@ cd /home/robomaster/QHXD/experiments/rknn_yolo
 python3 camera_detect_service.py \
   --model models/yolo26n_fp32.rknn \
   --labels models/labels.txt \
-  --camera 0 \
+  --camera /dev/qhxd-usb-camera \
   --fps 1 \
   --dry-run \
   --save-latest outputs/latest_camera_detection.jpg
@@ -685,14 +688,14 @@ python3 camera_detect_service.py \
 python3 camera_detect_service.py \
   --model models/yolo26n_fp32.rknn \
   --labels models/labels.txt \
-  --camera 0 \
+  --camera /dev/qhxd-usb-camera \
   --fps 1 \
   --backend-url http://127.0.0.1:8000 \
   --submit \
   --save-latest outputs/latest_camera_detection.jpg
 ```
 
-查看 USB 摄像头设备用 `ls /dev/video*` 和 `lsusb`。USB 入口默认走 OpenCV，必要时 fallback 到 ffmpeg。Hikrobot 相机入口已接入 MVS SDK，可通过 `camera_backend=hik` 或 `camera_config_hik.example.json` 切换；USB 入口仍保留，`camera_config.json` 默认仍为 `camera_backend=usb`。本阶段只更新 `detection_status`，Dashboard 显示检测状态，不展示视频流；YOLO 结果不直接控制底盘或 mission。
+查看 USB 摄像头设备用 `ls /dev/video*`、`ls -l /dev/qhxd-usb-camera` 和 `lsusb`。USB 入口默认使用 `/dev/qhxd-usb-camera` 这个 udev 稳定别名，不再死查找 `/dev/video0`；OpenCV 打不开时才 fallback 到 ffmpeg。首次部署或更换 USB 摄像头后，运行 `./scripts/setup_usb_camera_alias.sh` 生成/更新该别名。Hikrobot 相机入口已接入 MVS SDK，可通过 `camera_backend=hik` 或 `camera_config_hik.example.json` 切换；USB 入口仍保留，`camera_config.json` 默认仍为 `camera_backend=usb`。本阶段只更新 `detection_status`，Dashboard 显示检测状态，不展示视频流；YOLO 结果不直接控制底盘或 mission。
 
 
 

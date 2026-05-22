@@ -1,6 +1,6 @@
 {
-  "camera_backend": "opencv-usb",
-  "camera": 0,
+  "camera_backend": "usb",
+  "camera": "/dev/qhxd-usb-camera",
   "fps": 1,
   "frame_id": "camera_front",
   "model": "models/yolo26n_fp32.rknn",
@@ -10,8 +10,7 @@
   "max_det": 20,
   "backend_url": "http://127.0.0.1:8000",
   "save_latest": "outputs/latest_camera_detection.jpg",
-  "future_camera_note": "Current Phase 4D uses USB/OpenCV VideoCapture. A later Hik camera adapter can keep the same detection_status output contract.",
-  "save_debug_frames": false,
+    "save_debug_frames": false,
   "debug_frame_dir": "outputs/debug_frames",
   "debug_every_n": 1,
   "hold_seconds": 2.0,

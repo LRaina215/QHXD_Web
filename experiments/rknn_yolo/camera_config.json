@@ -1,7 +1,7 @@
 {
   "model": "models/yolo26n_fp32.rknn",
   "labels": "models/labels.txt",
-  "camera": 0,
+  "camera": "/dev/qhxd-usb-camera",
   "conf": 0.25,
   "fps": 1,
   "frame_id": "camera_front",

@@ -266,9 +266,9 @@ experiments/rknn_yolo/camera_detect_service.py
 experiments/rknn_yolo/camera_config.example.json
 ```
 
-现阶段默认配置仍使用 USB / UVC 摄像头，脚本优先使用 OpenCV `VideoCapture`；如果当前 Python 没有 `cv2`，或 OpenCV 无法打开相机，会尝试用系统 `ffmpeg` 从 `/dev/videoN` 抓帧。当前 RK3588 环境已验证 OpenCV 采集路径可用。
+现阶段默认配置仍使用 USB / UVC 摄像头，且默认设备名为 `/dev/qhxd-usb-camera`。该名字由 `scripts/setup_usb_camera_alias.sh` 通过 udev 绑定到当前 USB 摄像头的 capture 节点，避免系统枚举成 `/dev/video1`、`/dev/video2` 时脚本仍死查找 `/dev/video0`。脚本优先使用 OpenCV `VideoCapture`；如果当前 Python 没有 `cv2`，或 OpenCV 无法打开相机，会尝试用系统 `ffmpeg` 抓帧。当前 RK3588 环境已验证 OpenCV 采集路径可用。
 
-已预留并接入 Hikrobot/MVS SDK 采集入口，可通过配置切换到 Hik 相机；切换只发生在相机采集层，`RKNN YOLO26 -> detection_status -> 后端 state_store -> Dashboard` 的数据合约不变。USB 入口仍保留，且 `camera_config.json` 默认继续使用 USB。
+已预留并接入 Hikrobot/MVS SDK 采集入口，可通过配置切换到 Hik 相机；切换只发生在相机采集层，`RKNN YOLO26 -> detection_status -> 后端 state_store -> Dashboard` 的数据合约不变。USB 入口仍保留，且 `camera_config.json` 默认通过 `/dev/qhxd-usb-camera` 使用 USB。
 
 ### 查看摄像头设备
 
@@ -277,7 +277,21 @@ ls /dev/video*
 lsusb
 ```
 
-正常 USB 摄像头通常会出现 `/dev/video0`、`/dev/video1` 等节点。如果只看到 `/dev/video-dec0`、`/dev/video-enc0`，那是 Rockchip 编解码节点，不是普通 USB 摄像头采集节点。
+正常 USB 摄像头通常会出现 `/dev/video0`、`/dev/video1` 等节点。如果只看到 `/dev/video-dec0`、`/dev/video-enc0`，那是 Rockchip 编解码节点，不是普通 USB 摄像头采集节点。当前项目推荐使用稳定别名：
+
+```bash
+cd /home/robomaster/QHXD
+./scripts/setup_usb_camera_alias.sh
+ls -l /dev/qhxd-usb-camera
+```
+
+当前已绑定结果应类似：
+
+```text
+/dev/qhxd-usb-camera -> video1
+```
+
+`camera_config.json` 默认使用 `/dev/qhxd-usb-camera`，因此即使系统没有 `/dev/video0`，也不会再因固定查找 video0 导致打不开相机。
 
 ### USB / Hik 采集入口切换
 
@@ -344,7 +358,7 @@ cd /home/robomaster/QHXD/experiments/rknn_yolo
 python3 camera_detect_service.py \
   --model models/yolo26n_fp32.rknn \
   --labels models/labels.txt \
-  --camera 0 \
+  --camera /dev/qhxd-usb-camera \
   --conf 0.25 \
   --fps 1 \
   --frame-id camera_front \
@@ -376,7 +390,7 @@ cd /home/robomaster/QHXD/experiments/rknn_yolo
 python3 camera_detect_service.py \
   --model models/yolo26n_fp32.rknn \
   --labels models/labels.txt \
-  --camera 0 \
+  --camera /dev/qhxd-usb-camera \
   --conf 0.25 \
   --fps 1 \
   --frame-id camera_front \
