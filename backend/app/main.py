@@ -36,6 +36,8 @@ from app.schemas import (
     VoiceAudioCommandResponse,
     VoiceAudioCommandResult,
     VoiceCommandResponse,
+    VoiceConfirmCommandRequest,
+    VoiceConfirmCommandResponse,
     VoiceRecordCommandRequest,
     VoiceRecordCommandResponse,
     VoiceRecordCommandResult,
@@ -116,6 +118,19 @@ def _latest_frame_response():
         media_type="image/jpeg",
         headers={"Cache-Control": "no-store"},
     )
+
+
+
+
+def _parse_optional_bool(value: str | None) -> bool | None:
+    if value is None or value == "":
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 def _voice_max_upload_bytes() -> int:
@@ -217,6 +232,10 @@ def _save_audio_command_log(
         "need_confirm": result.need_confirm,
         "error": result.error,
         "asr_time_s": result.asr_time_s,
+        "parser": result.parser,
+        "llm_backend": result.llm_backend,
+        "llm_model": result.llm_model,
+        "pending_command_id": result.pending_command_id,
     }
     persistence.save_command_log(
         command="voice_audio_command",
@@ -238,6 +257,7 @@ def _voice_result_from_asr(
     *,
     source: str,
     requested_by: str | None,
+    use_llm: bool | None = None,
 ) -> tuple[VoiceAudioCommandResult, object | None]:
     if not asr_result.success or not asr_result.recognized_text.strip():
         return (
@@ -259,6 +279,7 @@ def _voice_result_from_asr(
         text=asr_result.recognized_text,
         source=source,
         requested_by=requested_by,
+        use_llm=use_llm,
     )
     voice_result, state = voice_entry_service.handle_text_command(text_request)
     return (
@@ -277,6 +298,11 @@ def _voice_result_from_asr(
             detail=voice_result.detail,
             error=None if voice_result.accepted else voice_result.detail,
             task_status=voice_result.task_status,
+            parser=voice_result.parser,
+            llm_backend=voice_result.llm_backend,
+            llm_model=voice_result.llm_model,
+            llm_raw_output=voice_result.llm_raw_output,
+            pending_command_id=voice_result.pending_command_id,
         ),
         state,
     )
@@ -356,12 +382,23 @@ async def asr_text_mock(request: VoiceTextCommandRequest) -> VoiceCommandRespons
     return VoiceCommandResponse(data=result)
 
 
+
+
+@app.post("/api/voice/confirm_command", response_model=VoiceConfirmCommandResponse)
+async def confirm_voice_command(request: VoiceConfirmCommandRequest) -> VoiceConfirmCommandResponse:
+    result, state = voice_entry_service.confirm_pending_command(request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    return VoiceConfirmCommandResponse(data=result)
+
+
 @app.post("/api/voice/audio_command", response_model=VoiceAudioCommandResponse)
 async def audio_command(request: Request) -> VoiceAudioCommandResponse:
     upload = await _read_voice_upload(request)
     temp_path: Path | None = None
     source = upload["fields"].get("source") or "audio-upload"
     requested_by = upload["fields"].get("requested_by")
+    use_llm = _parse_optional_bool(upload["fields"].get("use_llm"))
     audio_duration_s: float | None = None
 
     try:
@@ -371,6 +408,7 @@ async def audio_command(request: Request) -> VoiceAudioCommandResponse:
             asr_service.transcribe_audio_file(str(temp_path)),
             source=source,
             requested_by=requested_by,
+            use_llm=use_llm,
         )
         if state is not None:
             await ws_manager.broadcast_state(state)
@@ -410,6 +448,7 @@ async def record_command(request: VoiceRecordCommandRequest) -> VoiceRecordComma
         asr_service.transcribe_audio_file(str(audio_path)),
         source=source,
         requested_by=requested_by,
+        use_llm=request.use_llm,
     )
     if state is not None:
         await ws_manager.broadcast_state(state)

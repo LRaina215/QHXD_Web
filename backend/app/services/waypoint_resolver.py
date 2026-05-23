@@ -24,6 +24,14 @@ class WaypointResolver:
             return None, None
         return result.waypoint_id, result.name
 
+    def list_waypoints(self) -> list[dict[str, object]]:
+        return [dict(item) for item in self._waypoints]
+
+    def waypoint_exists(self, waypoint_id: str | None) -> bool:
+        if waypoint_id is None:
+            return False
+        return any(str(item.get("waypoint_id")) == str(waypoint_id) for item in self._waypoints)
+
     def resolve_detail(self, text: str) -> WaypointResolveResult:
         normalized_text = self._normalize(text)
         candidates: list[dict[str, str | int]] = []

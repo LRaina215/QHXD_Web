@@ -25,3 +25,9 @@ experiments/rknn_yolo/$(ALLUSERSPROFILE)/
 build/
 install/
 log/
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+!backend/.env.example

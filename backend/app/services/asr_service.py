@@ -35,6 +35,7 @@ class ASRService:
             text=request.text,
             source=request.source or "asr-text-mock",
             requested_by=request.requested_by,
+            use_llm=request.use_llm,
         )
 
     def transcribe_audio_file(self, audio_path: str) -> ASRResult:

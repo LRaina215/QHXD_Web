@@ -33,6 +33,7 @@ from app.schemas import (
     ReturnHomeRequest,
     TaskStatus,
     Vector3Sample,
+    VoiceConfirmCommandRequest,
     VoiceRecordCommandRequest,
     VoiceTextCommandRequest,
 )
@@ -41,6 +42,8 @@ from app.services.mock_state import MockStateService
 from app.services.mode_manager import mode_manager
 from app.services.persistence import persistence
 from app.services.state_store import state_store
+from app.services.voice.llm_client import LLMClientResponse
+from app.services.voice import llm_intent_parser as llm_intent_parser_module
 
 
 class _FakeNucMissionServer:
@@ -219,6 +222,21 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self._original_voice_mock_text = os.environ.get("VOICE_MOCK_RECOGNIZED_TEXT")
         self._original_voice_max_seconds = os.environ.get("VOICE_MAX_AUDIO_SECONDS")
         self._original_voice_max_mb = os.environ.get("VOICE_MAX_UPLOAD_MB")
+        self._original_llm_enable = os.environ.get("LLM_ENABLE")
+        self._original_deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+        self._original_deepseek_model = os.environ.get("DEEPSEEK_MODEL")
+        self._original_llm_threshold = os.environ.get("LLM_CONFIDENCE_THRESHOLD")
+        self._original_voice_pending_ttl = os.environ.get("VOICE_PENDING_TTL_SECONDS")
+
+        for key in [
+            "LLM_ENABLE",
+            "DEEPSEEK_API_KEY",
+            "DEEPSEEK_MODEL",
+            "LLM_CONFIDENCE_THRESHOLD",
+            "VOICE_PENDING_TTL_SECONDS",
+        ]:
+            os.environ.pop(key, None)
+        main_module.voice_entry_service._pending.clear()
 
         persistence._db_path = Path(self._temp_dir.name) / "phase1-test.db"
         main_module.mock_state_service = MockStateService()
@@ -238,6 +256,12 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self._restore_env("VOICE_MOCK_RECOGNIZED_TEXT", self._original_voice_mock_text)
         self._restore_env("VOICE_MAX_AUDIO_SECONDS", self._original_voice_max_seconds)
         self._restore_env("VOICE_MAX_UPLOAD_MB", self._original_voice_max_mb)
+        self._restore_env("LLM_ENABLE", self._original_llm_enable)
+        self._restore_env("DEEPSEEK_API_KEY", self._original_deepseek_key)
+        self._restore_env("DEEPSEEK_MODEL", self._original_deepseek_model)
+        self._restore_env("LLM_CONFIDENCE_THRESHOLD", self._original_llm_threshold)
+        self._restore_env("VOICE_PENDING_TTL_SECONDS", self._original_voice_pending_ttl)
+        main_module.voice_entry_service._pending.clear()
         self._temp_dir.cleanup()
 
     async def test_health_endpoint_returns_ok(self) -> None:
@@ -311,6 +335,151 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.data.command, "pause_task")
         self.assertIsNotNone(response.data.task_status)
         self.assertEqual(response.data.task_status.state, "paused")
+
+
+    async def test_llm_complex_motion_requires_confirmation_then_executes(self) -> None:
+        os.environ["LLM_ENABLE"] = "true"
+        os.environ["DEEPSEEK_API_KEY"] = "test-placeholder-key"
+        os.environ["DEEPSEEK_MODEL"] = "deepseek-v4-flash"
+        original_chat_json = llm_intent_parser_module.llm_client.chat_json
+
+        def fake_chat_json(**kwargs):
+            return LLMClientResponse(
+                success=True,
+                content=json.dumps({
+                    "intent": "go_to_waypoint",
+                    "command": "go_to_waypoint",
+                    "waypoint_alias": "二零一实验室",
+                    "waypoint_id": "wp_201",
+                    "confidence": 0.92,
+                    "need_confirm": True,
+                    "reason": "用户表达了将样品送往201实验室的意图",
+                    "missing_slots": [],
+                    "ask_text": None,
+                }, ensure_ascii=False),
+                model="deepseek-v4-flash",
+            )
+
+        llm_intent_parser_module.llm_client.chat_json = fake_chat_json
+        try:
+            response = await main_module.text_command(
+                VoiceTextCommandRequest(
+                    text="帮我把样品送到二零一实验室",
+                    source="test-voice",
+                    requested_by="unittest",
+                    use_llm=True,
+                )
+            )
+            logs_before_confirm = persistence.list_command_logs()
+            self.assertFalse(response.data.accepted)
+            self.assertEqual(response.data.parser, "llm")
+            self.assertEqual(response.data.intent, "go_to_waypoint")
+            self.assertEqual(response.data.payload["waypoint_id"], "wp_201")
+            self.assertTrue(response.data.need_confirm)
+            self.assertIsNotNone(response.data.pending_command_id)
+            self.assertEqual(len(logs_before_confirm), 0)
+
+            confirm_response = await main_module.confirm_voice_command(
+                VoiceConfirmCommandRequest(
+                    pending_command_id=response.data.pending_command_id,
+                    confirmed=True,
+                    requested_by="operator",
+                )
+            )
+            logs_after_confirm = persistence.list_command_logs()
+            self.assertTrue(confirm_response.data.accepted)
+            self.assertEqual(confirm_response.data.command, "go_to_waypoint")
+            self.assertEqual(confirm_response.data.task_status.task_type, "go_to_waypoint")
+            self.assertEqual(len(logs_after_confirm), 1)
+            self.assertEqual(logs_after_confirm[0].payload["waypoint_id"], "wp_201")
+        finally:
+            llm_intent_parser_module.llm_client.chat_json = original_chat_json
+
+    async def test_llm_unknown_does_not_trigger_mission(self) -> None:
+        os.environ["LLM_ENABLE"] = "true"
+        os.environ["DEEPSEEK_API_KEY"] = "test-placeholder-key"
+        original_chat_json = llm_intent_parser_module.llm_client.chat_json
+
+        def fake_chat_json(**kwargs):
+            return LLMClientResponse(
+                success=True,
+                content=json.dumps({
+                    "intent": "unknown",
+                    "command": None,
+                    "waypoint_alias": None,
+                    "waypoint_id": None,
+                    "confidence": 0.3,
+                    "need_confirm": True,
+                    "reason": "无法确定用户要执行的机器人任务",
+                    "missing_slots": ["target_waypoint"],
+                    "ask_text": "请问你要让机器人去哪个位置？",
+                }, ensure_ascii=False),
+                model="deepseek-v4-flash",
+            )
+
+        llm_intent_parser_module.llm_client.chat_json = fake_chat_json
+        try:
+            response = await main_module.text_command(
+                VoiceTextCommandRequest(
+                    text="今天天气不错",
+                    source="test-voice",
+                    requested_by="unittest",
+                    use_llm=True,
+                )
+            )
+            logs = persistence.list_command_logs()
+            self.assertFalse(response.data.accepted)
+            self.assertEqual(response.data.parser, "llm")
+            self.assertEqual(response.data.intent, "unknown")
+            self.assertEqual(len(logs), 0)
+        finally:
+            llm_intent_parser_module.llm_client.chat_json = original_chat_json
+
+    async def test_confirm_pending_can_cancel_without_mission(self) -> None:
+        os.environ["LLM_ENABLE"] = "true"
+        os.environ["DEEPSEEK_API_KEY"] = "test-placeholder-key"
+        original_chat_json = llm_intent_parser_module.llm_client.chat_json
+
+        def fake_chat_json(**kwargs):
+            return LLMClientResponse(
+                success=True,
+                content=json.dumps({
+                    "intent": "return_home",
+                    "command": "return_home",
+                    "waypoint_alias": "起点",
+                    "waypoint_id": "home",
+                    "confidence": 0.9,
+                    "need_confirm": True,
+                    "reason": "用户希望机器人返回起点",
+                    "missing_slots": [],
+                    "ask_text": None,
+                }, ensure_ascii=False),
+                model="deepseek-v4-flash",
+            )
+
+        llm_intent_parser_module.llm_client.chat_json = fake_chat_json
+        try:
+            response = await main_module.text_command(
+                VoiceTextCommandRequest(
+                    text="我想让机器人回装载点",
+                    source="test-voice",
+                    requested_by="unittest",
+                    use_llm=True,
+                )
+            )
+            self.assertFalse(response.data.accepted)
+            cancel_response = await main_module.confirm_voice_command(
+                VoiceConfirmCommandRequest(
+                    pending_command_id=response.data.pending_command_id,
+                    confirmed=False,
+                    requested_by="operator",
+                )
+            )
+            logs = persistence.list_command_logs()
+            self.assertFalse(cancel_response.data.accepted)
+            self.assertEqual(len(logs), 0)
+        finally:
+            llm_intent_parser_module.llm_client.chat_json = original_chat_json
 
     async def test_detection_status_update_is_visible_in_latest_state(self) -> None:
         response = await main_module.ingest_detection_status(

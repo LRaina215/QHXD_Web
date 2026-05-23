@@ -32,6 +32,89 @@
 
 三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`setup_usb_camera_alias.sh` 会写入 udev 规则，执行时需要 sudo。`camera_config.json` 默认使用稳定设备名 `/dev/qhxd-usb-camera` 作为 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
 
+
+## DeepSeek V4 API 配置
+
+DeepSeek V4 只用于语音识别文本之后的语义解析 fallback，不直接控制底盘、不直接调用 RT-Thread，也不替代本地规则解析。简单命令仍优先走规则解析；复杂自然语言在允许 LLM 时才会调用 DeepSeek。
+
+真实 API Key 禁止提交到 Git。项目只提供占位示例：
+
+```text
+.env.example
+```
+
+推荐配置：
+
+```bash
+cp .env.example .env
+# 编辑 .env，把 DEEPSEEK_API_KEY 改成真实 key；不要提交 .env
+```
+
+也可以直接在启动后端前导出环境变量：
+
+```bash
+export LLM_BACKEND=deepseek
+export LLM_ENABLE=true
+export DEEPSEEK_API_KEY="真实 key 放这里，不提交 Git"
+export DEEPSEEK_BASE_URL="https://api.deepseek.com"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+后端读取这些变量：
+
+```bash
+DEEPSEEK_API_KEY
+DEEPSEEK_BASE_URL
+DEEPSEEK_MODEL
+DEEPSEEK_TIMEOUT_SECONDS
+DEEPSEEK_MAX_TOKENS
+DEEPSEEK_TEMPERATURE
+LLM_CONFIDENCE_THRESHOLD
+LLM_REQUIRE_CONFIRM_FOR_MOTION
+VOICE_PENDING_TTL_SECONDS
+```
+
+推荐模型：
+
+```bash
+DEEPSEEK_MODEL=deepseek-v4-flash
+```
+
+如果语义解析效果不够，再切换：
+
+```bash
+DEEPSEEK_MODEL=deepseek-v4-pro
+```
+
+未配置 `DEEPSEEK_API_KEY` 或 `LLM_ENABLE=false` 时，后端不会启动失败，会自动保持规则解析路径。API 超时、返回非 JSON、低置信度、未知 intent、非法 waypoint 都不会触发 mission。
+
+文本命令可按请求控制是否允许 LLM：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/text_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"帮我把样品送到二零一实验室","source":"text-debug","requested_by":"operator","use_llm":true}'
+```
+
+移动类 LLM 结果默认需要二次确认，首次返回 `accepted=false`、`need_confirm=true`、`pending_command_id=...`，不会立即调用 `mission_gateway`。确认执行：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/confirm_command \
+  -H 'Content-Type: application/json' \
+  -d '{"pending_command_id":"voice_pending_xxx","confirmed":true,"requested_by":"operator"}'
+```
+
+取消执行：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/confirm_command \
+  -H 'Content-Type: application/json' \
+  -d '{"pending_command_id":"voice_pending_xxx","confirmed":false,"requested_by":"operator"}'
+```
+
+音频上传和录音接口也支持可选 LLM：`/api/voice/audio_command` 的 multipart 字段可带 `use_llm=true`，`/api/voice/record_command` 的 JSON 可带 `"use_llm": true`。
+
+
 ## 项目目的
 
 本项目用于把 RK3588 做成 RoboMaster 车载系统的交互与状态中台。
@@ -43,7 +126,7 @@
 - 接入 `RK3588 -> NUC` 的 mission bridge
 - 让 Dashboard 通过 REST / WebSocket 观察 mock 与 real 两种模式
 
-后续 Phase 4 / Phase 5 已在此基础上增加语音入口、RKNN YOLO26 视觉检测、USB 摄像头抽帧检测、最新检测图片接口与 Dashboard 展示。当前仍不做 RT-Thread 直连、视频流、LLM/OpenClaw 或 YOLO 直接控制底盘。
+后续 Phase 4 / Phase 5 已在此基础上增加语音入口、RKNN YOLO26 视觉检测、USB 摄像头抽帧检测、最新检测图片接口与 Dashboard 展示。Phase 7 在语音规则解析之后增加可选 DeepSeek V4 语义解析 fallback；当前仍不做 OpenClaw、视频流或 YOLO 直接控制底盘。
 
 ## 快速运行
 

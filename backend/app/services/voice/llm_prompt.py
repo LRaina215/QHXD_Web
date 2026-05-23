@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+import json
+
+from app.services.voice.llm_schema import ALLOWED_INTENTS
+from app.services.waypoint_resolver import waypoint_resolver
+
+SYSTEM_PROMPT = """你是机器人语音命令解析器。
+你只能把用户文本解析为允许的 JSON 任务意图。
+你不能直接控制机器人。
+你不能输出自然语言解释。
+你不能编造 waypoint_id。
+你不能生成代码、shell 命令或任意操作指令。
+如果无法确定任务，返回 intent=unknown。
+只输出一个 JSON 对象，不要输出 Markdown。"""
+
+JSON_SCHEMA = {
+    "intent": "go_to_waypoint | start_patrol | pause_task | resume_task | return_home | query_status | query_task | query_detection | unknown",
+    "command": "same as intent for executable/query commands, or null",
+    "waypoint_alias": "用户提到的目标点别名，或 null",
+    "waypoint_id": "仅可从可用 waypoint 列表选择，或 null",
+    "confidence": "0.0 到 1.0",
+    "need_confirm": "移动类任务 true，查询/暂停/继续可 false",
+    "reason": "一句简短中文原因",
+    "missing_slots": "缺少字段列表",
+    "ask_text": "需要追问时的中文问题，或 null",
+}
+
+
+def build_prompts(recognized_text: str) -> tuple[str, str]:
+    waypoints = waypoint_resolver.list_waypoints()
+    compact_waypoints = [
+        {
+            "waypoint_id": item.get("waypoint_id"),
+            "name": item.get("name"),
+            "aliases": item.get("aliases", []),
+        }
+        for item in waypoints
+    ]
+    user_payload = {
+        "recognized_text": recognized_text,
+        "allowed_intents": sorted(ALLOWED_INTENTS),
+        "available_waypoints": compact_waypoints,
+        "output_json_schema": JSON_SCHEMA,
+        "safety_rules": [
+            "不得编造 waypoint_id；目标点只能来自 available_waypoints。",
+            "go_to_waypoint/start_patrol/return_home 属于移动类任务，need_confirm 必须为 true。",
+            "如果用户要求写代码、删除文件、随便高速移动、自由规划或无法确定任务，intent 返回 unknown。",
+            "如果缺少目标点，intent 返回 unknown，并在 missing_slots 写 target_waypoint。",
+        ],
+    }
+    return SYSTEM_PROMPT, json.dumps(user_payload, ensure_ascii=False)

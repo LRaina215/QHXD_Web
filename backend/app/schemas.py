@@ -20,6 +20,9 @@ VoiceIntentValue = Literal[
     "resume_task",
     "return_home",
     "query_status",
+    "query_task",
+    "query_detection",
+    "unknown",
 ]
 
 
@@ -180,6 +183,7 @@ class VoiceTextCommandRequest(ContractModel):
     text: str = Field(min_length=1, description="文本命令内容")
     source: str = Field(default="text-debug", description="命令来源")
     requested_by: str | None = Field(default=None, description="命令发起人")
+    use_llm: bool | None = Field(default=None, description="本次请求是否允许 LLM fallback；false 会强制禁用")
 
 
 class VoiceCommandResult(ContractModel):
@@ -187,10 +191,15 @@ class VoiceCommandResult(ContractModel):
     intent: VoiceIntentValue | None = Field(default=None, description="解析出的意图")
     command: str | None = Field(default=None, description="实际任务命令或查询命令")
     payload: dict[str, JsonScalar] = Field(default_factory=dict, description="解析出的命令参数")
-    confidence: float = Field(ge=0.0, le=1.0, description="规则解析置信度")
+    confidence: float = Field(ge=0.0, le=1.0, description="解析置信度")
     need_confirm: bool = Field(default=False, description="是否需要人工确认")
     detail: str = Field(description="解析或执行说明")
     task_status: TaskStatus | None = Field(default=None, description="任务执行后的任务状态")
+    parser: str = Field(default="rule", description="解析器来源：rule / llm / safety")
+    llm_backend: str | None = Field(default=None, description="LLM backend 名称")
+    llm_model: str | None = Field(default=None, description="LLM 模型名称")
+    llm_raw_output: str | None = Field(default=None, description="调试模式下返回的 LLM 原始输出")
+    pending_command_id: str | None = Field(default=None, description="待确认命令 ID")
 
 
 class VoiceCommandResponse(ContractModel):
@@ -213,6 +222,11 @@ class VoiceAudioCommandResult(ContractModel):
     detail: str = Field(description="ASR、解析或执行说明")
     error: str | None = Field(default=None, description="失败原因")
     task_status: TaskStatus | None = Field(default=None, description="任务执行后的任务状态")
+    parser: str = Field(default="rule", description="解析器来源：rule / llm / safety")
+    llm_backend: str | None = Field(default=None, description="LLM backend 名称")
+    llm_model: str | None = Field(default=None, description="LLM 模型名称")
+    llm_raw_output: str | None = Field(default=None, description="调试模式下返回的 LLM 原始输出")
+    pending_command_id: str | None = Field(default=None, description="待确认命令 ID")
 
 
 class VoiceAudioCommandResponse(ContractModel):
@@ -225,6 +239,7 @@ class VoiceRecordCommandRequest(ContractModel):
     source: str = Field(default="rk3588-record-command", description="命令来源")
     requested_by: str | None = Field(default="operator", description="命令发起人")
     keep_audio: bool | None = Field(default=None, description="是否保留录音文件")
+    use_llm: bool | None = Field(default=None, description="本次请求是否允许 LLM fallback；false 会强制禁用")
 
 
 class VoiceRecordCommandResult(VoiceAudioCommandResult):
@@ -239,6 +254,19 @@ class VoiceRecordCommandResponse(ContractModel):
     data: VoiceRecordCommandResult | None = Field(default=None)
     error: str | None = Field(default=None)
     detail: str | None = Field(default=None)
+
+
+
+
+class VoiceConfirmCommandRequest(ContractModel):
+    pending_command_id: str = Field(min_length=1, description="待确认命令 ID")
+    confirmed: bool = Field(description="true 执行，false 取消")
+    requested_by: str | None = Field(default="operator", description="确认操作人")
+
+
+class VoiceConfirmCommandResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: VoiceCommandResult
 
 
 class ModeSwitchRequest(ContractModel):

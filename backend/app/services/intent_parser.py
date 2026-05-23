@@ -11,6 +11,10 @@ class ParsedIntent:
     confidence: float = 0.0
     need_confirm: bool = True
     detail: str = "未识别到可执行任务。"
+    parser: str = "rule"
+    llm_backend: str | None = None
+    llm_model: str | None = None
+    llm_raw_output: str | None = None
 
 
 class IntentParser:
