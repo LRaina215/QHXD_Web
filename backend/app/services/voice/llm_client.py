@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 
@@ -92,6 +94,57 @@ class DeepSeekClient:
             force_enable=bool(force_enable),
         )
 
+    def _chat_json_with_curl(self, url: str, payload: dict, config: LLMClientConfig) -> LLMClientResponse:
+        config_path = None
+        payload_path = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as payload_file:
+                json.dump(payload, payload_file, ensure_ascii=False)
+                payload_path = payload_file.name
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as config_file:
+                config_file.write(f'url = "{url}"\n')
+                config_file.write('request = "POST"\n')
+                config_file.write('noproxy = "*"\n')
+                config_file.write(f'max-time = {config.timeout_seconds}\n')
+                config_file.write('silent\n')
+                config_file.write('show-error\n')
+                config_file.write('header = "Content-Type: application/json"\n')
+                config_file.write(f'header = "Authorization: Bearer {config.api_key}"\n')
+                config_file.write(f'data = "@{payload_path}"\n')
+                config_file.write('write-out = "\\n%{http_code}"\n')
+                config_path = config_file.name
+            completed = subprocess.run(
+                ["curl", "--config", config_path],
+                capture_output=True,
+                text=True,
+                timeout=config.timeout_seconds + 2.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return LLMClientResponse(success=False, error="deepseek-timeout", model=config.model)
+        except OSError as exc:
+            return LLMClientResponse(success=False, error=f"deepseek-curl-error: {type(exc).__name__}", model=config.model)
+        finally:
+            for path in (config_path, payload_path):
+                if path:
+                    Path(path).unlink(missing_ok=True)
+
+        output = completed.stdout.strip()
+        if completed.returncode != 0:
+            stderr = completed.stderr.strip()[:200]
+            return LLMClientResponse(success=False, error=f"deepseek-curl-exit-{completed.returncode}: {stderr}", model=config.model)
+        if "\n" not in output:
+            return LLMClientResponse(success=False, error="deepseek-curl-invalid-response", model=config.model)
+        body, status = output.rsplit("\n", 1)
+        if not status.isdigit() or int(status) >= 400:
+            return LLMClientResponse(success=False, error=f"deepseek-http-{status}: {body[:200]}", model=config.model)
+        try:
+            raw = json.loads(body)
+        except json.JSONDecodeError:
+            return LLMClientResponse(success=False, error="deepseek-invalid-json-response", model=config.model)
+        return LLMClientResponse(success=True, content=None, model=config.model, raw_response=raw)
+
+
     def chat_json(self, *, system_prompt: str, user_prompt: str, force_enable: bool | None = None) -> LLMClientResponse:
         config = self.config(force_enable=force_enable)
         if not config.enabled:
@@ -124,8 +177,11 @@ class DeepSeekClient:
             return LLMClientResponse(success=False, error=f"deepseek-http-{exc.code}: {detail}", model=config.model)
         except TimeoutError:
             return LLMClientResponse(success=False, error="deepseek-timeout", model=config.model)
-        except (urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
-            return LLMClientResponse(success=False, error=f"deepseek-error: {type(exc).__name__}", model=config.model)
+        except (urllib.error.URLError, json.JSONDecodeError, OSError):
+            curl_response = self._chat_json_with_curl(url, payload, config)
+            if not curl_response.success:
+                return curl_response
+            raw = curl_response.raw_response or {}
 
         try:
             content = raw["choices"][0]["message"]["content"]

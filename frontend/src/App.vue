@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import VoiceConfirmDialog from './components/VoiceConfirmDialog.vue'
 
 type DetectionStatus = {
   enabled: boolean
@@ -98,35 +99,37 @@ type VoiceTaskStatus = {
   source: string
 }
 
-type VoiceCommandResponse = {
-  success: boolean
-  data: {
-    accepted: boolean
-    intent: string | null
-    command: string | null
-    payload: Record<string, string | number | boolean | null>
-    confidence: number
-    need_confirm: boolean
-    detail: string
-    task_status: VoiceTaskStatus | null
-  }
-}
+type VoicePayloadValue = string | number | boolean | null
 
-type VoiceRecordCommandResult = {
-  recognized_text: string
-  raw_text: string
-  asr_backend: string
-  asr_time_s: number
-  model_load_time_s: number | null
+type VoiceCommandResult = {
+  accepted: boolean
   intent: string | null
   command: string | null
-  payload: Record<string, string | number | boolean | null>
-  waypoint_id: string | null
-  accepted: boolean
-  need_confirm: boolean
+  payload: Record<string, VoicePayloadValue>
+  confidence: number
+  need_confirm?: boolean
+  pending_command_id?: string | null
+  recognized_text?: string
+  waypoint_id?: string | null
+  parser?: string
+  llm_backend?: string | null
+  llm_model?: string | null
   detail: string
-  error: string | null
+  error?: string | null
   task_status: VoiceTaskStatus | null
+}
+
+type VoiceCommandResponse = {
+  success: boolean
+  data: VoiceCommandResult
+}
+
+type VoiceRecordCommandResult = VoiceCommandResult & {
+  recognized_text: string
+  raw_text: string | null
+  asr_backend: string
+  asr_time_s: number | null
+  model_load_time_s: number | null
   audio_path: string | null
   duration: number
   audio_device: string
@@ -196,12 +199,16 @@ const voiceRecordResult = ref<VoiceRecordCommandResult | null>(null)
 const voiceRecordError = ref('')
 const voiceRecordStatus = ref('空闲')
 const voiceRecordDuration = ref(3)
+const pendingVoiceCommand = ref<VoiceCommandResult | null>(null)
+const pendingVoiceSource = ref<'text' | 'record' | null>(null)
+const voiceConfirmError = ref('')
 const connectionLabel = ref('连接中')
 const imuConnectionLabel = ref('IMU 流连接中')
 const actionMessage = ref('等待命令')
 const isSending = ref(false)
 const isSendingTextCommand = ref(false)
 const isRecordingVoice = ref(false)
+const isConfirmingVoiceCommand = ref(false)
 const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
 const imuWsConnected = ref(false)
@@ -362,10 +369,10 @@ const detectionEventItems = computed(() => state.value?.detection_status?.events
 
 const latestVoiceSummary = computed(() => {
   if (voiceRecordResult.value) {
-    return `${voiceRecordResult.value.recognized_text || '--'} / ${voiceRecordResult.value.intent ?? '--'} / ${voiceRecordResult.value.accepted ? '已受理' : '未受理'}`
+    return `${voiceRecordResult.value.recognized_text || '--'} / ${voiceRecordResult.value.intent ?? '--'} / ${voiceStatusLabel(voiceRecordResult.value)}`
   }
   if (voiceResult.value) {
-    return `${textCommand.value || '--'} / ${voiceResult.value.intent ?? '--'} / ${voiceResult.value.accepted ? '已受理' : '未受理'}`
+    return `${voiceResult.value.recognized_text || textCommand.value || '--'} / ${voiceResult.value.intent ?? '--'} / ${voiceStatusLabel(voiceResult.value)}`
   }
   return '暂无语音或文本结果'
 })
@@ -380,7 +387,7 @@ const voiceRecordStatusHint = computed(() => {
   }
 
   if (voiceRecordResult.value) {
-    return voiceRecordResult.value.accepted ? '已受理' : '未受理'
+    return voiceStatusLabel(voiceRecordResult.value)
   }
 
   return '空闲'
@@ -391,12 +398,16 @@ const voiceRecordAcceptedLabel = computed(() => {
     return '--'
   }
 
-  return voiceRecordResult.value.accepted ? '已受理' : '未受理'
+  return voiceStatusLabel(voiceRecordResult.value)
 })
 
 const voiceRecordNoCommandLabel = computed(() => {
   if (!voiceRecordResult.value) {
     return ''
+  }
+
+  if (shouldOpenVoiceConfirm(voiceRecordResult.value)) {
+    return '移动任务等待确认'
   }
 
   if (!voiceRecordResult.value.accepted || voiceRecordResult.value.intent === 'unknown') {
@@ -405,6 +416,172 @@ const voiceRecordNoCommandLabel = computed(() => {
 
   return ''
 })
+
+function voiceStatusLabel(result: VoiceCommandResult) {
+  if (shouldOpenVoiceConfirm(result)) {
+    return '待确认'
+  }
+  if (result.accepted) {
+    return '已受理'
+  }
+  return '未受理'
+}
+
+function resultWaypointId(result: VoiceCommandResult) {
+  return result.waypoint_id ?? valueAsString(result.payload?.waypoint_id)
+}
+
+function valueAsString(value: VoicePayloadValue | undefined) {
+  if (value === null || value === undefined) {
+    return null
+  }
+  return String(value)
+}
+
+function normalizeVoiceResult(result: VoiceCommandResult, recognizedTextFallback = ''): VoiceCommandResult {
+  return {
+    ...result,
+    payload: result.payload ?? {},
+    need_confirm: Boolean(result.need_confirm),
+    pending_command_id: result.pending_command_id ?? null,
+    recognized_text: result.recognized_text || recognizedTextFallback,
+    waypoint_id: resultWaypointId(result),
+  }
+}
+
+function shouldOpenVoiceConfirm(result: VoiceCommandResult | null) {
+  return Boolean(result?.need_confirm && result.pending_command_id)
+}
+
+function handleVoiceCommandResult(
+  result: VoiceCommandResult,
+  source: 'text' | 'record',
+  recognizedTextFallback = '',
+) {
+  const normalized = normalizeVoiceResult(result, recognizedTextFallback)
+
+  if (source === 'record') {
+    voiceRecordResult.value = normalized as VoiceRecordCommandResult
+    voiceRecordStatus.value = voiceStatusLabel(normalized)
+  } else {
+    voiceResult.value = normalized
+  }
+
+  if (shouldOpenVoiceConfirm(normalized)) {
+    pendingVoiceCommand.value = normalized
+    pendingVoiceSource.value = source
+    voiceConfirmError.value = ''
+    actionMessage.value = '移动任务需要确认，尚未执行'
+    return
+  }
+
+  pendingVoiceCommand.value = null
+  pendingVoiceSource.value = null
+  actionMessage.value = normalized.accepted
+    ? normalized.detail
+    : normalized.detail || normalized.error || '未识别到可执行任务命令'
+}
+
+async function confirmVoiceCommand(
+  pendingCommandId: string,
+  confirmed: boolean,
+  requestedBy = 'operator',
+) {
+  const response = await fetch('/api/voice/confirm_command', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      pending_command_id: pendingCommandId,
+      confirmed,
+      requested_by: requestedBy,
+    }),
+  })
+
+  let payload: VoiceCommandResponse | null = null
+  try {
+    payload = (await response.json()) as VoiceCommandResponse
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok || !payload?.data) {
+    throw new Error(payload?.data?.detail || '确认请求失败，请检查连接')
+  }
+
+  return normalizeVoiceResult(payload.data, pendingVoiceCommand.value?.recognized_text ?? '')
+}
+
+function closeVoiceConfirmDialog() {
+  pendingVoiceCommand.value = null
+  pendingVoiceSource.value = null
+  voiceConfirmError.value = ''
+}
+
+async function handleVoiceConfirm(confirmed: boolean) {
+  if (isConfirmingVoiceCommand.value) {
+    return
+  }
+
+  const pendingId = pendingVoiceCommand.value?.pending_command_id
+  if (!pendingId) {
+    voiceConfirmError.value = '缺少待确认命令 ID，请重新下达命令'
+    return
+  }
+
+  isConfirmingVoiceCommand.value = true
+  voiceConfirmError.value = ''
+
+  try {
+    const result = await confirmVoiceCommand(pendingId, confirmed, 'dashboard')
+    const source = pendingVoiceSource.value
+
+    if (source === 'record' && voiceRecordResult.value) {
+      voiceRecordResult.value = {
+        ...voiceRecordResult.value,
+        accepted: result.accepted,
+        need_confirm: result.need_confirm,
+        pending_command_id: result.pending_command_id,
+        intent: result.intent,
+        command: result.command,
+        payload: result.payload,
+        confidence: result.confidence,
+        waypoint_id: resultWaypointId(result),
+        parser: result.parser,
+        llm_backend: result.llm_backend,
+        llm_model: result.llm_model,
+        detail: result.detail,
+        error: result.error,
+        task_status: result.task_status,
+      }
+      voiceRecordStatus.value = confirmed && result.accepted ? '已确认执行' : '已取消'
+    } else {
+      voiceResult.value = result
+    }
+
+    if (confirmed && !result.accepted) {
+      const message = result.detail || '确认已过期，请重新下达命令'
+      actionMessage.value = message.includes('过期') || message.includes('不存在')
+        ? '确认已过期，请重新下达命令'
+        : message
+      closeVoiceConfirmDialog()
+      return
+    }
+
+    actionMessage.value = confirmed
+      ? result.detail || '任务已确认执行'
+      : result.detail || '任务已取消'
+    closeVoiceConfirmDialog()
+    await Promise.all([loadState(), loadAlerts()])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '确认请求失败，请检查连接'
+    voiceConfirmError.value = message
+    actionMessage.value = message
+  } finally {
+    isConfirmingVoiceCommand.value = false
+  }
+}
 
 onMounted(async () => {
   await Promise.all([loadState(), loadAlerts(), loadImu()])
@@ -614,9 +791,10 @@ async function sendTextCommand() {
     }
 
     const payload = (await response.json()) as VoiceCommandResponse
-    voiceResult.value = payload.data
-    actionMessage.value = payload.data.detail
-    await Promise.all([loadState(), loadAlerts()])
+    handleVoiceCommandResult(payload.data, 'text', textCommand.value)
+    if (!shouldOpenVoiceConfirm(payload.data)) {
+      await Promise.all([loadState(), loadAlerts()])
+    }
   } catch (error) {
     actionMessage.value = error instanceof Error ? error.message : '文本命令发送失败'
   } finally {
@@ -672,10 +850,10 @@ async function recordVoiceCommand() {
       throw new Error('板端录音接口未返回识别结果')
     }
 
-    voiceRecordResult.value = payload.data
-    voiceRecordStatus.value = payload.data.accepted && payload.data.intent !== 'unknown' ? '成功' : '未受理'
-    actionMessage.value = payload.data.accepted ? payload.data.detail : '未识别到可执行任务命令'
-    await Promise.all([loadState(), loadAlerts()])
+    handleVoiceCommandResult(payload.data, 'record')
+    if (!shouldOpenVoiceConfirm(payload.data)) {
+      await Promise.all([loadState(), loadAlerts()])
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : '板端录音识别失败'
     voiceRecordError.value = message
@@ -878,11 +1056,23 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
           </div>
           <div class="detail-item">
             <span>Waypoint</span>
-            <strong>{{ voiceResult.payload.waypoint_id ?? '--' }}</strong>
+            <strong>{{ voiceResult.waypoint_id ?? voiceResult.payload.waypoint_id ?? '--' }}</strong>
           </div>
           <div class="detail-item">
             <span>Accepted</span>
-            <strong>{{ String(voiceResult.accepted) }}</strong>
+            <strong>{{ voiceStatusLabel(voiceResult) }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>Parser</span>
+            <strong>{{ voiceResult.parser ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>LLM</span>
+            <strong>{{ voiceResult.llm_backend ? `${voiceResult.llm_backend} / ${voiceResult.llm_model ?? '--'}` : '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>Confidence</span>
+            <strong>{{ formatNumber(voiceResult.confidence) }}</strong>
           </div>
           <div class="detail-item wide-detail">
             <span>Detail</span>
@@ -946,6 +1136,18 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
           <div class="detail-item">
             <span>是否受理</span>
             <strong>{{ voiceRecordAcceptedLabel }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>解析方式</span>
+            <strong>{{ voiceRecordResult.parser ?? '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>LLM</span>
+            <strong>{{ voiceRecordResult.llm_backend ? `${voiceRecordResult.llm_backend} / ${voiceRecordResult.llm_model ?? '--'}` : '--' }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>置信度</span>
+            <strong>{{ formatNumber(voiceRecordResult.confidence) }}</strong>
           </div>
           <div class="detail-item">
             <span>ASR 后端</span>
@@ -1172,5 +1374,15 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
         </ul>
       </article>
     </section>
+
+    <VoiceConfirmDialog
+      v-if="pendingVoiceCommand"
+      :result="pendingVoiceCommand"
+      :loading="isConfirmingVoiceCommand"
+      :error="voiceConfirmError"
+      @confirm="handleVoiceConfirm(true)"
+      @cancel="handleVoiceConfirm(false)"
+      @close="closeVoiceConfirmDialog"
+    />
   </main>
 </template>
