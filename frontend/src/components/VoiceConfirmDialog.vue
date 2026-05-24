@@ -114,19 +114,22 @@ const parserLabel = computed(() => {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.36);
-  backdrop-filter: blur(6px);
+  background:
+    linear-gradient(135deg, rgba(21, 19, 15, 0.72), rgba(21, 19, 15, 0.42)),
+    rgba(21, 19, 15, 0.54);
+  backdrop-filter: blur(9px);
 }
 
 .voice-confirm-dialog {
-  width: min(640px, 100%);
-  max-height: min(760px, calc(100vh - 40px));
+  width: min(680px, 100%);
+  max-height: min(800px, calc(100vh - 40px));
   overflow: auto;
   padding: 22px;
-  border: 1px solid #dbe5f2;
+  border: 1px solid #15130f;
+  border-left: 8px solid #f3ad44;
   border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.22);
+  background: #fffaf0;
+  box-shadow: 0 34px 100px rgba(21, 19, 15, 0.38);
 }
 
 .voice-confirm-header {
@@ -139,27 +142,30 @@ const parserLabel = computed(() => {
 
 .voice-confirm-kicker {
   margin: 0 0 6px;
-  color: #2563eb;
+  color: #d98218;
+  font-family: "DIN Alternate", "Avenir Next", sans-serif;
   font-size: 0.75rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-weight: 900;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .voice-confirm-header h2 {
   margin: 0;
-  color: #0f172a;
-  font-size: 1.18rem;
+  color: #15130f;
+  font-family: "DIN Alternate", "Avenir Next", "Microsoft YaHei", sans-serif;
+  font-size: 1.34rem;
+  font-weight: 900;
 }
 
 .icon-button {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   padding: 0;
   border-radius: 8px;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #475569;
+  border: 1px solid #b8aa97;
+  background: #fffaf0;
+  color: #51483d;
   box-shadow: none;
   font-size: 1.2rem;
   line-height: 1;
@@ -174,15 +180,15 @@ const parserLabel = computed(() => {
 }
 
 .risk-note {
-  color: #a16207;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
+  color: #15130f;
+  background: #fff2d9;
+  border: 1px solid rgba(217, 130, 24, 0.34);
 }
 
 .voice-confirm-error {
-  color: #b91c1c;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  color: #a62b22;
+  background: #fff0ec;
+  border: 1px solid rgba(196, 56, 43, 0.3);
 }
 
 .voice-confirm-grid {
@@ -194,9 +200,9 @@ const parserLabel = computed(() => {
 .voice-confirm-item {
   min-width: 0;
   padding: 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #e0d4c4;
   border-radius: 8px;
-  background: #f8fafc;
+  background: rgba(255, 253, 248, 0.72);
 }
 
 .voice-confirm-item.wide {
@@ -206,12 +212,13 @@ const parserLabel = computed(() => {
 .voice-confirm-item span {
   display: block;
   margin-bottom: 6px;
-  color: #64748b;
+  color: #726a5f;
   font-size: 0.82rem;
+  font-weight: 800;
 }
 
 .voice-confirm-item strong {
-  color: #0f172a;
+  color: #15130f;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -223,15 +230,24 @@ const parserLabel = computed(() => {
   margin-top: 18px;
 }
 
+.cancel-button,
+.confirm-button {
+  min-height: 44px;
+  border-radius: 8px;
+  font-weight: 900;
+}
+
 .cancel-button {
-  color: #1e293b;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
+  color: #15130f;
+  border: 1px solid #b8aa97;
+  background: #fffaf0;
   box-shadow: none;
 }
 
 .confirm-button {
-  background: #2563eb;
+  color: #15130f;
+  border: 1px solid #f3ad44;
+  background: #f3ad44;
 }
 
 @media (max-width: 560px) {
@@ -241,6 +257,11 @@ const parserLabel = computed(() => {
 
   .voice-confirm-actions {
     flex-direction: column-reverse;
+  }
+
+  .cancel-button,
+  .confirm-button {
+    width: 100%;
   }
 }
 </style>

@@ -303,11 +303,12 @@ const transportStatusLabel = computed(() => {
 })
 
 const batteryLabel = computed(() => {
-  if (!state.value) {
+  const battery = state.value?.device_status.battery_percent
+  if (battery === null || battery === undefined) {
     return '--'
   }
 
-  return `${state.value.device_status.battery_percent}%`
+  return `${battery}%`
 })
 
 const estopLabel = computed(() => {
@@ -1082,24 +1083,33 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
 
 <template>
   <main class="dashboard">
-    <header class="top-status-bar">
+    <header class="command-header">
       <div class="brand-block">
         <p class="eyebrow">QHXD Robot Console</p>
         <h1>配送巡检一体化哨兵机器人中台</h1>
+        <p class="header-subtitle">RK3588 车载交互与状态中枢</p>
       </div>
-      <div class="top-status-items">
-        <span class="status-badge" :class="toneClass(state?.system_mode.mode === 'real' ? 'info' : 'muted')">
-          {{ systemModeLabel }}
-        </span>
-        <span class="status-badge" :class="toneClass(onlineTone)">NUC {{ onlineStatus }}</span>
-        <span class="status-badge" :class="toneClass(wsConnected ? 'success' : 'warning')">
-          RK3588 {{ wsConnected ? 'Online' : 'Reconnecting' }}
-        </span>
-        <span class="time-chip">{{ currentClockLabel }}</span>
+
+      <div class="header-control-plane">
+        <div class="top-status-items" aria-label="系统状态">
+          <span class="status-badge mode-badge" :class="toneClass(state?.system_mode.mode === 'real' ? 'info' : 'muted')">
+            {{ systemModeLabel }} 模式
+          </span>
+          <span class="status-badge" :class="toneClass(onlineTone)">NUC {{ onlineStatus }}</span>
+          <span class="status-badge" :class="toneClass(wsConnected ? 'success' : 'warning')">
+            RK3588 {{ wsConnected ? 'Online' : 'Reconnecting' }}
+          </span>
+          <span class="status-badge" :class="toneClass(latestAlertTone)">
+            告警 {{ latestAlert?.level ?? 'normal' }}
+          </span>
+          <span class="time-chip">{{ currentClockLabel }}</span>
+        </div>
+
         <div class="mode-switch-group" aria-label="系统模式切换">
           <button
             :disabled="isSwitchingMode || state?.system_mode.mode === 'mock'"
             class="secondary compact-button"
+            type="button"
             @click="switchMode('mock')"
           >
             切到 Mock
@@ -1107,6 +1117,7 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
           <button
             :disabled="isSwitchingMode || state?.system_mode.mode === 'real'"
             class="compact-button"
+            type="button"
             @click="switchMode('real')"
           >
             切到 Real
@@ -1115,129 +1126,159 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
       </div>
     </header>
 
-    <section class="status-grid core-status-grid">
-      <article class="card metric-card">
-        <span class="card-label">当前任务</span>
+    <section class="readiness-strip" aria-label="核心状态">
+      <article class="metric-card task-card">
+        <div class="metric-topline">
+          <span class="card-label">当前任务</span>
+          <span class="status-badge" :class="toneClass(taskTone)">{{ state?.task_status.state ?? 'unknown' }}</span>
+        </div>
         <strong>{{ currentTaskLabel }}</strong>
         <small>{{ state?.task_status.progress ?? 0 }}% · {{ state?.task_status.source ?? '--' }}</small>
-        <span class="status-badge" :class="toneClass(taskTone)">{{ state?.task_status.state ?? 'unknown' }}</span>
       </article>
-      <article class="card metric-card">
-        <span class="card-label">机器人在线状态</span>
+
+      <article class="metric-card">
+        <div class="metric-topline">
+          <span class="card-label">机器人链路</span>
+          <span class="status-badge" :class="toneClass(onlineTone)">{{ connectionLabel }}</span>
+        </div>
         <strong>{{ onlineStatus }}</strong>
         <small>{{ transportStatusLabel }}</small>
-        <span class="status-badge" :class="toneClass(onlineTone)">{{ connectionLabel }}</span>
       </article>
-      <article class="card metric-card">
-        <span class="card-label">电量 / 急停</span>
+
+      <article class="metric-card">
+        <div class="metric-topline">
+          <span class="card-label">电量 / 急停 / 故障</span>
+          <span class="status-badge" :class="toneClass(batteryTone)">
+            {{ state?.device_status.fault_code ?? (state?.device_status.emergency_stop ? 'emergency_stop' : 'normal') }}
+          </span>
+        </div>
         <strong>{{ batteryLabel }}</strong>
-        <small>急停：{{ estopLabel }}</small>
-        <span class="status-badge" :class="toneClass(batteryTone)">
-          {{ state?.device_status.fault_code ?? (state?.device_status.emergency_stop ? 'emergency_stop' : 'normal') }}
-        </span>
+        <small>急停：{{ estopLabel }} · 更新 {{ lastUpdatedLabel }}</small>
       </article>
-      <article class="card metric-card">
-        <span class="card-label">最近告警</span>
+
+      <article class="metric-card">
+        <div class="metric-topline">
+          <span class="card-label">感知状态</span>
+          <span class="status-badge" :class="toneClass(detectionTone)">{{ detectionStatusLabel }}</span>
+        </div>
+        <strong>{{ latestDetectionObjectLabel }}</strong>
+        <small>{{ state?.detection_status?.model_name ?? '--' }}</small>
+      </article>
+
+      <article class="metric-card alert-card">
+        <div class="metric-topline">
+          <span class="card-label">最近告警</span>
+          <span class="status-badge" :class="toneClass(latestAlertTone)">{{ latestAlert?.level ?? 'normal' }}</span>
+        </div>
         <strong>{{ latestAlert?.message ?? '暂无告警' }}</strong>
         <small>{{ latestAlert ? `${latestAlert.source} · ${formatTime(latestAlert.timestamp)}` : '系统稳定' }}</small>
-        <span class="status-badge" :class="toneClass(latestAlertTone)">{{ latestAlert?.level ?? 'normal' }}</span>
       </article>
     </section>
 
-    <section class="dashboard-main-grid">
-      <div class="main-left-stack">
+    <section class="operations-grid">
+      <div class="operations-primary">
         <NavMapPlaceholder
           :robot-pose="state?.robot_pose ?? null"
           :goal="navGoal"
           :nav-state="state?.nav_status.state ?? null"
         />
 
-        <article class="panel surface-panel mission-panel">
+        <article class="panel mission-panel">
           <div class="section-header compact-header">
             <div>
-              <p class="section-kicker">Mission</p>
+              <p class="section-kicker">Mission Control</p>
               <h2>任务快捷控制</h2>
             </div>
             <span class="hint-text">{{ actionMessage }}</span>
           </div>
 
-          <label class="field inline-field">
-            <span>目标点 ID</span>
-            <input v-model="waypointId" type="text" placeholder="例如 wp_201" />
-          </label>
+          <div class="mission-form-row">
+            <label class="field inline-field">
+              <span>目标点 ID</span>
+              <input v-model="waypointId" type="text" placeholder="例如 wp_201" />
+            </label>
 
-          <div class="button-row mission-actions">
-            <button
-              :disabled="isSending || !waypointId"
-              @click="sendMission('/api/mission/go_to_waypoint', { waypoint_id: waypointId, source: 'web', requested_by: 'dashboard' }, '已发送前往目标点命令')"
-            >
-              前往目标点
-            </button>
-            <button
-              :disabled="isSending"
-              class="secondary"
-              @click="sendMission('/api/mission/pause', { source: 'web', requested_by: 'dashboard' }, '已发送暂停命令')"
-            >
-              暂停
-            </button>
-            <button
-              :disabled="isSending"
-              class="secondary"
-              @click="sendMission('/api/mission/resume', { source: 'web', requested_by: 'dashboard' }, '已发送恢复命令')"
-            >
-              恢复
-            </button>
-            <button
-              :disabled="isSending"
-              class="warn"
-              @click="sendMission('/api/mission/return_home', { source: 'web', requested_by: 'dashboard' }, '已发送返航命令')"
-            >
-              返回 Home
-            </button>
+            <div class="button-row mission-actions">
+              <button
+                :disabled="isSending || !waypointId"
+                type="button"
+                @click="sendMission('/api/mission/go_to_waypoint', { waypoint_id: waypointId, source: 'web', requested_by: 'dashboard' }, '已发送前往目标点命令')"
+              >
+                前往目标点
+              </button>
+              <button
+                :disabled="isSending"
+                class="secondary"
+                type="button"
+                @click="sendMission('/api/mission/pause', { source: 'web', requested_by: 'dashboard' }, '已发送暂停命令')"
+              >
+                暂停
+              </button>
+              <button
+                :disabled="isSending"
+                class="secondary"
+                type="button"
+                @click="sendMission('/api/mission/resume', { source: 'web', requested_by: 'dashboard' }, '已发送恢复命令')"
+              >
+                恢复
+              </button>
+              <button
+                :disabled="isSending"
+                class="warn"
+                type="button"
+                @click="sendMission('/api/mission/return_home', { source: 'web', requested_by: 'dashboard' }, '已发送返航命令')"
+              >
+                返回 Home
+              </button>
+            </div>
           </div>
         </article>
       </div>
 
-      <div class="main-right-stack">
-        <article class="panel surface-panel voice-panel">
+      <div class="operations-secondary">
+        <article class="panel voice-panel">
           <div class="section-header compact-header">
             <div>
               <p class="section-kicker">Voice / LLM</p>
-              <h2>语音与文本任务入口</h2>
+              <h2>语音与语义任务入口</h2>
             </div>
-            <span class="status-badge" :class="toneClass(pendingVoiceCommand ? 'warning' : voiceRecordError ? 'danger' : 'info')">
+            <span class="voice-summary-chip" :class="toneClass(pendingVoiceCommand ? 'warning' : voiceRecordError ? 'danger' : 'info')">
               {{ latestVoiceSummary }}
             </span>
           </div>
 
-          <label class="field">
-            <span>文本命令</span>
-            <input v-model="textCommand" type="text" placeholder="例如 帮我把样品送到二零一实验室" @keyup.enter="sendTextCommand" />
-          </label>
-
-          <div class="button-row voice-actions">
-            <button :disabled="isSendingTextCommand || !textCommand.trim()" @click="sendTextCommand">
-              {{ isSendingTextCommand ? '发送中...' : '发送文本命令' }}
-            </button>
-            <label class="field compact-field duration-field">
-              <span>板端录音</span>
-              <select v-model.number="voiceRecordDuration" :disabled="isRecordingVoice">
-                <option :value="2">2 秒</option>
-                <option :value="3">3 秒</option>
-                <option :value="5">5 秒</option>
-              </select>
+          <div class="voice-command-stack">
+            <label class="field">
+              <span>文本命令</span>
+              <input v-model="textCommand" type="text" placeholder="例如 帮我把样品送到二零一实验室" @keyup.enter="sendTextCommand" />
             </label>
-            <button class="secondary" :disabled="isRecordingVoice" @click="recordVoiceCommand">
-              {{ isRecordingVoice ? '录音识别中...' : '开始录音识别' }}
-            </button>
+
+            <div class="button-row voice-actions">
+              <button :disabled="isSendingTextCommand || !textCommand.trim()" type="button" @click="sendTextCommand">
+                {{ isSendingTextCommand ? '发送中...' : '发送文本命令' }}
+              </button>
+              <label class="field compact-field duration-field">
+                <span>板端录音</span>
+                <select v-model.number="voiceRecordDuration" :disabled="isRecordingVoice">
+                  <option :value="2">2 秒</option>
+                  <option :value="3">3 秒</option>
+                  <option :value="5">5 秒</option>
+                </select>
+              </label>
+              <button class="secondary" :disabled="isRecordingVoice" type="button" @click="recordVoiceCommand">
+                {{ isRecordingVoice ? '录音识别中...' : '开始录音识别' }}
+              </button>
+            </div>
           </div>
 
-          <p v-if="isRecordingVoice" class="inline-status">正在录音并识别，请说话...</p>
-          <p v-if="voiceRecordNoCommandLabel" class="inline-status warn-status">{{ voiceRecordNoCommandLabel }}</p>
-          <p v-if="voiceRecordError" class="inline-status error-status">{{ voiceRecordError }}</p>
+          <div class="status-message-stack">
+            <p v-if="isRecordingVoice" class="inline-status">正在录音并识别，请说话...</p>
+            <p v-if="voiceRecordNoCommandLabel" class="inline-status warn-status">{{ voiceRecordNoCommandLabel }}</p>
+            <p v-if="voiceRecordError" class="inline-status error-status">{{ voiceRecordError }}</p>
+          </div>
 
           <div class="voice-result-grid">
-            <div class="detail-item wide-detail">
+            <div class="detail-item wide-detail highlight-detail">
               <span>识别文本</span>
               <strong>{{ voiceRecordResult?.recognized_text || voiceResult?.recognized_text || textCommand || '--' }}</strong>
             </div>
@@ -1250,16 +1291,20 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
               <strong>{{ formatNumber(voiceRecordResult?.asr_time_s, ' s') }}</strong>
             </div>
             <div class="detail-item">
-              <span>解析意图</span>
+              <span>intent</span>
               <strong>{{ voiceRecordResult?.intent ?? voiceResult?.intent ?? '--' }}</strong>
             </div>
             <div class="detail-item">
-              <span>目标点</span>
+              <span>waypoint_id</span>
               <strong>{{ voiceRecordResult?.waypoint_id ?? voiceResult?.waypoint_id ?? voiceRecordResult?.payload.waypoint_id ?? voiceResult?.payload.waypoint_id ?? '--' }}</strong>
             </div>
             <div class="detail-item">
-              <span>执行状态</span>
+              <span>accepted / need_confirm</span>
               <strong>{{ voiceRecordResult ? voiceStatusLabel(voiceRecordResult) : voiceResult ? voiceStatusLabel(voiceResult) : '--' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>pending_command_id</span>
+              <strong>{{ pendingVoiceCommand?.pending_command_id ?? voiceRecordResult?.pending_command_id ?? voiceResult?.pending_command_id ?? '--' }}</strong>
             </div>
             <div class="detail-item">
               <span>解析方式</span>
@@ -1276,7 +1321,7 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
           </div>
         </article>
 
-        <article class="panel surface-panel perception-panel">
+        <article class="panel perception-panel">
           <div class="section-header compact-header">
             <div>
               <p class="section-kicker">Perception</p>
@@ -1325,15 +1370,6 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
               <span>最近事件</span>
               <strong>{{ latestDetectionEventLabel }}</strong>
             </div>
-            <div class="detail-item wide-detail">
-              <span>视觉事件</span>
-              <strong v-if="detectionEventItems.length === 0">暂无事件</strong>
-              <strong v-else class="value-block detection-event-lines">
-                <span v-for="event in detectionEventItems" :key="`${event.event_type}-${event.message}`">
-                  {{ event.level }} / {{ event.event_type }} / {{ event.message }}
-                </span>
-              </strong>
-            </div>
           </div>
 
           <div v-if="currentDetectionObjects.length || recentDetectionObjects.length" class="object-list">
@@ -1346,12 +1382,26 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
             </span>
           </div>
           <div v-else class="empty-state compact-empty">暂无检测对象</div>
+
+          <div class="event-mini-list detection-event-list">
+            <div v-if="detectionEventItems.length === 0" class="empty-state compact-empty">暂无视觉事件</div>
+            <div
+              v-for="event in detectionEventItems.slice(0, 4)"
+              v-else
+              :key="`${event.event_type}-${event.message}`"
+              class="mini-event"
+            >
+              <span class="status-badge" :class="toneClass(alertTone(event.level))">{{ event.level }}</span>
+              <strong>{{ event.event_type }}</strong>
+              <p>{{ event.message }}</p>
+            </div>
+          </div>
         </article>
       </div>
     </section>
 
     <section class="event-grid">
-      <article class="panel surface-panel events-panel">
+      <article class="panel events-panel">
         <div class="section-header compact-header">
           <div>
             <p class="section-kicker">Events</p>
@@ -1371,13 +1421,13 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
         </ul>
       </article>
 
-      <article class="panel surface-panel debug-panel">
+      <article class="panel observability-panel">
         <div class="section-header compact-header">
           <div>
             <p class="section-kicker">Runtime</p>
-            <h2>系统调试信息</h2>
+            <h2>链路与环境</h2>
           </div>
-          <span class="hint-text">IMU / 环境 / 链路</span>
+          <span class="hint-text">IMU / 环境 / 故障</span>
         </div>
 
         <div class="detail-grid runtime-grid">
@@ -1389,7 +1439,7 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
             <span>IMU 更新时间</span>
             <strong>{{ imuUpdatedLabel }}</strong>
           </div>
-          <div class="detail-item">
+          <div class="detail-item wide-detail">
             <span>欧拉角</span>
             <strong v-if="imu?.imu.euler_deg" class="value-block">
               yaw={{ formatNumber(imu.imu.euler_deg.yaw) }} / pitch={{ formatNumber(imu.imu.euler_deg.pitch) }} / roll={{ formatNumber(imu.imu.euler_deg.roll) }}
