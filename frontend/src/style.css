@@ -372,10 +372,6 @@ h2 {
 .operations-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.06fr) minmax(420px, 0.94fr);
-  grid-template-areas:
-    "nav voice"
-    "nav yolo"
-    "mission yolo";
   gap: 16px;
   margin-top: 16px;
   align-items: start;
@@ -383,31 +379,10 @@ h2 {
 
 .operations-primary,
 .operations-secondary {
-  display: contents;
-}
-
-.nav-map {
-  grid-area: nav;
-}
-
-.mission-panel {
-  grid-area: mission;
-}
-
-.voice-panel {
-  grid-area: voice;
-}
-
-.perception-panel {
-  grid-area: yolo;
-}
-
-.event-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.06fr) minmax(420px, 0.94fr);
   gap: 16px;
   align-content: start;
-  margin-top: 16px;
+  min-width: 0;
 }
 
 .section-header {
@@ -792,8 +767,7 @@ button:disabled {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .operations-grid,
-  .event-grid {
+  .operations-grid {
     grid-template-columns: minmax(0, 1fr) minmax(390px, 0.88fr);
   }
 
@@ -804,17 +778,8 @@ button:disabled {
 
 @media (max-width: 1120px) {
   .command-header,
-  .operations-grid,
-  .event-grid {
-    grid-template-columns: 1fr;
-  }
-
   .operations-grid {
-    grid-template-areas:
-      "nav"
-      "mission"
-      "voice"
-      "yolo";
+    grid-template-columns: 1fr;
   }
 
   .command-header {
@@ -844,7 +809,6 @@ button:disabled {
 
   .readiness-strip,
   .operations-grid,
-  .event-grid,
   .mission-form-row {
     grid-template-columns: 1fr;
   }
@@ -916,8 +880,7 @@ button:disabled {
 }
 
 @media (min-width: 1580px) {
-  .operations-grid,
-  .event-grid {
+  .operations-grid {
     grid-template-columns: minmax(760px, 1.04fr) minmax(520px, 0.96fr);
   }
 

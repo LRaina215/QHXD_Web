@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import NavMapPlaceholder from './components/NavMapPlaceholder.vue'
+import NavigationAssistPanel from './components/NavigationAssistPanel.vue'
 import VoiceConfirmDialog from './components/VoiceConfirmDialog.vue'
 
 type DetectionStatus = {
@@ -517,6 +518,27 @@ const latestVoiceSummary = computed(() => {
     return `${voiceResult.value.recognized_text || textCommand.value || '--'} / ${voiceResult.value.intent ?? '--'} / ${voiceStatusLabel(voiceResult.value)}`
   }
   return '暂无语音或文本结果'
+})
+
+const navigationAssistVoiceText = computed(() => {
+  return voiceRecordResult.value?.recognized_text || voiceResult.value?.recognized_text || null
+})
+
+const navigationAssistLlmTarget = computed(() => {
+  return voiceRecordResult.value?.waypoint_id
+    ?? voiceResult.value?.waypoint_id
+    ?? valueAsString(voiceRecordResult.value?.payload?.waypoint_id)
+    ?? valueAsString(voiceResult.value?.payload?.waypoint_id)
+    ?? null
+})
+
+const navigationAssistConfirmationState = computed(() => {
+  if (pendingVoiceCommand.value) {
+    return '待确认'
+  }
+
+  const latest = voiceRecordResult.value ?? voiceResult.value
+  return latest ? voiceStatusLabel(latest) : null
 })
 
 const voiceRecordStatusHint = computed(() => {
@@ -1183,6 +1205,23 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
           :nav-state="state?.nav_status.state ?? null"
         />
 
+        <NavigationAssistPanel
+          :task-status="state?.task_status ?? null"
+          :nav-status="state?.nav_status ?? null"
+          :robot-pose="state?.robot_pose ?? null"
+          :device-status="state?.device_status ?? null"
+          :system-mode="state?.system_mode.mode ?? null"
+          :alerts="alerts"
+          :updated-at="state?.updated_at ?? null"
+          :ws-connected="wsConnected"
+          :imu-ws-connected="imuWsConnected"
+          :connection-label="connectionLabel"
+          :imu-connection-label="imuConnectionLabel"
+          :voice-text="navigationAssistVoiceText"
+          :llm-target="navigationAssistLlmTarget"
+          :confirmation-state="navigationAssistConfirmationState"
+        />
+
         <article class="panel mission-panel">
           <div class="section-header compact-header">
             <div>
@@ -1233,6 +1272,26 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
             </div>
           </div>
         </article>
+
+      <article class="panel events-panel">
+        <div class="section-header compact-header">
+          <div>
+            <p class="section-kicker">Events</p>
+            <h2>最近事件</h2>
+          </div>
+          <span class="hint-text">语音 / LLM / YOLO / Mission / 系统告警</span>
+        </div>
+
+        <ul class="event-list">
+          <li v-for="event in dashboardEvents" :key="event.id" class="event-item">
+            <span class="event-time">{{ event.time }}</span>
+            <span class="status-badge" :class="toneClass(event.tone)">{{ event.level }}</span>
+            <strong>{{ event.source }}</strong>
+            <p>{{ event.message }}</p>
+          </li>
+          <li v-if="dashboardEvents.length === 0" class="empty-state">暂无事件</li>
+        </ul>
+      </article>
       </div>
 
       <div class="operations-secondary">
@@ -1397,29 +1456,6 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
             </div>
           </div>
         </article>
-      </div>
-    </section>
-
-    <section class="event-grid">
-      <article class="panel events-panel">
-        <div class="section-header compact-header">
-          <div>
-            <p class="section-kicker">Events</p>
-            <h2>最近事件</h2>
-          </div>
-          <span class="hint-text">语音 / LLM / YOLO / Mission / 系统告警</span>
-        </div>
-
-        <ul class="event-list">
-          <li v-for="event in dashboardEvents" :key="event.id" class="event-item">
-            <span class="event-time">{{ event.time }}</span>
-            <span class="status-badge" :class="toneClass(event.tone)">{{ event.level }}</span>
-            <strong>{{ event.source }}</strong>
-            <p>{{ event.message }}</p>
-          </li>
-          <li v-if="dashboardEvents.length === 0" class="empty-state">暂无事件</li>
-        </ul>
-      </article>
 
       <article class="panel observability-panel">
         <div class="section-header compact-header">
@@ -1460,7 +1496,10 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
           </div>
         </div>
       </article>
+      </div>
     </section>
+
+
 
     <VoiceConfirmDialog
       v-if="pendingVoiceCommand"

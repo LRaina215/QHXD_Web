@@ -606,3 +606,180 @@ frontend 返回 HTTP/1.1 200 OK
 ```
 
 构建产物 `frontend/dist` 已恢复，未纳入源码改动。
+
+---
+
+# Phase 7C 导航辅助面板 - NavigationAssistPanel
+
+## 背景
+
+用户建议左侧导航区域下方应保持“导航 + 任务执行链路”的逻辑，不要放 YOLO、语音输入或系统介绍文字。推荐新增 `NavigationAssistPanel`，用于展示：
+
+1. 任务执行时间线
+2. 导航链路状态
+3. 运动状态预留
+
+本轮按该建议实现。
+
+## 修改文件
+
+### `frontend/src/components/NavigationAssistPanel.vue`
+
+新增组件，使用已有前端状态，不新增后端接口、不接 ROS2。
+
+输入 props 包括：
+
+```text
+taskStatus
+navStatus
+robotPose
+deviceStatus
+systemMode
+alerts
+updatedAt
+wsConnected
+imuWsConnected
+connectionLabel
+imuConnectionLabel
+voiceText
+llmTarget
+confirmationState
+```
+
+展示内容：
+
+- 任务执行时间线：语音识别、LLM 解析、用户确认、Mission。
+- 导航链路状态：NUC state、WS state、IMU stream、mode、pose age、alert。
+- 运动状态预留：vx、vy、wz、remaining、goal、nav。
+- 当前没有真实速度字段时，vx/vy/wz 显示 `--`，为后续 NUC 导航流接入预留。
+
+### `frontend/src/App.vue`
+
+关键改动：
+
+- 引入 `NavigationAssistPanel`。
+- 新增 `navigationAssistVoiceText`、`navigationAssistLlmTarget`、`navigationAssistConfirmationState` 三个 computed，用于把现有语音/LLM/确认结果整理给导航辅助面板。
+- 在 `NavMapPlaceholder` 下方插入 `NavigationAssistPanel`。
+- 传入已有 state/task/nav/pose/device/alerts/ws/imu 状态，不新增 API。
+
+### `frontend/src/style.css`
+
+关键改动：
+
+- 主操作区 grid 改为：
+
+```text
+nav      voice
+assist   yolo
+mission  yolo
+```
+
+- 新增 `.navigation-assist-panel { grid-area: assist; }`。
+- 窄屏下顺序为：
+
+```text
+nav
+assist
+mission
+voice
+yolo
+```
+
+### `frontend/src/components/NavMapPlaceholder.vue`
+
+调整：
+
+- 移除上一轮临时放在导航卡片内部的 readiness/handoff 区域，避免和新 `NavigationAssistPanel` 重复。
+- 保留地图预留区与基础指标：位姿、Frame、目标点、导航状态、路径点、朝向角、离原点距离、目标距离。
+
+## 验收结果
+
+已执行：
+
+```bash
+cd /home/robomaster/QHXD/frontend
+npx vue-tsc --noEmit
+npm run build
+curl --noproxy '*' -I http://127.0.0.1:5173/
+```
+
+结果：
+
+```text
+vue-tsc 通过
+vite build 通过
+frontend 返回 HTTP/1.1 200 OK
+```
+
+验收项：
+
+```text
+[x] 左侧导航卡片下方不再大面积空白
+[x] 新增区域内容和导航/任务相关
+[x] 不影响语音、YOLO、LLM 确认功能
+[x] 没有新增后端接口依赖
+[x] 后续可平滑接入真实导航流
+```
+
+构建产物 `frontend/dist` 已恢复，未纳入源码改动。
+
+---
+
+# Phase 7C 空白治理 - 改为左右独立工作流列
+
+## 问题
+
+继续填充单个卡片只能缓解局部空白，但根因是主区域使用共享行高的 grid。左侧和右侧模块高度不一致时，一侧会被另一侧撑出空白。
+
+## 方案
+
+将主区域从共享行高布局改为两条独立工作流列：
+
+```text
+左列：NavMapPlaceholder
+左列：NavigationAssistPanel
+左列：Mission Control
+左列：Events
+
+右列：Voice / LLM
+右列：YOLO Perception
+右列：Runtime
+```
+
+这样左侧和右侧各自按内容自然堆叠。右侧 YOLO 下方立即接 Runtime，左侧 Mission 下方立即接 Events，不再因为跨列行高同步产生大块空白。
+
+## 修改文件
+
+### `frontend/src/App.vue`
+
+- 将 `Events` 面板移动到左侧 `operations-primary` 内，放在 Mission Control 下方。
+- 将 `Runtime` 面板移动到右侧 `operations-secondary` 内，放在 YOLO Perception 下方。
+- 删除独立的 `event-grid` section。
+- 保留所有原展示字段和事件列表逻辑。
+
+### `frontend/src/style.css`
+
+- 将 `.operations-primary` / `.operations-secondary` 从 `display: contents` 改回独立 grid column。
+- 删除主区域 `grid-template-areas`，避免共享行高造成左右互相拖拽。
+- 保持桌面双列、窄屏单列。
+
+## 验证
+
+已执行：
+
+```bash
+cd /home/robomaster/QHXD/frontend
+npx vue-tsc --noEmit
+npm run build
+curl --noproxy '*' -I http://127.0.0.1:5173/
+```
+
+结果：
+
+```text
+vue-tsc 通过
+vite build 通过
+frontend 返回 HTTP/1.1 200 OK
+```
+
+构建产物 `frontend/dist` 已恢复，未纳入源码改动。
