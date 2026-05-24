@@ -77,11 +77,11 @@ select {
 }
 
 .command-header::before {
-  content: "SENTINEL / RK3588";
+  content: "「琼海芯动·SENTINEL」";
   position: absolute;
   right: -34px;
   bottom: 14px;
-  color: rgba(255, 247, 232, 0.075);
+  color: rgba(232, 255, 238, 0.075);
   font-family: "DIN Alternate", "Avenir Next", sans-serif;
   font-size: clamp(3.6rem, 9vw, 9.4rem);
   font-weight: 900;
@@ -291,8 +291,12 @@ h2 {
   background: var(--blue);
 }
 
+.nav-status-card::before {
+  background: var(--green);
+}
+
 .perception-panel::before,
-.metric-card:nth-child(4)::before {
+.metric-card:nth-child(5)::before {
   background: var(--cyan);
 }
 
@@ -308,7 +312,7 @@ h2 {
 
 .readiness-strip {
   display: grid;
-  grid-template-columns: 1.12fr 1fr 1fr 1fr 1.12fr;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
   margin-top: 16px;
 }
@@ -887,4 +891,229 @@ button:disabled {
   .latest-frame-box {
     max-height: 320px;
   }
+}
+
+
+.command-palette-panel {
+  background:
+    linear-gradient(135deg, rgba(37, 93, 232, 0.08), transparent 46%),
+    rgba(255, 250, 240, 0.95);
+}
+
+.command-input-shell {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #15130f;
+  border-radius: 8px;
+  background: #15130f;
+  color: #fff7e8;
+}
+
+.command-field {
+  margin: 0;
+}
+
+.command-field span {
+  color: rgba(255, 247, 232, 0.68);
+}
+
+.command-field input {
+  min-height: 50px;
+  border-color: rgba(255, 247, 232, 0.18);
+  background: rgba(255, 247, 232, 0.08);
+  color: #fff7e8;
+  font-size: 1.08rem;
+  font-weight: 800;
+}
+
+.command-actions {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 116px minmax(150px, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.command-actions .field span {
+  color: rgba(255, 247, 232, 0.68);
+}
+
+.command-actions select {
+  min-height: 44px;
+  border-color: rgba(255, 247, 232, 0.18);
+  background: #fffaf0;
+}
+
+.command-result-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid rgba(217, 130, 24, 0.32);
+  border-radius: 8px;
+  background: #fff2d9;
+}
+
+.command-result-main span,
+.command-meta-grid span,
+.debug-detail-grid span,
+.monitor-meta-strip span,
+.monitor-list-header span,
+.monitor-summary-row span {
+  display: block;
+  color: #726a5f;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.command-result-main strong {
+  display: block;
+  margin-top: 4px;
+  color: #12150f;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.command-meta-grid,
+.debug-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.command-meta-grid div,
+.debug-detail-grid div,
+.monitor-meta-strip div,
+.monitor-list-card {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid #e0d4c4;
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.72);
+}
+
+.command-meta-grid strong,
+.debug-detail-grid strong,
+.monitor-meta-strip strong,
+.monitor-summary-row strong {
+  display: block;
+  margin-top: 4px;
+  color: #15130f;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.debug-disclosure {
+  margin-top: 12px;
+  border: 1px dashed #b8aa97;
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.5);
+}
+
+.debug-disclosure summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: #554b40;
+  font-weight: 900;
+}
+
+.debug-detail-grid {
+  margin: 0;
+  padding: 0 12px 12px;
+}
+
+.perception-monitor-panel {
+  background:
+    linear-gradient(135deg, rgba(28, 167, 170, 0.08), transparent 45%),
+    rgba(255, 250, 240, 0.95);
+}
+
+.monitor-frame {
+  margin-bottom: 12px;
+}
+
+.monitor-meta-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.perception-monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.monitor-list-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.monitor-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.monitor-list-header strong {
+  color: #15130f;
+  font-family: "DIN Alternate", "Avenir Next", sans-serif;
+  font-size: 1.15rem;
+}
+
+.monitor-object-list {
+  margin-top: 0;
+}
+
+.monitor-summary-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 6px 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e0d4c4;
+}
+
+@media (max-width: 1320px) {
+  .command-actions,
+  .perception-monitor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-meta-strip {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .command-result-card,
+  .command-meta-grid,
+  .debug-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.command-actions > button:first-child {
+  color: #15130f;
+  border-color: #f3ad44;
+  background: #f3ad44;
+  box-shadow: 0 12px 24px rgba(243, 173, 68, 0.26);
+}
+
+.command-actions > button:first-child:hover:not(:disabled) {
+  background: #ffc15f;
+  border-color: #ffc15f;
+}
+
+.command-actions > button:first-child:disabled {
+  color: rgba(255, 247, 232, 0.48);
+  border-color: rgba(255, 247, 232, 0.18);
+  background: rgba(255, 247, 232, 0.08);
 }

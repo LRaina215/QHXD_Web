@@ -783,3 +783,150 @@ frontend 返回 HTTP/1.1 200 OK
 ```
 
 构建产物 `frontend/dist` 已恢复，未纳入源码改动。
+
+---
+
+# Phase 7C 设计参考优化 - Command Palette 与 Perception Monitor
+
+## 背景
+
+用户说明 `QHXD` 是“琼海芯动”的英文缩写，不应把它误当作独立品牌名使用。本轮同步修正顶部文案，并参考新安装的 `awesome-design-md` 设计参考库继续优化前端信息层级。
+
+参考方向：
+
+- `raycast`：命令入口应像 command palette，突出输入、执行和最近结果。
+- `linear.app`：调试信息应下沉，不要和主业务状态同权重。
+- `nvidia`：感知/硬件监控区域应更像工程监视器，使用清晰分区与 metadata。
+
+## 修改文件
+
+### `frontend/src/App.vue`
+
+关键改动：
+
+- 顶部文案从 `QHXD Robot Console` 调整为 `Qionghai Xindong Robot Console`。
+- 标题调整为 `琼海芯动车载机器人中台`。
+- 副标题补充 `QHXD = 琼海芯动`。
+- 将语音/LLM 区域重构为 `Command Palette` 风格：
+  - 主命令输入框；
+  - 文本发送；
+  - 板端录音时长选择；
+  - 板端录音按钮；
+  - 最近识别结果；
+  - intent / waypoint / confirm / feedback；
+  - ASR / LLM 调试详情折叠区。
+- 将 YOLO 区域重构为 `Perception Monitor`：
+  - 保留实时帧画面；
+  - source / model / updated 变为 metadata strip；
+  - objects 与 events 分成两个监视器列表；
+  - current/recent/last event 保留但降为摘要。
+
+### `frontend/src/style.css`
+
+关键改动：
+
+- 顶部背景大字从 `SENTINEL / RK3588` 改为 `琼海芯动 / RK3588`。
+- 新增 `.command-palette-panel`、`.command-input-shell`、`.command-result-card`、`.command-meta-grid`、`.debug-disclosure` 等样式。
+- 新增 `.perception-monitor-panel`、`.monitor-meta-strip`、`.perception-monitor-grid`、`.monitor-list-card`、`.monitor-summary-row` 等样式。
+- 保持响应式规则：窄屏下命令按钮组、调试详情、感知列表自动变成单列。
+
+## 未改变内容
+
+- 未修改后端 API。
+- 未修改 WebSocket。
+- 未修改 mission / voice / LLM / YOLO 业务逻辑。
+- 板端录音仍调用 `/api/voice/record_command`。
+- 文本命令仍调用 `/api/voice/text_command`。
+- 移动确认仍调用 `/api/voice/confirm_command`。
+- YOLO 图像仍使用 `/api/perception/latest_frame`。
+
+## 验证
+
+已执行：
+
+```bash
+cd /home/robomaster/QHXD/frontend
+npx vue-tsc --noEmit
+npm run build
+curl --noproxy '*' -I http://127.0.0.1:5173/
+```
+
+结果：
+
+```text
+vue-tsc 通过
+vite build 通过
+frontend 返回 HTTP/1.1 200 OK
+```
+
+构建产物 `frontend/dist` 已恢复，未纳入源码改动。
+
+---
+
+# Phase 7C 字体与状态卡微调
+
+## 字体设计参考建议
+
+针对字体与字重设计，当前可继续参考这些已安装/可用的前端设计 skill 与资料：
+
+- `frontend-design`：用于确定整体字体气质，避免默认系统字体造成的普通后台感。
+- `ui-design-brain`：用于控制标题、标签、正文、按钮的层级和可读性。
+- `awesome-design-md`：可参考其中品牌设计资料：
+  - `linear.app`：高密度 SaaS 字体层级，适合任务与状态流。
+  - `raycast`：命令面板字体层级，适合语音/LLM 输入区。
+  - `ibm`：工程可信感和技术文档气质，适合机器人中台。
+  - `nvidia`：硬件/工程监控感，适合 RK3588、YOLO、导航状态展示。
+
+后续如果继续优化字体，建议方向是：标题更克制、标签更清楚、数字/状态值更像仪表读数，不再继续加大所有文字。
+
+## 本轮修复
+
+### 1. 修正琼海芯动命名
+
+- 顶部副标题去掉残留的 `Sentinel`。
+- 统一为：`QHXD = 琼海芯动 · RK3588 车载交互与状态中枢`。
+- 顶部背景大字统一为：`琼海芯动 / RK3588`。
+
+### 2. 顶部状态卡从 5 张改为 6 张
+
+新增第六张卡片：`导航状态`。
+
+展示：
+
+- `nav_status.state`
+- `nav_status.current_goal` 或当前 task id
+- `nav_status.remaining_distance`
+- `nav_status.mode`
+
+视觉目的：让顶部状态区在 3 列布局下形成完整两行，避免 5 张卡片造成第二行只剩 2 张的不平衡。
+
+### 3. 修复 LLM 命令面板主按钮不可识别
+
+问题：`发送文本命令` 位于深色 command panel 中，默认按钮颜色和背景接近，看不出是按钮。
+
+修复：
+
+- `.command-actions > button:first-child` 改为安全橙主按钮。
+- hover 状态加亮。
+- disabled 状态才回到低对比暗色。
+
+## 验证
+
+已执行：
+
+```bash
+cd /home/robomaster/QHXD/frontend
+npx vue-tsc --noEmit
+npm run build
+curl --noproxy '*' -I http://127.0.0.1:5173/
+```
+
+结果：
+
+```text
+vue-tsc 通过
+vite build 通过
+frontend 返回 HTTP/1.1 200 OK
+```
+
+构建产物 `frontend/dist` 已恢复，未纳入源码改动。

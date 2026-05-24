@@ -415,6 +415,23 @@ const taskTone = computed<StatusTone>(() => {
   return 'info'
 })
 
+const navTone = computed<StatusTone>(() => {
+  const navState = state.value?.nav_status.state?.toLowerCase() ?? ''
+  if (!navState || navState === 'idle' || navState === 'waiting') {
+    return 'muted'
+  }
+  if (navState.includes('running') || navState.includes('navigating') || navState.includes('active')) {
+    return 'info'
+  }
+  if (navState.includes('pause') || navState.includes('pending')) {
+    return 'warning'
+  }
+  if (navState.includes('fail') || navState.includes('error') || navState.includes('lost')) {
+    return 'danger'
+  }
+  return 'info'
+})
+
 const batteryTone = computed<StatusTone>(() => {
   if (!state.value) {
     return 'muted'
@@ -1107,9 +1124,9 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
   <main class="dashboard">
     <header class="command-header">
       <div class="brand-block">
-        <p class="eyebrow">QHXD Robot Console</p>
-        <h1>配送巡检一体化哨兵机器人中台</h1>
-        <p class="header-subtitle">RK3588 车载交互与状态中枢</p>
+        <p class="eyebrow">Qionghai Xindong Robot Console</p>
+        <h1>琼海芯动车载机器人中台</h1>
+        <p class="header-subtitle">「琼海芯动 · SENTINEL」 车载交互与状态中枢</p>
       </div>
 
       <div class="header-control-plane">
@@ -1177,6 +1194,16 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
         <strong>{{ batteryLabel }}</strong>
         <small>急停：{{ estopLabel }} · 更新 {{ lastUpdatedLabel }}</small>
       </article>
+
+      <article class="metric-card nav-status-card">
+        <div class="metric-topline">
+          <span class="card-label">导航状态</span>
+          <span class="status-badge" :class="toneClass(navTone)">{{ state?.nav_status.state ?? 'unknown' }}</span>
+        </div>
+        <strong>{{ state?.nav_status.current_goal ?? state?.task_status.task_id ?? '未设置目标' }}</strong>
+        <small>剩余距离：{{ formatNumber(state?.nav_status.remaining_distance, ' m') }} · {{ state?.nav_status.mode ?? '--' }}</small>
+      </article>
+
 
       <article class="metric-card">
         <div class="metric-topline">
@@ -1295,24 +1322,23 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
       </div>
 
       <div class="operations-secondary">
-        <article class="panel voice-panel">
+        <article class="panel voice-panel command-palette-panel">
           <div class="section-header compact-header">
             <div>
-              <p class="section-kicker">Voice / LLM</p>
-              <h2>语音与语义任务入口</h2>
+              <p class="section-kicker">Command Palette</p>
+              <h2>语音 / LLM 命令面板</h2>
             </div>
             <span class="voice-summary-chip" :class="toneClass(pendingVoiceCommand ? 'warning' : voiceRecordError ? 'danger' : 'info')">
-              {{ latestVoiceSummary }}
+              {{ pendingVoiceCommand ? '移动任务待确认' : voiceRecordStatusHint }}
             </span>
           </div>
 
-          <div class="voice-command-stack">
-            <label class="field">
-              <span>文本命令</span>
+          <div class="command-input-shell">
+            <label class="field command-field">
+              <span>输入任务命令</span>
               <input v-model="textCommand" type="text" placeholder="例如 帮我把样品送到二零一实验室" @keyup.enter="sendTextCommand" />
             </label>
-
-            <div class="button-row voice-actions">
+            <div class="command-actions">
               <button :disabled="isSendingTextCommand || !textCommand.trim()" type="button" @click="sendTextCommand">
                 {{ isSendingTextCommand ? '发送中...' : '发送文本命令' }}
               </button>
@@ -1336,60 +1362,59 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
             <p v-if="voiceRecordError" class="inline-status error-status">{{ voiceRecordError }}</p>
           </div>
 
-          <div class="voice-result-grid">
-            <div class="detail-item wide-detail highlight-detail">
-              <span>识别文本</span>
+          <section class="command-result-card" aria-label="最近命令解析结果">
+            <div class="command-result-main">
+              <span>最近识别</span>
               <strong>{{ voiceRecordResult?.recognized_text || voiceResult?.recognized_text || textCommand || '--' }}</strong>
             </div>
-            <div class="detail-item">
-              <span>ASR 后端</span>
-              <strong>{{ voiceRecordResult?.asr_backend ?? 'text' }}</strong>
+            <div class="command-result-status">
+              <span class="status-badge" :class="toneClass(pendingVoiceCommand ? 'warning' : voiceRecordError ? 'danger' : voiceRecordResult || voiceResult ? 'info' : 'muted')">
+                {{ voiceRecordResult ? voiceStatusLabel(voiceRecordResult) : voiceResult ? voiceStatusLabel(voiceResult) : 'waiting' }}
+              </span>
             </div>
-            <div class="detail-item">
-              <span>ASR 耗时</span>
-              <strong>{{ formatNumber(voiceRecordResult?.asr_time_s, ' s') }}</strong>
-            </div>
-            <div class="detail-item">
+          </section>
+
+          <div class="command-meta-grid">
+            <div>
               <span>intent</span>
               <strong>{{ voiceRecordResult?.intent ?? voiceResult?.intent ?? '--' }}</strong>
             </div>
-            <div class="detail-item">
-              <span>waypoint_id</span>
+            <div>
+              <span>waypoint</span>
               <strong>{{ voiceRecordResult?.waypoint_id ?? voiceResult?.waypoint_id ?? voiceRecordResult?.payload.waypoint_id ?? voiceResult?.payload.waypoint_id ?? '--' }}</strong>
             </div>
-            <div class="detail-item">
-              <span>accepted / need_confirm</span>
-              <strong>{{ voiceRecordResult ? voiceStatusLabel(voiceRecordResult) : voiceResult ? voiceStatusLabel(voiceResult) : '--' }}</strong>
+            <div>
+              <span>confirm</span>
+              <strong>{{ pendingVoiceCommand ? 'need_confirm' : voiceRecordResult?.need_confirm || voiceResult?.need_confirm ? 'pending' : '--' }}</strong>
             </div>
-            <div class="detail-item">
-              <span>pending_command_id</span>
-              <strong>{{ pendingVoiceCommand?.pending_command_id ?? voiceRecordResult?.pending_command_id ?? voiceResult?.pending_command_id ?? '--' }}</strong>
-            </div>
-            <div class="detail-item">
-              <span>解析方式</span>
-              <strong>{{ voiceRecordResult?.parser ?? voiceResult?.parser ?? '--' }}</strong>
-            </div>
-            <div class="detail-item">
-              <span>LLM 模型</span>
-              <strong>{{ voiceRecordResult?.llm_model ?? voiceResult?.llm_model ?? '--' }}</strong>
-            </div>
-            <div class="detail-item wide-detail">
-              <span>任务反馈</span>
+            <div>
+              <span>feedback</span>
               <strong>{{ voiceRecordResult?.detail || voiceRecordResult?.error || voiceResult?.detail || voiceResult?.error || '--' }}</strong>
             </div>
           </div>
+
+          <details class="debug-disclosure">
+            <summary>ASR / LLM 调试详情</summary>
+            <div class="debug-detail-grid">
+              <div><span>ASR 后端</span><strong>{{ voiceRecordResult?.asr_backend ?? 'text' }}</strong></div>
+              <div><span>ASR 耗时</span><strong>{{ formatNumber(voiceRecordResult?.asr_time_s, ' s') }}</strong></div>
+              <div><span>parser</span><strong>{{ voiceRecordResult?.parser ?? voiceResult?.parser ?? '--' }}</strong></div>
+              <div><span>LLM 模型</span><strong>{{ voiceRecordResult?.llm_model ?? voiceResult?.llm_model ?? '--' }}</strong></div>
+              <div class="wide-detail"><span>pending_command_id</span><strong>{{ pendingVoiceCommand?.pending_command_id ?? voiceRecordResult?.pending_command_id ?? voiceResult?.pending_command_id ?? '--' }}</strong></div>
+            </div>
+          </details>
         </article>
 
-        <article class="panel perception-panel">
+        <article class="panel perception-panel perception-monitor-panel">
           <div class="section-header compact-header">
             <div>
-              <p class="section-kicker">Perception</p>
-              <h2>YOLO 检测状态</h2>
+              <p class="section-kicker">Perception Monitor</p>
+              <h2>YOLO 感知监视器</h2>
             </div>
             <span class="status-badge" :class="toneClass(detectionTone)">{{ detectionStatusLabel }}</span>
           </div>
 
-          <div class="latest-frame-box">
+          <div class="latest-frame-box monitor-frame">
             <img
               v-if="latestFrameAvailable && latestFrameUrl"
               :src="latestFrameUrl"
@@ -1400,60 +1425,56 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
             <div v-else class="latest-frame-placeholder">暂无识别画面</div>
           </div>
 
-          <div class="detail-grid detection-grid">
-            <div class="detail-item">
-              <span>来源</span>
-              <strong>{{ state?.detection_status?.source ?? '--' }}</strong>
-            </div>
-            <div class="detail-item">
-              <span>模型</span>
-              <strong>{{ state?.detection_status?.model_name ?? '--' }}</strong>
-            </div>
-            <div class="detail-item">
-              <span>最近目标</span>
-              <strong>{{ latestDetectionObjectLabel }}</strong>
-            </div>
-            <div class="detail-item">
-              <span>当前检测</span>
-              <strong>{{ currentDetectionLabel }}</strong>
-            </div>
-            <div class="detail-item">
-              <span>最近检测</span>
-              <strong>{{ recentDetectionLabel }}</strong>
-            </div>
-            <div class="detail-item">
-              <span>更新时间</span>
-              <strong>{{ state?.detection_status ? formatTime(state.detection_status.timestamp) : '--' }}</strong>
-            </div>
-            <div class="detail-item wide-detail">
-              <span>最近事件</span>
-              <strong>{{ latestDetectionEventLabel }}</strong>
-            </div>
+          <div class="monitor-meta-strip">
+            <div><span>source</span><strong>{{ state?.detection_status?.source ?? '--' }}</strong></div>
+            <div><span>model</span><strong>{{ state?.detection_status?.model_name ?? '--' }}</strong></div>
+            <div><span>updated</span><strong>{{ state?.detection_status ? formatTime(state.detection_status.timestamp) : '--' }}</strong></div>
           </div>
 
-          <div v-if="currentDetectionObjects.length || recentDetectionObjects.length" class="object-list">
-            <span
-              v-for="object in [...currentDetectionObjects, ...recentDetectionObjects].slice(0, 6)"
-              :key="`${object.class_name}-${object.confidence}-${object.last_seen_at ?? ''}`"
-              class="object-pill"
-            >
-              {{ object.class_name }} · {{ object.confidence.toFixed(2) }}
-            </span>
-          </div>
-          <div v-else class="empty-state compact-empty">暂无检测对象</div>
+          <div class="perception-monitor-grid">
+            <section class="monitor-list-card">
+              <div class="monitor-list-header">
+                <span>Objects</span>
+                <strong>{{ currentDetectionObjects.length + recentDetectionObjects.length }}</strong>
+              </div>
+              <div v-if="currentDetectionObjects.length || recentDetectionObjects.length" class="object-list monitor-object-list">
+                <span
+                  v-for="object in [...currentDetectionObjects, ...recentDetectionObjects].slice(0, 8)"
+                  :key="`${object.class_name}-${object.confidence}-${object.last_seen_at ?? ''}`"
+                  class="object-pill"
+                >
+                  {{ object.class_name }} · {{ object.confidence.toFixed(2) }}
+                </span>
+              </div>
+              <div v-else class="empty-state compact-empty">暂无检测对象</div>
+              <div class="monitor-summary-row">
+                <span>当前</span><strong>{{ currentDetectionLabel }}</strong>
+                <span>最近</span><strong>{{ recentDetectionLabel }}</strong>
+              </div>
+            </section>
 
-          <div class="event-mini-list detection-event-list">
-            <div v-if="detectionEventItems.length === 0" class="empty-state compact-empty">暂无视觉事件</div>
-            <div
-              v-for="event in detectionEventItems.slice(0, 4)"
-              v-else
-              :key="`${event.event_type}-${event.message}`"
-              class="mini-event"
-            >
-              <span class="status-badge" :class="toneClass(alertTone(event.level))">{{ event.level }}</span>
-              <strong>{{ event.event_type }}</strong>
-              <p>{{ event.message }}</p>
-            </div>
+            <section class="monitor-list-card">
+              <div class="monitor-list-header">
+                <span>Events</span>
+                <strong>{{ detectionEventItems.length }}</strong>
+              </div>
+              <div class="event-mini-list detection-event-list">
+                <div v-if="detectionEventItems.length === 0" class="empty-state compact-empty">暂无视觉事件</div>
+                <div
+                  v-for="event in detectionEventItems.slice(0, 5)"
+                  v-else
+                  :key="`${event.event_type}-${event.message}`"
+                  class="mini-event"
+                >
+                  <span class="status-badge" :class="toneClass(alertTone(event.level))">{{ event.level }}</span>
+                  <strong>{{ event.event_type }}</strong>
+                  <p>{{ event.message }}</p>
+                </div>
+              </div>
+              <div class="monitor-summary-row">
+                <span>最近事件</span><strong>{{ latestDetectionEventLabel }}</strong>
+              </div>
+            </section>
           </div>
         </article>
 
