@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import NavMapPlaceholder from './components/NavMapPlaceholder.vue'
 import VoiceConfirmDialog from './components/VoiceConfirmDialog.vue'
 
 type DetectionStatus = {
@@ -189,6 +190,17 @@ type ImuResponse = {
   data: ImuEnvelope | null
 }
 
+type StatusTone = 'success' | 'info' | 'warning' | 'danger' | 'muted'
+
+type DashboardEventItem = {
+  id: string
+  time: string
+  source: string
+  level: string
+  message: string
+  tone: StatusTone
+}
+
 const state = ref<RobotState | null>(null)
 const alerts = ref<AlertEvent[]>([])
 const imu = ref<ImuEnvelope | null>(null)
@@ -215,12 +227,14 @@ const imuWsConnected = ref(false)
 const shouldReconnect = ref(true)
 const latestFrameUrl = ref('')
 const latestFrameAvailable = ref(false)
+const currentClockLabel = ref('--')
 
 let socket: WebSocket | null = null
 let imuSocket: WebSocket | null = null
 let alertsTimer: number | null = null
 let stateTimer: number | null = null
 let latestFrameTimer: number | null = null
+let clockTimer: number | null = null
 
 const onlineStatus = computed(() => {
   if (!state.value) {
@@ -366,6 +380,133 @@ const latestDetectionEventLabel = computed(() => {
 })
 
 const detectionEventItems = computed(() => state.value?.detection_status?.events ?? [])
+
+const latestAlert = computed(() => alerts.value[0] ?? null)
+
+const onlineTone = computed<StatusTone>(() => {
+  if (!state.value) {
+    return 'muted'
+  }
+  if (state.value.device_status.fault_code || state.value.device_status.emergency_stop) {
+    return 'danger'
+  }
+  if (onlineStatus.value.includes('等待') || onlineStatus.value.includes('超时')) {
+    return 'warning'
+  }
+  return onlineStatus.value.includes('在线') ? 'success' : 'muted'
+})
+
+const taskTone = computed<StatusTone>(() => {
+  const taskState = state.value?.task_status.state?.toLowerCase() ?? ''
+  if (!taskState || taskState === 'idle') {
+    return 'muted'
+  }
+  if (taskState.includes('running') || taskState.includes('active') || taskState.includes('navigating')) {
+    return 'info'
+  }
+  if (taskState.includes('pause')) {
+    return 'warning'
+  }
+  if (taskState.includes('fail') || taskState.includes('error')) {
+    return 'danger'
+  }
+  return 'info'
+})
+
+const batteryTone = computed<StatusTone>(() => {
+  if (!state.value) {
+    return 'muted'
+  }
+  if (state.value.device_status.emergency_stop || state.value.device_status.fault_code) {
+    return 'danger'
+  }
+  const battery = state.value.device_status.battery_percent
+  if (battery === null) {
+    return 'muted'
+  }
+  if (battery < 20) {
+    return 'danger'
+  }
+  if (battery < 40) {
+    return 'warning'
+  }
+  return 'success'
+})
+
+const detectionTone = computed<StatusTone>(() => {
+  const detection = state.value?.detection_status
+  if (!detection) {
+    return 'muted'
+  }
+  return detection.enabled ? 'success' : 'muted'
+})
+
+const latestAlertTone = computed<StatusTone>(() => alertTone(latestAlert.value?.level))
+
+const navGoal = computed(() => ({
+  id: state.value?.nav_status.current_goal ?? state.value?.task_status.task_id ?? undefined,
+}))
+
+const dashboardEvents = computed<DashboardEventItem[]>(() => {
+  const items: DashboardEventItem[] = []
+
+  if (voiceRecordResult.value) {
+    items.push({
+      id: 'voice-record-latest',
+      time: '刚刚',
+      source: 'Voice',
+      level: voiceRecordResult.value.need_confirm ? 'pending' : voiceRecordResult.value.accepted ? 'info' : 'warning',
+      message: `${voiceRecordResult.value.recognized_text || '--'} / ${voiceRecordResult.value.intent ?? '--'} / ${voiceRecordResult.value.detail || voiceRecordResult.value.error || '--'}`,
+      tone: voiceRecordResult.value.need_confirm ? 'warning' : voiceRecordResult.value.accepted ? 'info' : 'warning',
+    })
+  }
+
+  if (voiceResult.value) {
+    items.push({
+      id: 'voice-text-latest',
+      time: '刚刚',
+      source: 'Text/LLM',
+      level: voiceResult.value.need_confirm ? 'pending' : voiceResult.value.accepted ? 'info' : 'warning',
+      message: `${voiceResult.value.recognized_text || textCommand.value || '--'} / ${voiceResult.value.intent ?? '--'} / ${voiceResult.value.detail || voiceResult.value.error || '--'}`,
+      tone: voiceResult.value.need_confirm ? 'warning' : voiceResult.value.accepted ? 'info' : 'warning',
+    })
+  }
+
+  if (state.value) {
+    items.push({
+      id: 'mission-current',
+      time: formatTime(state.value.updated_at),
+      source: 'Mission',
+      level: state.value.task_status.state,
+      message: `${state.value.task_status.task_type} / ${state.value.task_status.state} / ${state.value.task_status.progress}%`,
+      tone: taskTone.value,
+    })
+  }
+
+  detectionEventItems.value.slice(0, 4).forEach((event, index) => {
+    items.push({
+      id: `detection-${index}-${event.event_type}`,
+      time: state.value?.detection_status ? formatTime(state.value.detection_status.timestamp) : '--',
+      source: 'YOLO',
+      level: event.level,
+      message: `${event.event_type} / ${event.message}`,
+      tone: alertTone(event.level),
+    })
+  })
+
+  alerts.value.slice(0, 5).forEach((alert) => {
+    items.push({
+      id: alert.alert_id,
+      time: formatTime(alert.timestamp),
+      source: alert.source,
+      level: alert.level,
+      message: alert.message,
+      tone: alertTone(alert.level),
+    })
+  })
+
+  return items.slice(0, 10)
+})
 
 const latestVoiceSummary = computed(() => {
   if (voiceRecordResult.value) {
@@ -584,6 +725,8 @@ async function handleVoiceConfirm(confirmed: boolean) {
 }
 
 onMounted(async () => {
+  updateClock()
+  clockTimer = window.setInterval(updateClock, 1000)
   await Promise.all([loadState(), loadAlerts(), loadImu()])
   connectWebSocket()
   connectImuWebSocket()
@@ -618,6 +761,10 @@ onBeforeUnmount(() => {
 
   if (latestFrameTimer !== null) {
     window.clearInterval(latestFrameTimer)
+  }
+
+  if (clockTimer !== null) {
+    window.clearInterval(clockTimer)
   }
 })
 
@@ -893,6 +1040,28 @@ async function switchMode(mode: 'mock' | 'real') {
   }
 }
 
+function updateClock() {
+  currentClockLabel.value = new Date().toLocaleString('zh-CN', { hour12: false })
+}
+
+function toneClass(tone: StatusTone) {
+  return `tone-${tone}`
+}
+
+function alertTone(level: string | null | undefined): StatusTone {
+  const normalized = (level ?? '').toLowerCase()
+  if (['error', 'critical', 'fault', 'danger'].some((item) => normalized.includes(item))) {
+    return 'danger'
+  }
+  if (['warn', 'alert', 'pending'].some((item) => normalized.includes(item))) {
+    return 'warning'
+  }
+  if (['info', 'normal', 'ok'].some((item) => normalized.includes(item))) {
+    return 'info'
+  }
+  return normalized ? 'warning' : 'muted'
+}
+
 function formatNumber(value: number | null | undefined, suffix = '', decimals = 3) {
   if (value === null || value === undefined) {
     return '--'
@@ -913,465 +1082,333 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
 
 <template>
   <main class="dashboard">
-    <section class="panel hero-panel">
-      <div>
-        <p class="eyebrow">Phase 2 Dashboard</p>
-        <h1>RK3588 状态中台</h1>
-        <p class="description">
-          面向 Phase 1 / Phase 2 联调用的最小看板，支持 mock 中台与 NUC real bridge 的状态展示和任务入口。
-        </p>
+    <header class="top-status-bar">
+      <div class="brand-block">
+        <p class="eyebrow">QHXD Robot Console</p>
+        <h1>配送巡检一体化哨兵机器人中台</h1>
       </div>
-      <div class="stream-status">
-        <span class="status-dot" :class="{ live: wsConnected }"></span>
-        <strong>{{ connectionLabel }}</strong>
-        <small>最近更新时间 {{ lastUpdatedLabel }}</small>
-        <small>{{ transportStatusLabel }}</small>
-        <div class="button-row compact-row">
+      <div class="top-status-items">
+        <span class="status-badge" :class="toneClass(state?.system_mode.mode === 'real' ? 'info' : 'muted')">
+          {{ systemModeLabel }}
+        </span>
+        <span class="status-badge" :class="toneClass(onlineTone)">NUC {{ onlineStatus }}</span>
+        <span class="status-badge" :class="toneClass(wsConnected ? 'success' : 'warning')">
+          RK3588 {{ wsConnected ? 'Online' : 'Reconnecting' }}
+        </span>
+        <span class="time-chip">{{ currentClockLabel }}</span>
+        <div class="mode-switch-group" aria-label="系统模式切换">
           <button
             :disabled="isSwitchingMode || state?.system_mode.mode === 'mock'"
-            class="secondary"
+            class="secondary compact-button"
             @click="switchMode('mock')"
           >
             切到 Mock
           </button>
           <button
             :disabled="isSwitchingMode || state?.system_mode.mode === 'real'"
+            class="compact-button"
             @click="switchMode('real')"
           >
             切到 Real
           </button>
         </div>
       </div>
-    </section>
+    </header>
 
-    <section class="status-grid">
-      <article class="card">
-        <span class="card-label">系统模式</span>
-        <strong>{{ systemModeLabel }}</strong>
-      </article>
-      <article class="card">
-        <span class="card-label">在线状态</span>
-        <strong>{{ onlineStatus }}</strong>
-      </article>
-      <article class="card">
-        <span class="card-label">数据链路</span>
-        <strong>{{ transportStatusLabel }}</strong>
-      </article>
-      <article class="card">
+    <section class="status-grid core-status-grid">
+      <article class="card metric-card">
         <span class="card-label">当前任务</span>
         <strong>{{ currentTaskLabel }}</strong>
+        <small>{{ state?.task_status.progress ?? 0 }}% · {{ state?.task_status.source ?? '--' }}</small>
+        <span class="status-badge" :class="toneClass(taskTone)">{{ state?.task_status.state ?? 'unknown' }}</span>
       </article>
-      <article class="card">
-        <span class="card-label">当前目标</span>
-        <strong>{{ currentGoalLabel }}</strong>
+      <article class="card metric-card">
+        <span class="card-label">机器人在线状态</span>
+        <strong>{{ onlineStatus }}</strong>
+        <small>{{ transportStatusLabel }}</small>
+        <span class="status-badge" :class="toneClass(onlineTone)">{{ connectionLabel }}</span>
       </article>
-      <article class="card">
-        <span class="card-label">电量</span>
+      <article class="card metric-card">
+        <span class="card-label">电量 / 急停</span>
         <strong>{{ batteryLabel }}</strong>
+        <small>急停：{{ estopLabel }}</small>
+        <span class="status-badge" :class="toneClass(batteryTone)">
+          {{ state?.device_status.fault_code ?? (state?.device_status.emergency_stop ? 'emergency_stop' : 'normal') }}
+        </span>
       </article>
-      <article class="card">
-        <span class="card-label">急停状态</span>
-        <strong>{{ estopLabel }}</strong>
-      </article>
-      <article class="card">
-        <span class="card-label">任务进度</span>
-        <strong>{{ formatNumber(state?.task_status.progress, '%') }}</strong>
+      <article class="card metric-card">
+        <span class="card-label">最近告警</span>
+        <strong>{{ latestAlert?.message ?? '暂无告警' }}</strong>
+        <small>{{ latestAlert ? `${latestAlert.source} · ${formatTime(latestAlert.timestamp)}` : '系统稳定' }}</small>
+        <span class="status-badge" :class="toneClass(latestAlertTone)">{{ latestAlert?.level ?? 'normal' }}</span>
       </article>
     </section>
 
-    <section class="content-grid">
-      <article class="panel section-panel">
-        <div class="section-header">
-          <div>
-            <p class="section-kicker">Mission</p>
-            <h2>任务操作</h2>
-          </div>
-          <span class="hint-text">{{ actionMessage }}</span>
-        </div>
+    <section class="dashboard-main-grid">
+      <div class="main-left-stack">
+        <NavMapPlaceholder
+          :robot-pose="state?.robot_pose ?? null"
+          :goal="navGoal"
+          :nav-state="state?.nav_status.state ?? null"
+        />
 
-        <label class="field">
-          <span>目标点 ID</span>
-          <input v-model="waypointId" type="text" placeholder="例如 mock-waypoint" />
-        </label>
+        <article class="panel surface-panel mission-panel">
+          <div class="section-header compact-header">
+            <div>
+              <p class="section-kicker">Mission</p>
+              <h2>任务快捷控制</h2>
+            </div>
+            <span class="hint-text">{{ actionMessage }}</span>
+          </div>
 
-        <div class="button-row">
-          <button
-            :disabled="isSending || !waypointId"
-            @click="sendMission('/api/mission/go_to_waypoint', { waypoint_id: waypointId, source: 'web', requested_by: 'dashboard' }, '已发送前往目标点命令')"
-          >
-            前往目标点
-          </button>
-          <button
-            :disabled="isSending"
-            class="secondary"
-            @click="sendMission('/api/mission/pause', { source: 'web', requested_by: 'dashboard' }, '已发送暂停命令')"
-          >
-            暂停
-          </button>
-          <button
-            :disabled="isSending"
-            class="secondary"
-            @click="sendMission('/api/mission/resume', { source: 'web', requested_by: 'dashboard' }, '已发送恢复命令')"
-          >
-            恢复
-          </button>
-          <button
-            :disabled="isSending"
-            class="warn"
-            @click="sendMission('/api/mission/return_home', { source: 'web', requested_by: 'dashboard' }, '已发送返航命令')"
-          >
-            返回 Home
-          </button>
-        </div>
-      </article>
-
-      <article class="panel section-panel">
-        <div class="section-header">
-          <div>
-            <p class="section-kicker">Voice</p>
-            <h2>语音/文本任务入口</h2>
-          </div>
-          <span class="hint-text">{{ latestVoiceSummary }}</span>
-        </div>
-
-        <label class="field">
-          <span>文本命令</span>
-          <input v-model="textCommand" type="text" placeholder="例如 去一号点" @keyup.enter="sendTextCommand" />
-        </label>
-
-        <div class="button-row">
-          <button :disabled="isSendingTextCommand || !textCommand.trim()" @click="sendTextCommand">
-            发送
-          </button>
-        </div>
-
-        <div v-if="voiceResult" class="detail-grid command-result-grid">
-          <div class="detail-item">
-            <span>Intent</span>
-            <strong>{{ voiceResult.intent ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>Command</span>
-            <strong>{{ voiceResult.command ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>Waypoint</span>
-            <strong>{{ voiceResult.waypoint_id ?? voiceResult.payload.waypoint_id ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>Accepted</span>
-            <strong>{{ voiceStatusLabel(voiceResult) }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>Parser</span>
-            <strong>{{ voiceResult.parser ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>LLM</span>
-            <strong>{{ voiceResult.llm_backend ? `${voiceResult.llm_backend} / ${voiceResult.llm_model ?? '--'}` : '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>Confidence</span>
-            <strong>{{ formatNumber(voiceResult.confidence) }}</strong>
-          </div>
-          <div class="detail-item wide-detail">
-            <span>Detail</span>
-            <strong>{{ voiceResult.detail }}</strong>
-          </div>
-        </div>
-        <div v-else class="empty-state">等待文本命令</div>
-      </article>
-
-      <article class="panel section-panel voice-record-panel">
-        <div class="section-header">
-          <div>
-            <p class="section-kicker">Server Voice</p>
-            <h2>语音任务入口</h2>
-          </div>
-          <span class="hint-text">{{ voiceRecordStatusHint }}</span>
-        </div>
-
-        <div class="voice-record-toolbar">
-          <label class="field compact-field">
-            <span>录音时长</span>
-            <select v-model.number="voiceRecordDuration" :disabled="isRecordingVoice">
-              <option :value="2">2 秒</option>
-              <option :value="3">3 秒</option>
-              <option :value="5">5 秒</option>
-            </select>
+          <label class="field inline-field">
+            <span>目标点 ID</span>
+            <input v-model="waypointId" type="text" placeholder="例如 wp_201" />
           </label>
 
-          <button :disabled="isRecordingVoice" @click="recordVoiceCommand">
-            {{ isRecordingVoice ? '录音识别中...' : '开始板端录音识别' }}
-          </button>
+          <div class="button-row mission-actions">
+            <button
+              :disabled="isSending || !waypointId"
+              @click="sendMission('/api/mission/go_to_waypoint', { waypoint_id: waypointId, source: 'web', requested_by: 'dashboard' }, '已发送前往目标点命令')"
+            >
+              前往目标点
+            </button>
+            <button
+              :disabled="isSending"
+              class="secondary"
+              @click="sendMission('/api/mission/pause', { source: 'web', requested_by: 'dashboard' }, '已发送暂停命令')"
+            >
+              暂停
+            </button>
+            <button
+              :disabled="isSending"
+              class="secondary"
+              @click="sendMission('/api/mission/resume', { source: 'web', requested_by: 'dashboard' }, '已发送恢复命令')"
+            >
+              恢复
+            </button>
+            <button
+              :disabled="isSending"
+              class="warn"
+              @click="sendMission('/api/mission/return_home', { source: 'web', requested_by: 'dashboard' }, '已发送返航命令')"
+            >
+              返回 Home
+            </button>
+          </div>
+        </article>
+      </div>
+
+      <div class="main-right-stack">
+        <article class="panel surface-panel voice-panel">
+          <div class="section-header compact-header">
+            <div>
+              <p class="section-kicker">Voice / LLM</p>
+              <h2>语音与文本任务入口</h2>
+            </div>
+            <span class="status-badge" :class="toneClass(pendingVoiceCommand ? 'warning' : voiceRecordError ? 'danger' : 'info')">
+              {{ latestVoiceSummary }}
+            </span>
+          </div>
+
+          <label class="field">
+            <span>文本命令</span>
+            <input v-model="textCommand" type="text" placeholder="例如 帮我把样品送到二零一实验室" @keyup.enter="sendTextCommand" />
+          </label>
+
+          <div class="button-row voice-actions">
+            <button :disabled="isSendingTextCommand || !textCommand.trim()" @click="sendTextCommand">
+              {{ isSendingTextCommand ? '发送中...' : '发送文本命令' }}
+            </button>
+            <label class="field compact-field duration-field">
+              <span>板端录音</span>
+              <select v-model.number="voiceRecordDuration" :disabled="isRecordingVoice">
+                <option :value="2">2 秒</option>
+                <option :value="3">3 秒</option>
+                <option :value="5">5 秒</option>
+              </select>
+            </label>
+            <button class="secondary" :disabled="isRecordingVoice" @click="recordVoiceCommand">
+              {{ isRecordingVoice ? '录音识别中...' : '开始录音识别' }}
+            </button>
+          </div>
+
+          <p v-if="isRecordingVoice" class="inline-status">正在录音并识别，请说话...</p>
+          <p v-if="voiceRecordNoCommandLabel" class="inline-status warn-status">{{ voiceRecordNoCommandLabel }}</p>
+          <p v-if="voiceRecordError" class="inline-status error-status">{{ voiceRecordError }}</p>
+
+          <div class="voice-result-grid">
+            <div class="detail-item wide-detail">
+              <span>识别文本</span>
+              <strong>{{ voiceRecordResult?.recognized_text || voiceResult?.recognized_text || textCommand || '--' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>ASR 后端</span>
+              <strong>{{ voiceRecordResult?.asr_backend ?? 'text' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>ASR 耗时</span>
+              <strong>{{ formatNumber(voiceRecordResult?.asr_time_s, ' s') }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>解析意图</span>
+              <strong>{{ voiceRecordResult?.intent ?? voiceResult?.intent ?? '--' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>目标点</span>
+              <strong>{{ voiceRecordResult?.waypoint_id ?? voiceResult?.waypoint_id ?? voiceRecordResult?.payload.waypoint_id ?? voiceResult?.payload.waypoint_id ?? '--' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>执行状态</span>
+              <strong>{{ voiceRecordResult ? voiceStatusLabel(voiceRecordResult) : voiceResult ? voiceStatusLabel(voiceResult) : '--' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>解析方式</span>
+              <strong>{{ voiceRecordResult?.parser ?? voiceResult?.parser ?? '--' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>LLM 模型</span>
+              <strong>{{ voiceRecordResult?.llm_model ?? voiceResult?.llm_model ?? '--' }}</strong>
+            </div>
+            <div class="detail-item wide-detail">
+              <span>任务反馈</span>
+              <strong>{{ voiceRecordResult?.detail || voiceRecordResult?.error || voiceResult?.detail || voiceResult?.error || '--' }}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel surface-panel perception-panel">
+          <div class="section-header compact-header">
+            <div>
+              <p class="section-kicker">Perception</p>
+              <h2>YOLO 检测状态</h2>
+            </div>
+            <span class="status-badge" :class="toneClass(detectionTone)">{{ detectionStatusLabel }}</span>
+          </div>
+
+          <div class="latest-frame-box">
+            <img
+              v-if="latestFrameAvailable && latestFrameUrl"
+              :src="latestFrameUrl"
+              alt="最新识别画面"
+              @error="handleLatestFrameError"
+              @load="handleLatestFrameLoad"
+            />
+            <div v-else class="latest-frame-placeholder">暂无识别画面</div>
+          </div>
+
+          <div class="detail-grid detection-grid">
+            <div class="detail-item">
+              <span>来源</span>
+              <strong>{{ state?.detection_status?.source ?? '--' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>模型</span>
+              <strong>{{ state?.detection_status?.model_name ?? '--' }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>最近目标</span>
+              <strong>{{ latestDetectionObjectLabel }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>当前检测</span>
+              <strong>{{ currentDetectionLabel }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>最近检测</span>
+              <strong>{{ recentDetectionLabel }}</strong>
+            </div>
+            <div class="detail-item">
+              <span>更新时间</span>
+              <strong>{{ state?.detection_status ? formatTime(state.detection_status.timestamp) : '--' }}</strong>
+            </div>
+            <div class="detail-item wide-detail">
+              <span>最近事件</span>
+              <strong>{{ latestDetectionEventLabel }}</strong>
+            </div>
+            <div class="detail-item wide-detail">
+              <span>视觉事件</span>
+              <strong v-if="detectionEventItems.length === 0">暂无事件</strong>
+              <strong v-else class="value-block detection-event-lines">
+                <span v-for="event in detectionEventItems" :key="`${event.event_type}-${event.message}`">
+                  {{ event.level }} / {{ event.event_type }} / {{ event.message }}
+                </span>
+              </strong>
+            </div>
+          </div>
+
+          <div v-if="currentDetectionObjects.length || recentDetectionObjects.length" class="object-list">
+            <span
+              v-for="object in [...currentDetectionObjects, ...recentDetectionObjects].slice(0, 6)"
+              :key="`${object.class_name}-${object.confidence}-${object.last_seen_at ?? ''}`"
+              class="object-pill"
+            >
+              {{ object.class_name }} · {{ object.confidence.toFixed(2) }}
+            </span>
+          </div>
+          <div v-else class="empty-state compact-empty">暂无检测对象</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="event-grid">
+      <article class="panel surface-panel events-panel">
+        <div class="section-header compact-header">
+          <div>
+            <p class="section-kicker">Events</p>
+            <h2>最近事件</h2>
+          </div>
+          <span class="hint-text">语音 / LLM / YOLO / Mission / 系统告警</span>
         </div>
 
-        <p v-if="isRecordingVoice" class="inline-status">正在录音并识别，请说话...</p>
-        <p v-if="voiceRecordNoCommandLabel" class="inline-status warn-status">
-          {{ voiceRecordNoCommandLabel }}
-        </p>
-        <p v-if="voiceRecordError" class="inline-status error-status">错误信息：{{ voiceRecordError }}</p>
-
-        <div v-if="voiceRecordResult" class="detail-grid command-result-grid">
-          <div class="detail-item">
-            <span>状态</span>
-            <strong>{{ voiceRecordStatus }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>识别文本</span>
-            <strong>{{ voiceRecordResult.recognized_text || '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>解析意图</span>
-            <strong>{{ voiceRecordResult.intent ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>命令</span>
-            <strong>{{ voiceRecordResult.command ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>目标点</span>
-            <strong>{{ voiceRecordResult.waypoint_id ?? voiceRecordResult.payload.waypoint_id ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>是否受理</span>
-            <strong>{{ voiceRecordAcceptedLabel }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>解析方式</span>
-            <strong>{{ voiceRecordResult.parser ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>LLM</span>
-            <strong>{{ voiceRecordResult.llm_backend ? `${voiceRecordResult.llm_backend} / ${voiceRecordResult.llm_model ?? '--'}` : '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>置信度</span>
-            <strong>{{ formatNumber(voiceRecordResult.confidence) }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>ASR 后端</span>
-            <strong>{{ voiceRecordResult.asr_backend }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>ASR 耗时</span>
-            <strong>{{ formatNumber(voiceRecordResult.asr_time_s, ' s') }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>模型加载</span>
-            <strong>{{ formatNumber(voiceRecordResult.model_load_time_s, ' s') }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>任务状态</span>
-            <strong>{{ voiceRecordResult.task_status?.state ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>任务类型</span>
-            <strong>{{ voiceRecordResult.task_status?.task_type ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>任务进度</span>
-            <strong>{{ formatNumber(voiceRecordResult.task_status?.progress, '%') }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>任务来源</span>
-            <strong>{{ voiceRecordResult.task_status?.source ?? '--' }}</strong>
-          </div>
-          <div class="detail-item wide-detail">
-            <span>提示信息</span>
-            <strong>{{ voiceRecordResult.detail || voiceRecordResult.error || '--' }}</strong>
-          </div>
-          <div class="detail-item wide-detail">
-            <span>音频文件</span>
-            <strong>{{ voiceRecordResult.audio_path ?? '--' }}</strong>
-          </div>
-        </div>
-        <div v-else class="empty-state">等待板端录音识别</div>
+        <ul class="event-list">
+          <li v-for="event in dashboardEvents" :key="event.id" class="event-item">
+            <span class="event-time">{{ event.time }}</span>
+            <span class="status-badge" :class="toneClass(event.tone)">{{ event.level }}</span>
+            <strong>{{ event.source }}</strong>
+            <p>{{ event.message }}</p>
+          </li>
+          <li v-if="dashboardEvents.length === 0" class="empty-state">暂无事件</li>
+        </ul>
       </article>
 
-      <article class="panel section-panel">
-        <div class="section-header">
+      <article class="panel surface-panel debug-panel">
+        <div class="section-header compact-header">
           <div>
-            <p class="section-kicker">Sensors</p>
-            <h2>环境传感器</h2>
+            <p class="section-kicker">Runtime</p>
+            <h2>系统调试信息</h2>
           </div>
+          <span class="hint-text">IMU / 环境 / 链路</span>
         </div>
 
-        <div class="detail-grid">
+        <div class="detail-grid runtime-grid">
           <div class="detail-item">
-            <span>温度</span>
-            <strong>{{ formatNumber(state?.env_sensor.temperature_c, ' °C') }}</strong>
+            <span>IMU 连接</span>
+            <strong>{{ imuConnectionLabel }}</strong>
           </div>
           <div class="detail-item">
-            <span>湿度</span>
-            <strong>{{ formatNumber(state?.env_sensor.humidity_percent, ' %') }}</strong>
+            <span>IMU 更新时间</span>
+            <strong>{{ imuUpdatedLabel }}</strong>
           </div>
           <div class="detail-item">
-            <span>传感器状态</span>
+            <span>欧拉角</span>
+            <strong v-if="imu?.imu.euler_deg" class="value-block">
+              yaw={{ formatNumber(imu.imu.euler_deg.yaw) }} / pitch={{ formatNumber(imu.imu.euler_deg.pitch) }} / roll={{ formatNumber(imu.imu.euler_deg.roll) }}
+            </strong>
+            <strong v-else>--</strong>
+          </div>
+          <div class="detail-item">
+            <span>温度 / 湿度</span>
+            <strong>{{ formatNumber(state?.env_sensor.temperature_c, ' °C') }} / {{ formatNumber(state?.env_sensor.humidity_percent, ' %') }}</strong>
+          </div>
+          <div class="detail-item">
+            <span>环境状态</span>
             <strong>{{ state?.env_sensor.status ?? '--' }}</strong>
           </div>
           <div class="detail-item">
             <span>故障码</span>
             <strong>{{ state?.device_status.fault_code ?? '--' }}</strong>
           </div>
-          <div class="detail-item">
-            <span>导航状态</span>
-            <strong>{{ state?.nav_status.state ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>剩余距离</span>
-            <strong>{{ formatNumber(state?.nav_status.remaining_distance, ' m') }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>位姿</span>
-            <strong>
-              {{ formatNumber(state?.robot_pose.x) }},
-              {{ formatNumber(state?.robot_pose.y) }},
-              {{ formatNumber(state?.robot_pose.yaw) }}
-            </strong>
-          </div>
         </div>
-      </article>
-
-      <article class="panel section-panel">
-        <div class="section-header">
-          <div>
-            <p class="section-kicker">IMU</p>
-            <h2>IMU 调试面板</h2>
-          </div>
-          <span class="hint-text">{{ imuConnectionLabel }} · 更新时间 {{ imuUpdatedLabel }}</span>
-        </div>
-
-        <div v-if="imu" class="detail-grid">
-          <div class="detail-item">
-            <span>Frame ID</span>
-            <strong>{{ imu.imu.frame_id }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>样本时间</span>
-            <strong>{{ formatTime(imu.imu.timestamp) }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>欧拉角 (deg)</span>
-            <strong v-if="imu.imu.euler_deg" class="value-block">
-              yaw={{ formatNumber(imu.imu.euler_deg.yaw) }}
-              pitch={{ formatNumber(imu.imu.euler_deg.pitch) }}
-              roll={{ formatNumber(imu.imu.euler_deg.roll) }}
-            </strong>
-            <strong v-else>--</strong>
-          </div>
-          <div class="detail-item">
-            <span>四元数</span>
-            <strong class="value-block">
-              x={{ formatNumber(imu.imu.orientation.x) }}
-              y={{ formatNumber(imu.imu.orientation.y) }}
-              z={{ formatNumber(imu.imu.orientation.z) }}
-              w={{ formatNumber(imu.imu.orientation.w) }}
-            </strong>
-          </div>
-          <div class="detail-item">
-            <span>角速度</span>
-            <strong class="value-block">
-              x={{ formatNumber(imu.imu.angular_velocity.x) }}
-              y={{ formatNumber(imu.imu.angular_velocity.y) }}
-              z={{ formatNumber(imu.imu.angular_velocity.z) }}
-            </strong>
-          </div>
-          <div class="detail-item">
-            <span>线加速度</span>
-            <strong class="value-block">
-              x={{ formatNumber(imu.imu.linear_acceleration.x) }}
-              y={{ formatNumber(imu.imu.linear_acceleration.y) }}
-              z={{ formatNumber(imu.imu.linear_acceleration.z) }}
-            </strong>
-          </div>
-          <div class="detail-item">
-            <span>数据来源</span>
-            <strong>{{ imu.source }}</strong>
-          </div>
-        </div>
-        <div v-else class="empty-state">当前暂无 IMU 样本</div>
-      </article>
-
-      <article class="panel section-panel">
-        <div class="section-header">
-          <div>
-            <p class="section-kicker">Perception</p>
-            <h2>视觉检测状态</h2>
-          </div>
-          <span class="hint-text">{{ detectionStatusLabel }}</span>
-        </div>
-
-        <div class="latest-frame-box">
-          <img
-            v-if="latestFrameAvailable && latestFrameUrl"
-            :src="latestFrameUrl"
-            alt="最新识别画面"
-            @error="handleLatestFrameError"
-            @load="handleLatestFrameLoad"
-          />
-          <div v-else class="latest-frame-placeholder">暂无识别画面</div>
-        </div>
-
-        <div class="detail-grid">
-          <div class="detail-item">
-            <span>来源</span>
-            <strong>{{ state?.detection_status?.source ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>模型</span>
-            <strong>{{ state?.detection_status?.model_name ?? '--' }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>最近目标</span>
-            <strong>{{ latestDetectionObjectLabel }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>当前检测</span>
-            <strong>{{ currentDetectionLabel }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>最近检测</span>
-            <strong>{{ recentDetectionLabel }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>最近事件</span>
-            <strong>{{ latestDetectionEventLabel }}</strong>
-          </div>
-          <div class="detail-item">
-            <span>更新时间</span>
-            <strong>{{ state?.detection_status ? formatTime(state.detection_status.timestamp) : '--' }}</strong>
-          </div>
-          <div class="detail-item wide-detail">
-            <span>视觉事件</span>
-            <strong v-if="detectionEventItems.length === 0">暂无事件</strong>
-            <strong v-else class="value-block">
-              <span v-for="event in detectionEventItems" :key="`${event.event_type}-${event.message}`">
-                {{ event.level }} / {{ event.event_type }} / {{ event.message }}
-              </span>
-            </strong>
-          </div>
-        </div>
-      </article>
-
-      <article class="panel section-panel alerts-panel">
-        <div class="section-header">
-          <div>
-            <p class="section-kicker">Alerts</p>
-            <h2>最近告警</h2>
-          </div>
-        </div>
-
-        <ul class="alert-list">
-          <li v-for="alert in alerts" :key="alert.alert_id" class="alert-item">
-            <div>
-              <strong>{{ alert.message }}</strong>
-              <p>{{ alert.source }} · {{ formatTime(alert.timestamp) }}</p>
-            </div>
-            <span class="alert-level">{{ alert.level }}</span>
-          </li>
-          <li v-if="alerts.length === 0" class="empty-state">暂无告警</li>
-        </ul>
       </article>
     </section>
 

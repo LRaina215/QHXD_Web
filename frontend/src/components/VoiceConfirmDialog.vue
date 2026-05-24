@@ -114,18 +114,19 @@ const parserLabel = computed(() => {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(3, 8, 13, 0.68);
+  background: rgba(15, 23, 42, 0.36);
+  backdrop-filter: blur(6px);
 }
 
 .voice-confirm-dialog {
-  width: min(620px, 100%);
+  width: min(640px, 100%);
   max-height: min(760px, calc(100vh - 40px));
   overflow: auto;
   padding: 22px;
-  border: 1px solid rgba(124, 194, 255, 0.28);
+  border: 1px solid #dbe5f2;
   border-radius: 8px;
-  background: #0e1823;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+  background: #ffffff;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.22);
 }
 
 .voice-confirm-header {
@@ -138,26 +139,29 @@ const parserLabel = computed(() => {
 
 .voice-confirm-kicker {
   margin: 0 0 6px;
-  color: #7cc2ff;
+  color: #2563eb;
   font-size: 0.75rem;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .voice-confirm-header h2 {
   margin: 0;
-  color: #f5f7fa;
-  font-size: 1.25rem;
+  color: #0f172a;
+  font-size: 1.18rem;
 }
 
 .icon-button {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   border-radius: 8px;
-  background: #23384f;
-  font-size: 1.25rem;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  box-shadow: none;
+  font-size: 1.2rem;
   line-height: 1;
 }
 
@@ -170,15 +174,15 @@ const parserLabel = computed(() => {
 }
 
 .risk-note {
-  color: #fde68a;
-  background: rgba(180, 83, 9, 0.16);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #a16207;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
 }
 
 .voice-confirm-error {
-  color: #fecaca;
-  background: rgba(127, 29, 29, 0.24);
-  border: 1px solid rgba(248, 113, 113, 0.3);
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
 }
 
 .voice-confirm-grid {
@@ -190,9 +194,9 @@ const parserLabel = computed(() => {
 .voice-confirm-item {
   min-width: 0;
   padding: 12px;
-  border: 1px solid rgba(115, 147, 179, 0.22);
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
-  background: rgba(18, 31, 44, 0.96);
+  background: #f8fafc;
 }
 
 .voice-confirm-item.wide {
@@ -202,12 +206,12 @@ const parserLabel = computed(() => {
 .voice-confirm-item span {
   display: block;
   margin-bottom: 6px;
-  color: #8ea1b5;
-  font-size: 0.84rem;
+  color: #64748b;
+  font-size: 0.82rem;
 }
 
 .voice-confirm-item strong {
-  color: #f5f7fa;
+  color: #0f172a;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -220,11 +224,14 @@ const parserLabel = computed(() => {
 }
 
 .cancel-button {
-  background: #23384f;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  box-shadow: none;
 }
 
 .confirm-button {
-  background: #b45309;
+  background: #2563eb;
 }
 
 @media (max-width: 560px) {
