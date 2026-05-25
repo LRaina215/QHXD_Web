@@ -113,7 +113,7 @@ const timelineItems = computed(() => [
 ])
 
 const linkItems = computed(() => [
-  { label: 'NUC state', value: props.deviceStatus?.online ? 'online' : 'offline' },
+  { label: 'Navi state', value: props.deviceStatus?.online ? 'online' : 'offline' },
   { label: 'WS state', value: props.wsConnected ? 'connected' : 'reconnecting' },
   { label: 'IMU stream', value: props.imuWsConnected ? 'connected' : 'waiting' },
   { label: 'mode', value: props.systemMode || '--' },

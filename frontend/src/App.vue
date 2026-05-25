@@ -285,15 +285,15 @@ const onlineStatus = computed(() => {
   }
 
   if (state.value.device_status.fault_code === 'waiting-for-real-state') {
-    return '等待 NUC'
+    return '等待 Navi'
   }
 
   if (state.value.device_status.fault_code === 'nuc-state-timeout') {
-    return 'NUC 状态超时'
+    return 'Navi 状态超时'
   }
 
   if (state.value.device_status.fault_code === 'nuc-bridge-unreachable') {
-    return 'NUC Bridge 离线'
+    return 'Navi Link 离线'
   }
 
   return wsConnected.value && state.value.device_status.online ? '在线（Real）' : '离线（Real）'
@@ -327,18 +327,18 @@ const transportStatusLabel = computed(() => {
   }
 
   if (state.value.device_status.fault_code === 'waiting-for-real-state') {
-    return '已切到 real，等待 NUC 首包'
+    return '已切到 real，等待 Navi 首包'
   }
 
   if (state.value.device_status.fault_code === 'nuc-state-timeout') {
-    return 'NUC 状态超时，等待恢复'
+    return 'Navi 状态超时，等待恢复'
   }
 
   if (state.value.device_status.fault_code === 'nuc-bridge-unreachable') {
-    return 'NUC 命令桥异常'
+    return 'Navi 命令链路异常'
   }
 
-  return 'NUC real bridge 已连接'
+  return 'Navi real link 已连接'
 })
 
 const batteryLabel = computed(() => {
@@ -1237,7 +1237,7 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
           <span class="status-badge mode-badge" :class="toneClass(state?.system_mode.mode === 'real' ? 'info' : 'muted')">
             {{ systemModeLabel }} 模式
           </span>
-          <span class="status-badge" :class="toneClass(onlineTone)">NUC {{ onlineStatus }}</span>
+          <span class="status-badge" :class="toneClass(onlineTone)">Navi {{ onlineStatus }}</span>
           <span class="status-badge" :class="toneClass(wsConnected ? 'success' : 'warning')">
             RK3588 {{ wsConnected ? 'Online' : 'Reconnecting' }}
           </span>

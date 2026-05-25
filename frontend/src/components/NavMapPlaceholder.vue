@@ -78,8 +78,8 @@ const goalDistanceLabel = computed(() => {
       </div>
       <div class="goal-marker" aria-hidden="true"></div>
       <div class="map-caption">
-        <strong>NUC NAV STREAM RESERVED</strong>
-        <span>等待接入导航实时流；当前区域保留给后续 NavMapCanvas，不直连 ROS2 话题。</span>
+        <strong>NAVI STREAM RESERVED</strong>
+        <span>等待接入 Navi 导航实时流；当前区域保留给后续 NavMapCanvas，不直连 ROS2 话题。</span>
       </div>
     </div>
 

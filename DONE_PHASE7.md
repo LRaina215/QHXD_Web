@@ -999,3 +999,10 @@ vite build 通过
 ```
 
 构建产物 `frontend/dist` 已恢复，未纳入源码改动。
+
+## 前端 Navi 文案调整
+
+- `frontend/src/App.vue`：将顶部状态、real 模式等待、超时、链路异常等面向用户的 `NUC` 文案调整为 `Navi` / `Navi Link`。后端 fault_code 仍保留 `nuc-state-timeout` 等内部兼容字段。
+- `frontend/src/components/NavMapPlaceholder.vue`：将导航占位提示从 `NUC NAV STREAM RESERVED` 改为 `NAVI STREAM RESERVED`，说明等待接入 Navi 导航实时流。
+- `frontend/src/components/NavigationAssistPanel.vue`：将链路状态项 `NUC state` 改为 `Navi state`。
+- 验证：`cd frontend && npm run build` 通过。
