@@ -246,7 +246,16 @@ function getLatestFrameRefreshIntervalMs(): number {
   return Math.max(200, intervalMs)
 }
 
+function getEnvBool(name: string, defaultValue: boolean): boolean {
+  const rawValue = import.meta.env[name]
+  if (rawValue === undefined || rawValue === '') {
+    return defaultValue
+  }
+  return ['1', 'true', 'yes', 'on'].includes(String(rawValue).toLowerCase())
+}
+
 const latestFrameRefreshIntervalMs = getLatestFrameRefreshIntervalMs()
+const useMjpegFrameStream = getEnvBool('VITE_USE_MJPEG_STREAM', true)
 
 const onlineStatus = computed(() => {
   if (!state.value) {
@@ -784,8 +793,11 @@ onMounted(async () => {
   alertsTimer = window.setInterval(() => {
     void loadAlerts()
   }, 5000)
-  refreshLatestFrame()
-  latestFrameTimer = window.setInterval(refreshLatestFrame, latestFrameRefreshIntervalMs)
+  if (useMjpegFrameStream) {
+    startLatestFrameStream()
+  } else {
+    startLatestFramePolling()
+  }
   stateTimer = window.setInterval(() => {
     void Promise.all([loadState(), loadImu()])
   }, 4000)
@@ -861,6 +873,18 @@ async function loadImu() {
   }
 }
 
+function startLatestFrameStream() {
+  latestFrameAvailable.value = true
+  latestFrameUrl.value = `/api/perception/frame_stream?t=${Date.now()}`
+}
+
+function startLatestFramePolling() {
+  refreshLatestFrame()
+  if (latestFrameTimer === null) {
+    latestFrameTimer = window.setInterval(refreshLatestFrame, latestFrameRefreshIntervalMs)
+  }
+}
+
 function refreshLatestFrame() {
   latestFrameAvailable.value = true
   latestFrameUrl.value = `/api/perception/latest_frame?t=${Date.now()}`
@@ -868,6 +892,9 @@ function refreshLatestFrame() {
 
 function handleLatestFrameError() {
   latestFrameAvailable.value = false
+  if (useMjpegFrameStream && latestFrameTimer === null) {
+    window.setTimeout(startLatestFramePolling, 500)
+  }
 }
 
 function handleLatestFrameLoad() {

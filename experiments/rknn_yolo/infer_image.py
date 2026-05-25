@@ -15,6 +15,7 @@ from detection_status_builder import build_detection_status
 INPUT_SIZE = 640
 DEFAULT_IOU_THRESHOLD = 0.45
 OUTPUT_LAYOUTS = ("auto", "xyxy_score_class", "xyxy_class_score", "class_score_xyxy")
+_CV2_RESIZE_AVAILABLE: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -359,15 +360,23 @@ def _preprocess_frame_array(frame: Any, np, *, color_order: str = "bgr") -> tupl
 
 
 def _resize_rgb_image(rgb_image: Any, np):
-    try:
-        import cv2
-    except ImportError:
-        from PIL import Image
+    global _CV2_RESIZE_AVAILABLE
 
-        image = Image.fromarray(np.asarray(rgb_image).astype("uint8"), mode="RGB")
-        return np.asarray(image.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR))
+    if _CV2_RESIZE_AVAILABLE is not False:
+        try:
+            import cv2
 
-    return cv2.resize(rgb_image, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_LINEAR)
+            resized = cv2.resize(rgb_image, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_LINEAR)
+            _CV2_RESIZE_AVAILABLE = True
+            return resized
+        except Exception as exc:
+            _CV2_RESIZE_AVAILABLE = False
+            print(f"OpenCV resize unavailable, fallback to Pillow: {exc}", file=sys.stderr)
+
+    from PIL import Image
+
+    image = Image.fromarray(np.asarray(rgb_image).astype("uint8"), mode="RGB")
+    return np.asarray(image.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR))
 
 
 def _draw_detections(image_path: Path, output_path: Path, objects: list[dict[str, Any]]) -> None:
@@ -431,7 +440,20 @@ def _save_detection_visualization(image, output_path: Path, objects: list[dict[s
         draw.rectangle([x1, label_y, x1 + text_w + 6, label_y + text_h + 4], fill=color)
         draw.text((x1 + 3, label_y + 2), label, fill=(255, 255, 255), font=font)
 
-    image.save(output_path)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{output_path.stem}.",
+            suffix=output_path.suffix or ".jpg",
+            dir=output_path.parent,
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+        image.save(temp_path)
+        os.replace(temp_path, output_path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
     print(f"Saved detection visualization: {output_path}", file=sys.stderr)
 
 

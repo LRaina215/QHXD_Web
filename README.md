@@ -33,30 +33,54 @@
 三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`setup_usb_camera_alias.sh` 会写入 udev 规则，执行时需要 sudo。`camera_config.json` 默认使用稳定设备名 `/dev/qhxd-usb-camera` 作为 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
 
 
-## YOLO 处理频率与前端画面刷新率
+## 相机采集、YOLO 处理与前端刷新频率
 
-这里有两层频率，含义不同：
+这里有三层频率，含义不同，现场调试时不要混在一起：
 
-- YOLO 服务生产 latest 图片的频率：由 `experiments/rknn_yolo/camera_config*.json` 的 `fps` 控制。
-- Dashboard 前端拉取并显示 latest 图片的频率：由前端环境变量 `VITE_LATEST_FRAME_INTERVAL_MS` 控制，默认 `2000` 毫秒。
+- Hik 相机硬件采集帧率：相机本身每秒输出多少帧，写在 `experiments/rknn_yolo/camera_config_hik.example.json` 的 `hik_params` 中。
+- YOLO 服务处理/上传 latest 图片频率：服务每秒取多少帧进入 RKNN、保存 latest 图片、提交 detection_status，写在 `camera_config*.json` 的 `fps` 中。
+- Dashboard 前端画面显示方式：默认使用 MJPEG JPEG bytes 流 `/api/perception/frame_stream`，由 `.env` 的 `VITE_USE_MJPEG_STREAM=true` 开启。
+- MJPEG 流检查 latest 图片的间隔：后端环境变量 `PERCEPTION_MJPEG_INTERVAL_MS`，默认 `200` 毫秒。
+- latest-frame 轮询 fallback 间隔：前端环境变量 `VITE_LATEST_FRAME_INTERVAL_MS`，默认 `2000` 毫秒；只有关闭 MJPEG 或 MJPEG 出错回退时才主要使用。
 
-如果你想改“海康相机图像上传到前端后，前端画面显示更新得多快”，优先改前端刷新间隔：
+如果你想改“海康相机画面在前端显示更新得多快”，优先确认 MJPEG 已开启：
 
 ```bash
 cd /home/robomaster/QHXD
-# 1000 表示前端每 1 秒请求一次 /api/perception/latest_frame
-echo 'VITE_LATEST_FRAME_INTERVAL_MS=1000' >> .env
+grep '^VITE_USE_MJPEG_STREAM=' .env
+grep '^PERCEPTION_MJPEG_INTERVAL_MS=' .env
+```
+
+推荐配置：
+
+```env
+VITE_USE_MJPEG_STREAM=true
+PERCEPTION_MJPEG_INTERVAL_MS=200
+VITE_LATEST_FRAME_INTERVAL_MS=1000
+```
+
+`PERCEPTION_MJPEG_INTERVAL_MS=200` 表示后端 MJPEG 流最多每 200ms 检查一次是否有新 latest 图片。它不会凭空制造新帧，如果 YOLO 服务没有产生新图，前端仍然只能看到上一帧。
+
+改完 `.env` 后需要重启后端和前端。`start_frontend.sh` 如果发现前端已经可访问，会直接退出，所以要先停掉旧前端进程：
+
+```bash
+cd /home/robomaster/QHXD
+source scripts/common.sh
+stop_service backend
+stop_service frontend
+./scripts/start_backend.sh
 ./scripts/start_frontend.sh
 ```
 
-如果前端已经在运行，改完 `.env` 后需要重启前端服务。最低允许值为 `200ms`，配置得更低会被前端保护到 `200ms`，避免浏览器疯狂请求。
+如果要临时关闭 MJPEG，改为：
 
-`fps` 仍然有用，但它控制的是 YOLO 服务多久生成一张新图并提交一次 detection_status：
+```env
+VITE_USE_MJPEG_STREAM=false
+```
 
-常用配置文件：
+关闭后前端会回到 `/api/perception/latest_frame?t=...` 轮询模式，此时 `VITE_LATEST_FRAME_INTERVAL_MS` 才是主要显示刷新间隔。最低允许值为 `200ms`；配置得更低会被前端保护到 `200ms`，避免浏览器过度请求。
 
-- USB / UVC 摄像头：`experiments/rknn_yolo/camera_config.json`
-- Hikrobot / MVS 相机：`experiments/rknn_yolo/camera_config_hik.example.json`
+如果你想改 YOLO 服务生成 latest 图片和提交 detection_status 的频率，改 `fps`：
 
 ```json
 {
@@ -64,7 +88,12 @@ echo 'VITE_LATEST_FRAME_INTERVAL_MS=1000' >> .env
 }
 ```
 
-`fps=1` 表示 YOLO 服务目标每秒处理并保存 1 张 latest 图片；`fps=2` 表示目标每秒 2 张。也可以临时用 CLI 覆盖：
+常用配置文件：
+
+- USB / UVC 摄像头：`experiments/rknn_yolo/camera_config.json`
+- Hikrobot / MVS 相机：`experiments/rknn_yolo/camera_config_hik.example.json`
+
+也可以临时用 CLI 覆盖：
 
 ```bash
 cd /home/robomaster/QHXD/experiments/rknn_yolo
@@ -72,15 +101,7 @@ python3 camera_detect_service.py --config camera_config.json --fps 2
 python3 camera_detect_service.py --config camera_config_hik.example.json --fps 2
 ```
 
-实际看到的前端画面更新速度取决于更慢的那一层：如果 YOLO `fps=1`，即使前端每 `200ms` 请求一次，也只会反复拿到同一张图；如果 YOLO `fps=5`，但前端 `VITE_LATEST_FRAME_INTERVAL_MS=2000`，页面仍然大约 2 秒才换一次图。
-
-注意三种“帧率”不要混在一起：
-
-- `fps`：YOLO 服务抽帧、推理、保存 latest 图片和提交后端的目标频率。
-- `VITE_LATEST_FRAME_INTERVAL_MS`：Dashboard 前端请求 `/api/perception/latest_frame?t=...` 的间隔，只影响页面显示刷新。
-- Hik 相机硬件采集帧率：放在 `camera_config_hik.example.json` 的 `hik_params` 中，例如 `AcquisitionFrameRateEnable` / `AcquisitionFrameRate`。这只限制相机侧出帧，不等于 YOLO 每秒推理帧数。
-
-Hik 硬件帧率示例：
+如果你想改 Hik 相机硬件采集帧率，改 `camera_config_hik.example.json` 里的 `hik_params`：
 
 ```json
 {
@@ -95,7 +116,9 @@ Hik 硬件帧率示例：
 }
 ```
 
-如果 RKNN 推理、相机取帧或后端提交耗时超过 `1 / fps`，实际帧率会低于配置值，这是正常的保护行为。高帧率测试时建议同步观察 `logs/yolo_camera.log`、CPU/NPU 负载和前端画面更新时间。
+`AcquisitionFrameRate=10.0` 表示限制 Hik 相机侧目标 10 FPS 出帧；这不等于 YOLO 每秒推理 10 帧，也不等于前端每秒显示 10 次。
+
+实际前端看到的画面更新速度取决于更慢的那一层：如果 YOLO `fps=1`，即使前端每 `200ms` 请求一次，也只会反复拿到同一张图；如果 YOLO `fps=5`，但前端 `VITE_LATEST_FRAME_INTERVAL_MS=2000`，页面仍然大约 2 秒才换一次图。如果 RKNN 推理、相机取帧或后端提交耗时超过 `1 / fps`，实际 YOLO 处理频率也会低于配置值，这是正常保护行为。
 
 
 ## DeepSeek V4 API 配置
@@ -864,9 +887,17 @@ experiments/rknn_yolo/outputs/latest_camera_detection.jpg
 GET /api/perception/latest_frame
 ```
 
+MJPEG JPEG bytes 流接口：
+
+```http
+GET /api/perception/frame_stream
+```
+
+前端默认用 `<img src="/api/perception/frame_stream">` 显示连续 JPEG bytes；如果流接口异常，会回退到 `latest_frame` 轮询。
+
 推荐启动优先使用本文开头的快捷脚本：`./scripts/start_backend.sh`、`./scripts/start_frontend.sh`、`./scripts/start_yolo_camera.sh` 或 `./scripts/start_yolo_hik_camera.sh`。
 
-Dashboard 的视觉检测卡片会显示 `/api/perception/latest_frame?t=...`，每 2 秒刷新一次，同时保留 detection_status 的 objects / events 显示。YOLO 采集与提交频率由 `camera_config*.json` 的 `fps` 控制，详见本文前面的“YOLO 处理频率与前端画面刷新率”。更完整的配置和排障说明见 `experiments/rknn_yolo/README.md`。
+Dashboard 的视觉检测卡片默认显示 `/api/perception/frame_stream` MJPEG 图像流；如果 MJPEG 关闭或异常，会回退到 `/api/perception/latest_frame?t=...` 轮询。同时保留 detection_status 的 objects / events 显示。YOLO 采集与提交频率由 `camera_config*.json` 的 `fps` 控制，详见本文前面的“相机采集、YOLO 处理与前端刷新频率”。更完整的配置和排障说明见 `experiments/rknn_yolo/README.md`。
 
 ### Hikrobot 相机入口
 

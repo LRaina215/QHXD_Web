@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.schemas import (
     AlertsResponse,
@@ -115,6 +115,59 @@ def _latest_frame_path() -> Path:
     return DEFAULT_LATEST_FRAME_PATH
 
 
+def _perception_latest_frame_max_age_s() -> float:
+    try:
+        return float(os.getenv("PERCEPTION_LATEST_FRAME_MAX_AGE_SECONDS", "10"))
+    except ValueError:
+        return 10.0
+
+
+def _mjpeg_stream_interval_s() -> float:
+    try:
+        interval_ms = float(os.getenv("PERCEPTION_MJPEG_INTERVAL_MS", "200"))
+    except ValueError:
+        interval_ms = 200.0
+    return max(0.05, interval_ms / 1000.0)
+
+
+def _read_latest_frame_bytes() -> tuple[Path, bytes, float, int] | None:
+    frame_path = _latest_frame_path()
+    if not frame_path.exists() or not frame_path.is_file():
+        return None
+
+    stat_result = frame_path.stat()
+    max_age_s = _perception_latest_frame_max_age_s()
+    age_s = max(0.0, time.time() - stat_result.st_mtime)
+    if max_age_s > 0 and age_s > max_age_s:
+        return None
+
+    data = frame_path.read_bytes()
+    if not data:
+        return None
+    return frame_path, data, age_s, stat_result.st_mtime_ns
+
+
+async def _mjpeg_frame_generator():
+    boundary = b"--frame"
+    last_mtime_ns = -1
+    while True:
+        latest = _read_latest_frame_bytes()
+        if latest is not None:
+            frame_path, data, age_s, mtime_ns = latest
+            if mtime_ns != last_mtime_ns:
+                last_mtime_ns = mtime_ns
+                headers = (
+                    boundary
+                    + b"\r\n"
+                    + b"Content-Type: image/jpeg\r\n"
+                    + f"Content-Length: {len(data)}\r\n".encode("ascii")
+                    + f"X-Latest-Frame-Path: {frame_path}\r\n".encode("utf-8")
+                    + f"X-Latest-Frame-Age: {age_s:.3f}\r\n\r\n".encode("ascii")
+                )
+                yield headers + data + b"\r\n"
+        await asyncio.sleep(_mjpeg_stream_interval_s())
+
+
 def _latest_frame_response():
     frame_path = _latest_frame_path()
     cache_headers = {"Cache-Control": "no-store, no-cache, must-revalidate"}
@@ -129,7 +182,7 @@ def _latest_frame_response():
             headers=cache_headers,
         )
 
-    max_age_s = float(os.getenv("PERCEPTION_LATEST_FRAME_MAX_AGE_SECONDS", "10"))
+    max_age_s = _perception_latest_frame_max_age_s()
     age_s = max(0.0, time.time() - frame_path.stat().st_mtime)
     if max_age_s > 0 and age_s > max_age_s:
         return JSONResponse(
@@ -373,6 +426,19 @@ async def get_latest_perception_frame():
 @app.head("/api/perception/latest_frame")
 async def head_latest_perception_frame():
     return _latest_frame_response()
+
+
+@app.get("/api/perception/frame_stream")
+async def get_perception_frame_stream():
+    return StreamingResponse(
+        _mjpeg_frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Frame-Stream": "mjpeg",
+        },
+    )
 
 
 @app.get("/api/state/latest", response_model=StateLatestResponse)
