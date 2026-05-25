@@ -162,14 +162,17 @@ class HikCameraSource:
             return None
 
         matches = []
+        discovered_labels = []
         for idx in range(device_list.nDeviceNum):
             info = cast(device_list.pDeviceInfo[idx], POINTER(sdk["MV_CC_DEVICE_INFO"])).contents
             label = self._device_label(info)
+            discovered_labels.append(label or f"device[{idx}]")
             if self.serial and self.serial not in label:
                 continue
             matches.append((idx, info, label))
         if not matches:
-            self.last_error = f"Hik camera serial not found: {self.serial}"
+            found = ", ".join(discovered_labels) or "none"
+            self.last_error = f"Hik camera serial not found: {self.serial}; discovered: {found}"
             return None
         if self.index >= len(matches):
             self.last_error = f"Hik camera index {self.index} out of range, found {len(matches)}"

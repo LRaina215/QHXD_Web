@@ -826,13 +826,15 @@ experiments/rknn_yolo/camera_detect_service.py
 experiments/rknn_yolo/camera_config_hik.example.json
 ```
 
-USB 与 Hik 的切换只影响采集层，不改变 RKNN 推理、`detection_status`、后端 state_store、Dashboard 或 mission 行为。当前测试记录：Hik 设备曾被识别为 `2bdf:0001 Hikrobot MV-CS060-10UC-PRO`，序列号 `DA8290708`；MVS SDK 首次可枚举/打开/start grabbing，但抓帧超时。随后内核日志持续出现 `usb 6-1: device descriptor read/8, error -110`，当前需要先让 USB3 总线稳定枚举后再做最终出图验收。
+Dashboard 的 `/api/perception/latest_frame` 会自动选择 USB/Hik 两个 latest 输出中更新时间最新的一张；超过 `PERCEPTION_LATEST_FRAME_MAX_AGE_SECONDS`（默认 10 秒）未更新时返回 `latest_frame_stale`，避免前端显示旧图。
+
+USB 与 Hik 的切换只影响采集层，不改变 RKNN 推理、`detection_status`、后端 state_store、Dashboard 或 mission 行为。当前测试记录：Hik 设备已被识别为 `2bdf:0001 Hikrobot MV-CS020-10UC`，MVS SDK 标签为 `USB MV-CS020-10UC DA3860587`；已验证可枚举、打开、start grabbing、读取 RGB 帧，并可作为 YOLO 图像源生成 `outputs/latest_hik_detection.jpg`。`camera_config_hik.example.json` 默认不绑定 serial，会打开第 1 台枚举到的 Hik 相机；如果现场有多台 Hik 相机，可把 `hik_serial` 设置为目标序列号。
 
 Hik dry-run：
 
 ```bash
 cd /home/robomaster/QHXD/experiments/rknn_yolo
-python3 camera_detect_service.py --config camera_config_hik.example.json --dry-run --max-frames 1 --read-fail-limit 1
+python3 camera_detect_service.py --config camera_config_hik.example.json --dry-run --max-frames 2 --read-fail-limit 2
 ```
 
 USB 默认入口：

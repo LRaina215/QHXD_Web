@@ -347,7 +347,7 @@ cd /home/robomaster/QHXD
 HIK_YOLO_CONFIG=/path/to/camera_config_hik.json ./scripts/start_yolo_hik_camera.sh
 ```
 
-当前这台 Hik USB3 Vision 相机曾被系统识别为 `2bdf:0001 Hikrobot MV-CS060-10UC-PRO`，序列号 `DA8290708`。首次 MVS 探测可以枚举、打开并 start grabbing，但抓帧返回 `0x80000007`。执行 MVS USB 权限和 usbfs 内存设置后，当前内核日志出现反复的 `usb 6-1: device descriptor read/8, error -110`，`lsusb -t` 暂时不再稳定列出该相机。因此软件入口已接入，但 Hik 出图最终验收还需要先让相机在 USB3 总线/MVS SDK 中稳定枚举。
+当前 Hik USB3 Vision 相机已被系统识别为 `2bdf:0001 Hikrobot MV-CS020-10UC`，MVS SDK 标签为 `USB MV-CS020-10UC DA3860587`。已验证 MVS SDK 可枚举、打开、start grabbing、读取 RGB 帧，并可作为 YOLO 连续检测服务输入源生成 `outputs/latest_hik_detection.jpg`。`camera_config_hik.example.json` 默认 `hik_serial` 为空，表示使用第 1 台枚举到的 Hik 相机；如现场接入多台 Hik，相机稳定后再填写目标 serial。
 
 ### dry-run 模式
 

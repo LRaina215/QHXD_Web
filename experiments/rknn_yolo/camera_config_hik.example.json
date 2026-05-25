@@ -26,6 +26,7 @@
   "blockage_event_interval": 10.0,
   "camera_backend": "hik",
   "hik_index": 0,
-  "hik_serial": "DA8290708",
-  "hik_timeout_ms": 1500
+  "hik_serial": "",
+  "hik_timeout_ms": 2000,
+  "camera_retry_interval": 3.0
 }

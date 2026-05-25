@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import tempfile
+import time
 import wave
 from pathlib import Path
 from contextlib import asynccontextmanager, suppress
@@ -95,15 +96,28 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="RK3588 Middleware", version="0.1.0", lifespan=lifespan)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LATEST_FRAME_PATH = PROJECT_ROOT / "experiments" / "rknn_yolo" / "outputs" / "latest_camera_detection.jpg"
+YOLO_OUTPUT_DIR = PROJECT_ROOT / "experiments" / "rknn_yolo" / "outputs"
+DEFAULT_LATEST_FRAME_PATH = YOLO_OUTPUT_DIR / "latest_camera_detection.jpg"
+LATEST_FRAME_CANDIDATES = (
+    YOLO_OUTPUT_DIR / "latest_camera_detection.jpg",
+    YOLO_OUTPUT_DIR / "latest_hik_detection.jpg",
+)
 
 
 def _latest_frame_path() -> Path:
-    return Path(os.getenv("PERCEPTION_LATEST_FRAME_PATH", str(DEFAULT_LATEST_FRAME_PATH))).expanduser()
+    configured_path = os.getenv("PERCEPTION_LATEST_FRAME_PATH")
+    if configured_path:
+        return Path(configured_path).expanduser()
+
+    existing_candidates = [path for path in LATEST_FRAME_CANDIDATES if path.exists() and path.is_file()]
+    if existing_candidates:
+        return max(existing_candidates, key=lambda path: path.stat().st_mtime)
+    return DEFAULT_LATEST_FRAME_PATH
 
 
 def _latest_frame_response():
     frame_path = _latest_frame_path()
+    cache_headers = {"Cache-Control": "no-store, no-cache, must-revalidate"}
     if not frame_path.exists() or not frame_path.is_file():
         return JSONResponse(
             status_code=404,
@@ -112,11 +126,32 @@ def _latest_frame_response():
                 "error": "latest_frame_not_found",
                 "detail": f"最新识别图片不存在：{frame_path}",
             },
+            headers=cache_headers,
         )
+
+    max_age_s = float(os.getenv("PERCEPTION_LATEST_FRAME_MAX_AGE_SECONDS", "10"))
+    age_s = max(0.0, time.time() - frame_path.stat().st_mtime)
+    if max_age_s > 0 and age_s > max_age_s:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success": False,
+                "error": "latest_frame_stale",
+                "detail": f"最新识别图片已过期：{frame_path}，age={age_s:.1f}s",
+            },
+            headers={**cache_headers, "X-Latest-Frame-Path": str(frame_path), "X-Latest-Frame-Age": f"{age_s:.3f}"},
+        )
+
     return FileResponse(
         frame_path,
         media_type="image/jpeg",
-        headers={"Cache-Control": "no-store"},
+        headers={
+            **cache_headers,
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Latest-Frame-Path": str(frame_path),
+            "X-Latest-Frame-Age": f"{age_s:.3f}",
+        },
     )
 
 

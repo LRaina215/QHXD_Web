@@ -191,19 +191,22 @@ const motionItems = computed(() => [
 
 <style scoped>
 .navigation-assist-panel {
+  container-type: inline-size;
   display: grid;
   gap: 12px;
 }
 
 .assist-layout {
   display: grid;
-  grid-template-columns: minmax(230px, 0.94fr) minmax(260px, 1.06fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
   gap: 12px;
 }
 
 .timeline-card,
 .status-cluster {
   min-width: 0;
+  overflow: hidden;
   padding: 13px;
   border: 1px solid #e0d4c4;
   border-radius: 8px;
@@ -211,9 +214,9 @@ const motionItems = computed(() => [
 }
 
 .assist-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
   gap: 10px;
   margin-bottom: 10px;
 }
@@ -225,13 +228,18 @@ const motionItems = computed(() => [
   font-weight: 900;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .assist-title-row strong {
+  min-width: 0;
   color: #15130f;
   line-height: 1.3;
   text-align: right;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .mission-timeline {
@@ -286,14 +294,12 @@ const motionItems = computed(() => [
 }
 
 .assist-status-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  display: contents;
 }
 
 dl {
   display: grid;
-  grid-template-columns: minmax(82px, 0.82fr) minmax(0, 1.18fr);
+  grid-template-columns: minmax(86px, auto) minmax(96px, 1fr);
   gap: 8px 10px;
   margin: 0;
 }
@@ -309,23 +315,45 @@ dd {
   color: #15130f;
   font-weight: 800;
   text-align: right;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: keep-all;
 }
 
-@media (max-width: 1320px) {
-  .assist-layout,
-  .assist-status-grid {
+@container (max-width: 760px) {
+  .assist-layout {
     grid-template-columns: 1fr;
+  }
+
+  .assist-status-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
   }
 }
 
-@media (max-width: 700px) {
+@container (max-width: 540px) {
+  .assist-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .assist-title-row {
+    grid-template-columns: 1fr;
+  }
+
+  .assist-title-row strong {
+    text-align: left;
+  }
+
   dl {
     grid-template-columns: 1fr;
   }
 
   dd {
     text-align: left;
+    white-space: normal;
   }
 }
 </style>

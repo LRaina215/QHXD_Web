@@ -8,5 +8,5 @@ if [[ ! -f "${YOLO_CONFIG}" ]]; then
 fi
 cd "${PROJECT_ROOT}/experiments/rknn_yolo"
 echo "YOLO config: ${YOLO_CONFIG}"
-start_service yolo_camera "${YOLO_PYTHON}" camera_detect_service.py --config "${YOLO_CONFIG}"
+start_service yolo_camera "${SCRIPT_DIR}/run_yolo_camera_service.sh" "${YOLO_PYTHON}" camera_detect_service.py --config "${YOLO_CONFIG}"
 echo "latest frame target follows save_latest in the active config"

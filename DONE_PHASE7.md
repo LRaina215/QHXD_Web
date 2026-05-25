@@ -930,3 +930,72 @@ frontend 返回 HTTP/1.1 200 OK
 ```
 
 构建产物 `frontend/dist` 已恢复，未纳入源码改动。
+
+---
+
+# Phase 7C 导航辅助面板响应式修复
+
+## 问题
+
+`NavigationAssistPanel` 中外层 grid 会把右侧状态区压窄，内层 grid 又继续切分为 `NAV LINK` 与 `MOTION RESERVE` 两列；同时状态值使用 `overflow-wrap: anywhere`，导致窗口拉伸到中间宽度时出现 `NAV LINK`、`MOTION RESERVE` 与 `reconnecting / waiting` 等文本被竖向拆字的问题。
+
+## 本轮修复
+
+- 修改 `frontend/src/components/NavigationAssistPanel.vue`：调整 `.assist-layout` 的列宽下限，让右侧状态区至少保留可读宽度。
+- 修改 `frontend/src/components/NavigationAssistPanel.vue`：在 `max-width: 1500px` 时优先将时间线与状态区上下堆叠，而不是继续挤压右侧两列。
+- 修改 `frontend/src/components/NavigationAssistPanel.vue`：`NAV LINK` 与 `MOTION RESERVE` 内部保持两列均分，但在窄屏下自动改为单列。
+- 修改 `frontend/src/components/NavigationAssistPanel.vue`：取消状态标题和值的 `overflow-wrap: anywhere`，改为不拆单词、超长值省略，避免出现逐字换行。
+
+## 验证
+
+已执行：
+
+```bash
+cd /home/robomaster/QHXD/frontend
+npx vue-tsc --noEmit
+npm run build
+```
+
+结果：
+
+```text
+vue-tsc 通过
+vite build 通过
+```
+
+构建产物 `frontend/dist` 已恢复，未纳入源码改动。
+
+
+---
+
+# Phase 7C 导航辅助面板出格修复
+
+## 问题
+
+上一版仍然使用 viewport 断点判断 `NavigationAssistPanel` 是否需要折行；但该组件实际位于左侧栏内，左侧栏宽度可能已经不足，而浏览器 viewport 仍然很宽，导致断点不触发。此时 `TASK TIMELINE`、`NAV LINK`、`MOTION RESERVE` 的嵌套 grid 会被最小宽度撑开，出现面板越出父容器的问题。
+
+## 本轮修复
+
+- 修改 `frontend/src/components/NavigationAssistPanel.vue`：为 `navigation-assist-panel` 增加 `container-type: inline-size`，改为按组件自身宽度响应。
+- 修改 `frontend/src/components/NavigationAssistPanel.vue`：将任务时间线、导航链路、运动预留改成三张同级卡片参与同一个 grid，避免右侧嵌套 grid 被二次压缩。
+- 修改 `frontend/src/components/NavigationAssistPanel.vue`：卡片使用 `minmax(0, 1fr)` 与 `overflow: hidden`，防止内容最小宽度撑破父容器。
+- 修改 `frontend/src/components/NavigationAssistPanel.vue`：在组件宽度低于 760px 时改为上下布局，低于 540px 时全部单列。
+
+## 验证
+
+已执行：
+
+```bash
+cd /home/robomaster/QHXD/frontend
+npx vue-tsc --noEmit
+npm run build
+```
+
+结果：
+
+```text
+vue-tsc 通过
+vite build 通过
+```
+
+构建产物 `frontend/dist` 已恢复，未纳入源码改动。

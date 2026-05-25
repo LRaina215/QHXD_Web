@@ -31,6 +31,7 @@ CONFIG_FIELDS = {
     "hik_serial",
     "hik_index",
     "camera_backend",
+    "camera_retry_interval",
     "conf",
     "fps",
     "frame_id",
@@ -63,6 +64,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "hik_serial": None,
     "hik_index": 0,
     "camera_backend": "auto",
+    "camera_retry_interval": 0.0,
     "conf": 0.25,
     "fps": 2.0,
     "frame_id": "camera_front",
@@ -253,6 +255,7 @@ def main() -> int:
     parser.add_argument("--hik-index", type=int, default=None, help="Hik SDK camera index after optional serial filtering.")
     parser.add_argument("--hik-serial", default=None, help="Optional Hik camera serial filter.")
     parser.add_argument("--hik-timeout-ms", type=int, default=None, help="Hik SDK frame timeout in milliseconds.")
+    parser.add_argument("--camera-retry-interval", type=float, default=None, help="Seconds between camera reopen attempts. 0 disables retry.")
     parser.add_argument("--conf", type=float, default=None, help="Confidence threshold.")
     parser.add_argument("--fps", type=float, default=None, help="Detection FPS, default 2.")
     parser.add_argument("--frame-id", default=None, help="Frame ID for detection_status output.")
@@ -334,6 +337,7 @@ def _merge_config(raw_args: argparse.Namespace) -> argparse.Namespace:
     values["hik_index"] = int(values["hik_index"])
     values["hik_serial"] = None if values["hik_serial"] in (None, "") else str(values["hik_serial"])
     values["hik_timeout_ms"] = int(values["hik_timeout_ms"])
+    values["camera_retry_interval"] = max(0.0, float(values["camera_retry_interval"]))
     values["conf"] = float(values["conf"])
     values["fps"] = float(values["fps"])
     values["submit"] = bool(values["submit"])
@@ -367,16 +371,14 @@ def _normalize_hold_classes(value: Any) -> list[str]:
 
 
 def run_service(args: argparse.Namespace) -> int:
-    camera = _open_camera(args)
+    camera: CameraSource | None = None
     runner: RknnYoloRunner | None = None
     final_status: dict[str, Any] | None = None
     final_status_submitted = False
 
     try:
+        camera = _open_camera_or_report(args)
         if camera is None:
-            status = _service_status(args, False, "camera_unavailable", "warning", "摄像头不可用或无法打开")
-            _emit_status(status, dry_run=args.dry_run)
-            _maybe_submit(args, status, force=True)
             return 2
 
         runner = RknnYoloRunner(
@@ -414,6 +416,16 @@ def run_service(args: argparse.Namespace) -> int:
                     status = _service_status(args, False, "camera_read_failed", "warning", "摄像头连续读取失败，检测服务离线")
                     _emit_status(status, dry_run=args.dry_run)
                     _maybe_submit(args, status, force=True)
+                    if args.camera_retry_interval > 0 and args.max_frames <= 0:
+                        camera.release()
+                        camera = _open_camera_or_report(args)
+                        if camera is None:
+                            final_status = status
+                            final_status_submitted = args.submit and not args.dry_run
+                            return 3
+                        read_failures = 0
+                        _sleep_until_next(loop_started, frame_interval)
+                        continue
                     final_status = status
                     final_status_submitted = args.submit and not args.dry_run
                     return 3
@@ -588,6 +600,20 @@ def _stats_to_dict(stats: Any) -> dict[str, int]:
     }
 
 
+def _open_camera_or_report(args: argparse.Namespace) -> CameraSource | None:
+    while True:
+        camera = _open_camera(args)
+        if camera is not None:
+            return camera
+        status = _service_status(args, False, "camera_unavailable", "warning", "摄像头不可用或无法打开")
+        _emit_status(status, dry_run=args.dry_run)
+        _maybe_submit(args, status, force=True)
+        if args.camera_retry_interval <= 0 or args.max_frames > 0:
+            return None
+        print(f"Camera unavailable; retrying in {args.camera_retry_interval:.1f}s.", file=sys.stderr)
+        time.sleep(args.camera_retry_interval)
+
+
 def _open_camera(args: argparse.Namespace) -> CameraSource | None:
     if args.camera_backend == "hik":
         return _open_hik_camera(args)
@@ -719,7 +745,8 @@ def _submit_status(backend_url: str, status: dict[str, Any]) -> bool:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=2.0) as response:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=2.0) as response:
             body = response.read().decode("utf-8", errors="replace")
             status_code = response.status
         print(f"Submitted detection_status: HTTP {status_code} {body[:160]}", file=sys.stderr)
