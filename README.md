@@ -20,6 +20,9 @@
 # 启动 YOLO 摄像头检测服务，使用 Hikrobot / MVS 相机配置
 ./scripts/start_yolo_hik_camera.sh
 
+# 一键启动 Hik Web 服务：后端 + 前端 + Hik YOLO 摄像头检测
+./scripts/start_hik_web.sh
+
 # 一键启动三项服务，YOLO 默认仍使用 USB / UVC 摄像头
 ./scripts/start_all.sh
 
@@ -30,7 +33,7 @@
 ./scripts/stop_all.sh
 ```
 
-三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`setup_usb_camera_alias.sh` 会写入 udev 规则，执行时需要 sudo。`camera_config.json` 默认使用稳定设备名 `/dev/qhxd-usb-camera` 作为 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
+三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`start_hik_web.sh` 会默认重启前端并将 `yolo_camera` 切到 Hik 配置；如需保留现有前端或 YOLO 进程，可分别设置 `HIK_WEB_RESTART_FRONTEND=false`、`HIK_WEB_RESTART_YOLO=false`。`setup_usb_camera_alias.sh` 会写入 udev 规则，执行时需要 sudo。`camera_config.json` 默认使用稳定设备名 `/dev/qhxd-usb-camera` 作为 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
 
 
 ## 相机采集、YOLO 处理与前端刷新频率
@@ -122,6 +125,31 @@ python3 camera_detect_service.py --config camera_config_hik.example.json --fps 2
 `AcquisitionFrameRate=10.0` 表示限制 Hik 相机侧目标 10 FPS 出帧；这不等于 YOLO 每秒推理 10 帧，也不等于前端每秒显示 10 次。
 
 实际前端看到的画面更新速度取决于更慢的那一层：如果 YOLO `fps=1`，即使前端每 `200ms` 请求一次，也只会反复拿到同一张图；如果 YOLO `fps=5`，但前端 `VITE_LATEST_FRAME_INTERVAL_MS=2000`，页面仍然大约 2 秒才换一次图。如果 RKNN 推理、相机取帧或后端提交耗时超过 `1 / fps`，实际 YOLO 处理频率也会低于配置值，这是正常保护行为。
+
+
+## RK3588 音频输出检查
+
+当前系统能枚举到播放设备：
+
+```text
+rockchip-hdmi0
+rockchip-hdmi1
+rockchip,es8388
+```
+
+其中 `rockchip,es8388` 是板载音频 codec，ALSA 设备名：
+
+```text
+plughw:CARD=rockchipes8388,DEV=0
+```
+
+可用下面命令做 1 秒测试音：
+
+```bash
+timeout 4 speaker-test -D plughw:CARD=rockchipes8388,DEV=0 -t sine -f 800 -l 1 -s 1
+```
+
+验收时如果接了喇叭、耳机或功放，应能听到测试音。这个命令已验证可以打开 ES8388 播放设备；是否有声音取决于板子是否实际接了物理扬声器/耳机/功放。当前系统没有发现 `espeak` / `flite` / `pico2wave` 等离线 TTS 工具，只发现 `spd-say`、`paplay`、`aplay`。因此短期可先实现“播放固定 wav 提示音 / 提示语”；如果要真正文字转语音，需要后续安装 TTS 引擎或接入在线/本地 TTS。
 
 
 ## DeepSeek V4 API 配置

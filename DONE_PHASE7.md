@@ -1006,3 +1006,9 @@ vite build 通过
 - `frontend/src/components/NavMapPlaceholder.vue`：将导航占位提示从 `NUC NAV STREAM RESERVED` 改为 `NAVI STREAM RESERVED`，说明等待接入 Navi 导航实时流。
 - `frontend/src/components/NavigationAssistPanel.vue`：将链路状态项 `NUC state` 改为 `Navi state`。
 - 验证：`cd frontend && npm run build` 通过。
+
+## Hik Web 一键启动与音频输出检查
+
+- `scripts/start_hik_web.sh`：新增 Hik Web 一键启动脚本，启动后端、前端，并将 `yolo_camera` 切到 Hik 配置。默认会重启前端和 YOLO；可通过 `HIK_WEB_RESTART_FRONTEND=false` / `HIK_WEB_RESTART_YOLO=false` 关闭。
+- README：新增 `./scripts/start_hik_web.sh` 快捷启动说明。
+- 音频检查：RK3588 可枚举 HDMI 与 `rockchip,es8388` 播放设备；`speaker-test -D plughw:CARD=rockchipes8388,DEV=0 ...` 可打开板载 ES8388 播放链路。是否实际出声取决于是否连接物理扬声器/耳机/功放。
