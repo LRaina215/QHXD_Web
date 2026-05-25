@@ -1228,8 +1228,8 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
     <header class="command-header">
       <div class="brand-block">
         <p class="eyebrow">Qionghai Xindong Robot Console</p>
-        <h1>琼海芯动车载机器人中台</h1>
-        <p class="header-subtitle">「琼海芯动 · SENTINEL」 车载交互与状态中枢</p>
+        <h1>灵巡车载机器人中台</h1>
+        <p class="header-subtitle">「灵巡 · SENTINEL」 车载交互与状态中枢</p>
       </div>
 
       <div class="header-control-plane">

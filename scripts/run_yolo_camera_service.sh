@@ -4,6 +4,10 @@ set -euo pipefail
 RESTART_DELAY="${YOLO_RESTART_DELAY:-3}"
 child_pid=""
 
+# Keep YOLO/RKNN on the system Python package set. Interactive shells may
+# carry FunASR virtualenv PYTHONPATH values that break OpenCV's NumPy ABI.
+unset PYTHONPATH PYTHONHOME VIRTUAL_ENV CONDA_PREFIX CONDA_DEFAULT_ENV
+
 stop_child() {
   if [[ -n "${child_pid}" ]] && kill -0 "${child_pid}" 2>/dev/null; then
     kill "${child_pid}" 2>/dev/null || true

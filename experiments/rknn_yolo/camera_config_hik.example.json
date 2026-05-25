@@ -27,7 +27,15 @@
   "camera_backend": "hik",
   "hik_index": 0,
   "hik_serial": "",
-  "hik_timeout_ms": 200,
+  "hik_timeout_ms": 2000,
   "camera_retry_interval": 3.0,
-  "hik_params": {}
+  "hik_params": {
+    "bool": {
+      "AcquisitionFrameRateEnable": true
+    },
+    "float": {
+      "AcquisitionFrameRate": 5.0
+    }
+  },
+  "read_fail_limit": 20
 }

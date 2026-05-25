@@ -38,11 +38,45 @@ is_running() {
   kill -0 "${pid}" 2>/dev/null
 }
 
+
+stop_unmanaged_yolo_camera_processes() {
+  local managed_pid="${1:-}"
+  local keep_pids=" $$ "
+  if [[ -n "${managed_pid}" ]]; then
+    keep_pids+=" ${managed_pid} "
+    local child_pid
+    for child_pid in $(pgrep -P "${managed_pid}" 2>/dev/null || true); do
+      keep_pids+=" ${child_pid} "
+    done
+  fi
+
+  local pid args
+  while read -r pid args; do
+    [[ -n "${pid}" ]] || continue
+    if [[ " ${keep_pids} " == *" ${pid} "* ]]; then
+      continue
+    fi
+    case "${args}" in
+      *run_yolo_camera_service.sh*camera_detect_service.py*|*camera_detect_service.py*--config*)
+        echo "stopping unmanaged yolo_camera process: pid=${pid}"
+        kill "${pid}" 2>/dev/null || true
+        ;;
+    esac
+  done < <(ps -eo pid=,args=)
+}
+
 start_service() {
   local name="$1"
   shift
   local file
   file="$(pid_file "${name}")"
+  if [[ "${name}" == "yolo_camera" ]]; then
+    local managed_pid=""
+    if is_running "${file}"; then
+      managed_pid="$(cat "${file}")"
+    fi
+    stop_unmanaged_yolo_camera_processes "${managed_pid}"
+  fi
   if is_running "${file}"; then
     echo "${name} already running: pid=$(cat "${file}")"
     return 0
@@ -76,6 +110,9 @@ stop_service() {
   for _ in 1 2 3 4 5; do
     if ! kill -0 "${pid}" 2>/dev/null; then
       rm -f "${file}"
+      if [[ "${name}" == "yolo_camera" ]]; then
+        stop_unmanaged_yolo_camera_processes
+      fi
       echo "${name} stopped"
       return 0
     fi
@@ -84,6 +121,9 @@ stop_service() {
   echo "${name} still running; sending SIGKILL"
   kill -9 "${pid}" 2>/dev/null || true
   rm -f "${file}"
+  if [[ "${name}" == "yolo_camera" ]]; then
+    stop_unmanaged_yolo_camera_processes
+  fi
 }
 
 status_service() {

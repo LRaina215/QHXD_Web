@@ -77,7 +77,7 @@ select {
 }
 
 .command-header::before {
-  content: "「琼海芯动·SENTINEL」";
+  content: "「灵巡·SENTINEL」";
   position: absolute;
   right: -34px;
   bottom: 14px;
