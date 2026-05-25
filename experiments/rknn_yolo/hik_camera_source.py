@@ -34,10 +34,18 @@ class HikCameraSource:
 
     color_order = "rgb"
 
-    def __init__(self, *, index: int = 0, serial: str | None = None, timeout_ms: int = 1000) -> None:
+    def __init__(
+        self,
+        *,
+        index: int = 0,
+        serial: str | None = None,
+        timeout_ms: int = 1000,
+        params: dict[str, Any] | None = None,
+    ) -> None:
         self.index = index
         self.serial = serial
         self.timeout_ms = timeout_ms
+        self.params = params or {}
         self._loaded = False
         self._opened = False
         self._grabbing = False
@@ -110,6 +118,7 @@ class HikCameraSource:
                 return
             self._opened = True
             cam.MV_CC_SetEnumValue("TriggerMode", self._sdk["MV_TRIGGER_MODE_OFF"])
+            self._apply_params()
             ret = cam.MV_CC_StartGrabbing()
             if ret != 0:
                 self.last_error = f"Hik camera start grabbing failed ret=0x{ret:x}"
@@ -118,6 +127,44 @@ class HikCameraSource:
         except Exception as exc:
             self.last_error = f"Hik camera SDK error: {exc}"
             self.release()
+
+    def _apply_params(self) -> None:
+        if not self.params:
+            return
+        if not isinstance(self.params, dict):
+            self.last_error = "Hik camera params must be a JSON object"
+            return
+
+        for key, value in self.params.get("enum", {}).items():
+            self._set_param("enum", key, value)
+        for key, value in self.params.get("enum_string", {}).items():
+            self._set_param("enum_string", key, value)
+        for key, value in self.params.get("float", {}).items():
+            self._set_param("float", key, value)
+        for key, value in self.params.get("int", {}).items():
+            self._set_param("int", key, value)
+        for key, value in self.params.get("bool", {}).items():
+            self._set_param("bool", key, value)
+        for key in self.params.get("command", []):
+            self._set_param("command", key, None)
+
+    def _set_param(self, kind: str, key: str, value: Any) -> None:
+        setters = {
+            "enum": lambda: self._cam.MV_CC_SetEnumValue(key, int(value)),
+            "enum_string": lambda: self._cam.MV_CC_SetEnumValueByString(key, str(value)),
+            "float": lambda: self._cam.MV_CC_SetFloatValue(key, float(value)),
+            "int": lambda: self._cam.MV_CC_SetIntValueEx(key, int(value)),
+            "bool": lambda: self._cam.MV_CC_SetBoolValue(key, bool(value)),
+            "command": lambda: self._cam.MV_CC_SetCommandValue(str(key)),
+        }
+        try:
+            ret = setters[kind]()
+        except Exception as exc:
+            print(f"Hik camera set param failed: {kind}.{key}={value!r}: {exc}", file=sys.stderr)
+            return
+        if ret != 0:
+            print(f"Hik camera set param failed: {kind}.{key}={value!r}, ret=0x{ret:x}", file=sys.stderr)
+
 
     def _load_sdk(self) -> None:
         _ensure_mvs_import_path()

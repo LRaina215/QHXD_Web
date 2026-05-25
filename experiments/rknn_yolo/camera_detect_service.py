@@ -32,6 +32,7 @@ CONFIG_FIELDS = {
     "hik_index",
     "camera_backend",
     "camera_retry_interval",
+    "hik_params",
     "conf",
     "fps",
     "frame_id",
@@ -65,6 +66,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "hik_index": 0,
     "camera_backend": "auto",
     "camera_retry_interval": 0.0,
+    "hik_params": {},
     "conf": 0.25,
     "fps": 2.0,
     "frame_id": "camera_front",
@@ -338,6 +340,10 @@ def _merge_config(raw_args: argparse.Namespace) -> argparse.Namespace:
     values["hik_serial"] = None if values["hik_serial"] in (None, "") else str(values["hik_serial"])
     values["hik_timeout_ms"] = int(values["hik_timeout_ms"])
     values["camera_retry_interval"] = max(0.0, float(values["camera_retry_interval"]))
+    if values["hik_params"] is None:
+        values["hik_params"] = {}
+    if not isinstance(values["hik_params"], dict):
+        raise RuntimeError("hik_params 必须是 JSON object")
     values["conf"] = float(values["conf"])
     values["fps"] = float(values["fps"])
     values["submit"] = bool(values["submit"])
@@ -659,7 +665,7 @@ def _open_hik_camera(args: argparse.Namespace) -> CameraSource | None:
     except Exception as exc:
         print(f"Hik camera backend unavailable: {exc}", file=sys.stderr)
         return None
-    camera = HikCameraSource(index=args.hik_index, serial=args.hik_serial, timeout_ms=args.hik_timeout_ms)
+    camera = HikCameraSource(index=args.hik_index, serial=args.hik_serial, timeout_ms=args.hik_timeout_ms, params=args.hik_params)
     if camera.is_opened():
         label = getattr(camera, "device_label", "")
         print(f"Hik camera opened via MVS SDK: {label}", file=sys.stderr)

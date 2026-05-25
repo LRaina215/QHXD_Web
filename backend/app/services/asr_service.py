@@ -74,13 +74,15 @@ class ASRService:
             model_load_time_s = 0.0 if model_was_loaded else self._model_load_time_s
             result = model.generate(
                 input=audio_path,
+                cache={},
                 language=os.getenv("FUNASR_LANGUAGE", "zh"),
                 use_itn=self._env_bool("FUNASR_USE_ITN", True),
+                batch_size_s=float(os.getenv("FUNASR_BATCH_SIZE_S", "60")),
                 merge_vad=True,
                 merge_length_s=15,
             )
             raw_text = self._extract_text(result)
-            recognized_text = self._clean_text(raw_text)
+            recognized_text = self._postprocess_text(raw_text)
             return ASRResult(
                 recognized_text=recognized_text,
                 raw_text=raw_text,
@@ -152,6 +154,16 @@ class ASRService:
             text = result.get("text") or result.get("sentence") or result.get("raw_text") or ""
             return str(text)
         return str(result or "")
+
+    @staticmethod
+    def _postprocess_text(raw_text: str) -> str:
+        try:
+            from funasr.utils.postprocess_utils import rich_transcription_postprocess
+
+            processed = rich_transcription_postprocess(raw_text)
+        except Exception:
+            processed = raw_text
+        return ASRService._clean_text(processed)
 
     @staticmethod
     def _clean_text(raw_text: str) -> str:
