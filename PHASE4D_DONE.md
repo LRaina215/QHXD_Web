@@ -120,3 +120,35 @@ has boundary True
 - 如果 YOLO 推理、画框、JPEG 保存、后端提交低于目标 fps，前端 MJPEG 也只能显示较低频率的新画面。
 - 真正高帧率预览的更优架构仍是“原始相机预览流”和“YOLO 低频检测状态”分离。
 - 本轮未修改 mission bridge、NUC bridge、RT-Thread 控制语义，也未让 YOLO 结果控制底盘。
+
+## 视觉事件保持修复
+
+本轮追加修复 Dashboard 视觉事件一闪而过的问题：
+
+- `frontend/src/App.vue:2`
+  - 引入 `watch`，监听 `detection_status` 更新。
+- `frontend/src/App.vue:205`
+  - 新增 `DetectionEventItem`，为视觉事件补充 `id/time/first_seen_at/expires_at`。
+- `frontend/src/App.vue:232`
+  - 新增 `detectionEventHistory` 前端缓存。
+- `frontend/src/App.vue:259`
+  - 新增 `VITE_DETECTION_EVENT_HOLD_MS`，默认保留 15 秒。
+- `frontend/src/App.vue:260`
+  - 新增 `VITE_DETECTION_EVENT_MAX_ITEMS`，默认最多保留 12 条。
+- `frontend/src/App.vue:406`
+  - `latestDetectionEventLabel` 改为读取缓存中的最近视觉事件，而不是只读当前帧事件。
+- `frontend/src/App.vue:496`
+  - 底部最近事件列表改为使用缓存视觉事件，因此 YOLO 事件不会在下一帧清空时立即消失。
+- `frontend/src/App.vue:1126`
+  - 新增 `rememberDetectionEvents()` / `pruneDetectionEventHistory()`，同一视觉事件再次出现时刷新保留时间并移动到最前。
+- `frontend/src/style.css:680`
+  - 视觉事件行增加时间列，便于判断事件发生时间。
+
+配置项：
+
+```env
+VITE_DETECTION_EVENT_HOLD_MS=15000
+VITE_DETECTION_EVENT_MAX_ITEMS=12
+```
+
+验收：`cd frontend && npm run build` 已通过。

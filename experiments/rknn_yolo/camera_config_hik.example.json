@@ -27,7 +27,7 @@
   "camera_backend": "hik",
   "hik_index": 0,
   "hik_serial": "",
-  "hik_timeout_ms": 2000,
+  "hik_timeout_ms": 200,
   "camera_retry_interval": 3.0,
   "hik_params": {}
 }

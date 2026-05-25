@@ -42,6 +42,7 @@
 - Dashboard 前端画面显示方式：默认使用 MJPEG JPEG bytes 流 `/api/perception/frame_stream`，由 `.env` 的 `VITE_USE_MJPEG_STREAM=true` 开启。
 - MJPEG 流检查 latest 图片的间隔：后端环境变量 `PERCEPTION_MJPEG_INTERVAL_MS`，默认 `200` 毫秒。
 - latest-frame 轮询 fallback 间隔：前端环境变量 `VITE_LATEST_FRAME_INTERVAL_MS`，默认 `2000` 毫秒；只有关闭 MJPEG 或 MJPEG 出错回退时才主要使用。
+- 视觉事件保持时间：前端环境变量 `VITE_DETECTION_EVENT_HOLD_MS`，默认 `15000` 毫秒；事件出现后会留在 YOLO Events 和最近事件列表中，直到过期或被更新事件顶替。
 
 如果你想改“海康相机画面在前端显示更新得多快”，优先确认 MJPEG 已开启：
 
@@ -57,6 +58,8 @@ grep '^PERCEPTION_MJPEG_INTERVAL_MS=' .env
 VITE_USE_MJPEG_STREAM=true
 PERCEPTION_MJPEG_INTERVAL_MS=200
 VITE_LATEST_FRAME_INTERVAL_MS=1000
+VITE_DETECTION_EVENT_HOLD_MS=15000
+VITE_DETECTION_EVENT_MAX_ITEMS=12
 ```
 
 `PERCEPTION_MJPEG_INTERVAL_MS=200` 表示后端 MJPEG 流最多每 200ms 检查一次是否有新 latest 图片。它不会凭空制造新帧，如果 YOLO 服务没有产生新图，前端仍然只能看到上一帧。

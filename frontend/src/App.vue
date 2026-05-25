@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import NavMapPlaceholder from './components/NavMapPlaceholder.vue'
 import NavigationAssistPanel from './components/NavigationAssistPanel.vue'
 import VoiceConfirmDialog from './components/VoiceConfirmDialog.vue'
@@ -202,6 +202,13 @@ type DashboardEventItem = {
   tone: StatusTone
 }
 
+type DetectionEventItem = DetectionStatus['events'][number] & {
+  id: string
+  time: string
+  first_seen_at: number
+  expires_at: number
+}
+
 const state = ref<RobotState | null>(null)
 const alerts = ref<AlertEvent[]>([])
 const imu = ref<ImuEnvelope | null>(null)
@@ -229,6 +236,7 @@ const shouldReconnect = ref(true)
 const latestFrameUrl = ref('')
 const latestFrameAvailable = ref(false)
 const currentClockLabel = ref('--')
+const detectionEventHistory = ref<DetectionEventItem[]>([])
 
 let socket: WebSocket | null = null
 let imuSocket: WebSocket | null = null
@@ -254,8 +262,18 @@ function getEnvBool(name: string, defaultValue: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(String(rawValue).toLowerCase())
 }
 
+function getEnvNumber(name: string, defaultValue: number, minValue: number): number {
+  const value = Number(import.meta.env[name])
+  if (!Number.isFinite(value)) {
+    return defaultValue
+  }
+  return Math.max(minValue, value)
+}
+
 const latestFrameRefreshIntervalMs = getLatestFrameRefreshIntervalMs()
 const useMjpegFrameStream = getEnvBool('VITE_USE_MJPEG_STREAM', true)
+const detectionEventHoldMs = getEnvNumber('VITE_DETECTION_EVENT_HOLD_MS', 15000, 1000)
+const detectionEventMaxItems = Math.floor(getEnvNumber('VITE_DETECTION_EVENT_MAX_ITEMS', 12, 1))
 
 const onlineStatus = computed(() => {
   if (!state.value) {
@@ -397,11 +415,11 @@ const recentDetectionLabel = computed(() => {
 })
 
 const latestDetectionEventLabel = computed(() => {
-  const event = state.value?.detection_status?.events[0]
+  const event = detectionEventHistory.value[0]
   return event ? `${event.event_type} · ${event.message}` : 'no event'
 })
 
-const detectionEventItems = computed(() => state.value?.detection_status?.events ?? [])
+const detectionEventItems = computed(() => detectionEventHistory.value)
 
 const latestAlert = computed(() => alerts.value[0] ?? null)
 
@@ -480,6 +498,14 @@ const detectionTone = computed<StatusTone>(() => {
   return detection.enabled ? 'success' : 'muted'
 })
 
+
+watch(
+  () => state.value?.detection_status,
+  (detection) => {
+    rememberDetectionEvents(detection ?? null)
+  },
+)
+
 const latestAlertTone = computed<StatusTone>(() => alertTone(latestAlert.value?.level))
 
 const navGoal = computed(() => ({
@@ -522,10 +548,10 @@ const dashboardEvents = computed<DashboardEventItem[]>(() => {
     })
   }
 
-  detectionEventItems.value.slice(0, 4).forEach((event, index) => {
+  detectionEventItems.value.slice(0, 4).forEach((event) => {
     items.push({
-      id: `detection-${index}-${event.event_type}`,
-      time: state.value?.detection_status ? formatTime(state.value.detection_status.timestamp) : '--',
+      id: event.id,
+      time: event.time,
       source: 'YOLO',
       level: event.level,
       message: `${event.event_type} / ${event.message}`,
@@ -1120,6 +1146,45 @@ async function switchMode(mode: 'mock' | 'real') {
 
 function updateClock() {
   currentClockLabel.value = new Date().toLocaleString('zh-CN', { hour12: false })
+  pruneDetectionEventHistory()
+}
+
+function rememberDetectionEvents(detection: DetectionStatus | null) {
+  if (!detection?.events.length) {
+    pruneDetectionEventHistory()
+    return
+  }
+
+  const now = Date.now()
+  const eventTime = formatTime(detection.timestamp)
+  const history = [...detectionEventHistory.value]
+
+  detection.events.forEach((event, index) => {
+    const key = detectionEventKey(event)
+    const existingIndex = history.findIndex((item) => detectionEventKey(item) === key)
+    const existing = existingIndex >= 0 ? history.splice(existingIndex, 1)[0] : null
+    history.unshift({
+      ...event,
+      id: existing?.id ?? `detection-${now}-${index}-${event.event_type}`,
+      time: eventTime,
+      first_seen_at: existing?.first_seen_at ?? now,
+      expires_at: now + detectionEventHoldMs,
+    })
+  })
+
+  detectionEventHistory.value = history
+    .filter((item) => item.expires_at > now)
+    .sort((left, right) => right.expires_at - left.expires_at)
+    .slice(0, detectionEventMaxItems)
+}
+
+function pruneDetectionEventHistory() {
+  const now = Date.now()
+  detectionEventHistory.value = detectionEventHistory.value.filter((event) => event.expires_at > now)
+}
+
+function detectionEventKey(event: Pick<DetectionEventItem, 'event_type' | 'level' | 'message'>) {
+  return `${event.event_type}|${event.level}|${event.message}`
 }
 
 function toneClass(tone: StatusTone) {
@@ -1501,12 +1566,13 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
                 <div
                   v-for="event in detectionEventItems.slice(0, 5)"
                   v-else
-                  :key="`${event.event_type}-${event.message}`"
+                  :key="event.id"
                   class="mini-event"
                 >
                   <span class="status-badge" :class="toneClass(alertTone(event.level))">{{ event.level }}</span>
                   <strong>{{ event.event_type }}</strong>
                   <p>{{ event.message }}</p>
+                  <small>{{ event.time }}</small>
                 </div>
               </div>
               <div class="monitor-summary-row">
