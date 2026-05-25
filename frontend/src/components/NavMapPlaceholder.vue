@@ -61,7 +61,7 @@ const goalDistanceLabel = computed(() => {
         <p class="section-kicker">Navigation</p>
         <h2>导航实时可视化</h2>
       </div>
-      <span class="status-badge tone-warning">等待 NUC 流</span>
+      <span class="status-badge tone-warning">等待 Navi 流</span>
     </div>
 
     <div class="nav-map-canvas" aria-label="导航地图占位区">

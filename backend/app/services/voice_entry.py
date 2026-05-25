@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import os
 from uuid import uuid4
@@ -48,6 +48,9 @@ class VoiceEntryService:
 
         if parsed.intent in QUERY_INTENTS:
             return self._handle_query(parsed), None
+
+        if parsed.intent in MOTION_INTENTS and not parsed.need_confirm:
+            parsed = replace(parsed, need_confirm=True)
 
         if parsed.need_confirm:
             if parsed.intent in MOTION_INTENTS and self._has_required_payload(parsed):

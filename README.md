@@ -33,6 +33,71 @@
 三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`setup_usb_camera_alias.sh` 会写入 udev 规则，执行时需要 sudo。`camera_config.json` 默认使用稳定设备名 `/dev/qhxd-usb-camera` 作为 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
 
 
+## YOLO 处理频率与前端画面刷新率
+
+这里有两层频率，含义不同：
+
+- YOLO 服务生产 latest 图片的频率：由 `experiments/rknn_yolo/camera_config*.json` 的 `fps` 控制。
+- Dashboard 前端拉取并显示 latest 图片的频率：由前端环境变量 `VITE_LATEST_FRAME_INTERVAL_MS` 控制，默认 `2000` 毫秒。
+
+如果你想改“海康相机图像上传到前端后，前端画面显示更新得多快”，优先改前端刷新间隔：
+
+```bash
+cd /home/robomaster/QHXD
+# 1000 表示前端每 1 秒请求一次 /api/perception/latest_frame
+echo 'VITE_LATEST_FRAME_INTERVAL_MS=1000' >> .env
+./scripts/start_frontend.sh
+```
+
+如果前端已经在运行，改完 `.env` 后需要重启前端服务。最低允许值为 `200ms`，配置得更低会被前端保护到 `200ms`，避免浏览器疯狂请求。
+
+`fps` 仍然有用，但它控制的是 YOLO 服务多久生成一张新图并提交一次 detection_status：
+
+常用配置文件：
+
+- USB / UVC 摄像头：`experiments/rknn_yolo/camera_config.json`
+- Hikrobot / MVS 相机：`experiments/rknn_yolo/camera_config_hik.example.json`
+
+```json
+{
+  "fps": 1
+}
+```
+
+`fps=1` 表示 YOLO 服务目标每秒处理并保存 1 张 latest 图片；`fps=2` 表示目标每秒 2 张。也可以临时用 CLI 覆盖：
+
+```bash
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 camera_detect_service.py --config camera_config.json --fps 2
+python3 camera_detect_service.py --config camera_config_hik.example.json --fps 2
+```
+
+实际看到的前端画面更新速度取决于更慢的那一层：如果 YOLO `fps=1`，即使前端每 `200ms` 请求一次，也只会反复拿到同一张图；如果 YOLO `fps=5`，但前端 `VITE_LATEST_FRAME_INTERVAL_MS=2000`，页面仍然大约 2 秒才换一次图。
+
+注意三种“帧率”不要混在一起：
+
+- `fps`：YOLO 服务抽帧、推理、保存 latest 图片和提交后端的目标频率。
+- `VITE_LATEST_FRAME_INTERVAL_MS`：Dashboard 前端请求 `/api/perception/latest_frame?t=...` 的间隔，只影响页面显示刷新。
+- Hik 相机硬件采集帧率：放在 `camera_config_hik.example.json` 的 `hik_params` 中，例如 `AcquisitionFrameRateEnable` / `AcquisitionFrameRate`。这只限制相机侧出帧，不等于 YOLO 每秒推理帧数。
+
+Hik 硬件帧率示例：
+
+```json
+{
+  "hik_params": {
+    "bool": {
+      "AcquisitionFrameRateEnable": true
+    },
+    "float": {
+      "AcquisitionFrameRate": 10.0
+    }
+  }
+}
+```
+
+如果 RKNN 推理、相机取帧或后端提交耗时超过 `1 / fps`，实际帧率会低于配置值，这是正常的保护行为。高帧率测试时建议同步观察 `logs/yolo_camera.log`、CPU/NPU 负载和前端画面更新时间。
+
+
 ## DeepSeek V4 API 配置
 
 DeepSeek V4 只用于语音识别文本之后的语义解析 fallback，不直接控制底盘、不直接调用 RT-Thread，也不替代本地规则解析。简单命令仍优先走规则解析；复杂自然语言在允许 LLM 时才会调用 DeepSeek。
@@ -128,7 +193,9 @@ curl -X POST http://127.0.0.1:8000/api/voice/confirm_command \
 
 后续 Phase 4 / Phase 5 已在此基础上增加语音入口、RKNN YOLO26 视觉检测、USB 摄像头抽帧检测、最新检测图片接口与 Dashboard 展示。Phase 7 在语音规则解析之后增加可选 DeepSeek V4 语义解析 fallback；当前仍不做 OpenClaw、视频流或 YOLO 直接控制底盘。
 
-## 快速运行
+## 手动开发启动（不用脚本时）
+
+正常现场启动优先使用本文开头的 `scripts/start_*.sh`。下面命令只用于手动开发、临时排障或不想使用脚本时。
 
 ### 后端
 
@@ -778,7 +845,7 @@ python3 camera_detect_service.py \
   --save-latest outputs/latest_camera_detection.jpg
 ```
 
-查看 USB 摄像头设备用 `ls /dev/video*`、`ls -l /dev/qhxd-usb-camera` 和 `lsusb`。USB 入口默认使用 `/dev/qhxd-usb-camera` 这个 udev 稳定别名，不再死查找 `/dev/video0`；OpenCV 打不开时才 fallback 到 ffmpeg。首次部署或更换 USB 摄像头后，运行 `./scripts/setup_usb_camera_alias.sh` 生成/更新该别名。Hikrobot 相机入口已接入 MVS SDK，可通过 `camera_backend=hik` 或 `camera_config_hik.example.json` 切换；USB 入口仍保留，`camera_config.json` 默认仍为 `camera_backend=usb`。本阶段只更新 `detection_status`，Dashboard 显示检测状态，不展示视频流；YOLO 结果不直接控制底盘或 mission。
+查看 USB 摄像头设备用 `ls /dev/video*`、`ls -l /dev/qhxd-usb-camera` 和 `lsusb`。USB 入口默认使用 `/dev/qhxd-usb-camera` 这个 udev 稳定别名，不再死查找 `/dev/video0`；OpenCV 打不开时才 fallback 到 ffmpeg。首次部署或更换 USB 摄像头后，运行 `./scripts/setup_usb_camera_alias.sh` 生成/更新该别名。Hikrobot 相机入口已接入 MVS SDK，可通过 `camera_backend=hik` 或 `camera_config_hik.example.json` 切换；USB 入口仍保留，`camera_config.json` 默认仍为 `camera_backend=usb`。Phase 4D 阶段只更新 `detection_status`；Phase 4D_2 后 Dashboard 会显示最新识别图片，但仍不做 WebRTC / RTSP / MJPEG 真视频流。YOLO 结果不直接控制底盘或 mission。
 
 
 
@@ -797,24 +864,9 @@ experiments/rknn_yolo/outputs/latest_camera_detection.jpg
 GET /api/perception/latest_frame
 ```
 
-推荐启动：
+推荐启动优先使用本文开头的快捷脚本：`./scripts/start_backend.sh`、`./scripts/start_frontend.sh`、`./scripts/start_yolo_camera.sh` 或 `./scripts/start_yolo_hik_camera.sh`。
 
-```bash
-cd /home/robomaster/QHXD/backend
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-```bash
-cd /home/robomaster/QHXD/frontend
-npm run dev -- --host 0.0.0.0 --port 5173
-```
-
-```bash
-cd /home/robomaster/QHXD/experiments/rknn_yolo
-python3 camera_detect_service.py --config camera_config.json
-```
-
-Dashboard 的视觉检测卡片会显示 `/api/perception/latest_frame?t=...`，每 2 秒刷新一次，同时保留 detection_status 的 objects / events 显示。更完整的配置和排障说明见 `experiments/rknn_yolo/README.md`。
+Dashboard 的视觉检测卡片会显示 `/api/perception/latest_frame?t=...`，每 2 秒刷新一次，同时保留 detection_status 的 objects / events 显示。YOLO 采集与提交频率由 `camera_config*.json` 的 `fps` 控制，详见本文前面的“YOLO 处理频率与前端画面刷新率”。更完整的配置和排障说明见 `experiments/rknn_yolo/README.md`。
 
 ### Hikrobot 相机入口
 
@@ -979,37 +1031,7 @@ Phase 5 将 Phase 4 已跑通的语音与视觉能力整理为更适合现场演
 
 ### 统一启动脚本
 
-项目根目录新增 `scripts/`：
-
-```bash
-# 启动后端
-./scripts/start_backend.sh
-
-# 启动前端
-./scripts/start_frontend.sh
-
-# 启动 YOLO 摄像头检测服务
-./scripts/start_yolo_camera.sh
-
-# 一键启动三项服务
-./scripts/start_all.sh
-
-# 查看状态
-./scripts/status_all.sh
-
-# 停止由脚本启动的服务
-./scripts/stop_all.sh
-```
-
-脚本默认配置：
-
-- 后端端口：`BACKEND_PORT=8000`
-- 前端端口：`FRONTEND_PORT=5173`
-- YOLO 配置：`YOLO_CONFIG=/home/robomaster/QHXD/experiments/rknn_yolo/camera_config.json`
-- pid 目录：`.runtime/`
-- 日志目录：`logs/`
-
-如果服务已经由其他方式启动，脚本会尽量识别端口可用状态并输出提示。
+统一启动脚本已整理到本文开头的“快捷启动”。Phase 5 保留的工程约定是：后端默认 `8000`、前端默认 `5173`、YOLO 默认配置 `experiments/rknn_yolo/camera_config.json`、pid 在 `.runtime/`、日志在 `logs/`。如果服务已经由其他方式启动，脚本会尽量识别端口可用状态并输出提示。
 
 ### YOLO 调试帧保存
 

@@ -3,7 +3,7 @@
   "labels": "models/labels.txt",
   "camera": "0",
   "conf": 0.25,
-  "fps": 1,
+  "fps": 30,
   "frame_id": "camera_front",
   "backend_url": "http://127.0.0.1:8000",
   "submit": true,

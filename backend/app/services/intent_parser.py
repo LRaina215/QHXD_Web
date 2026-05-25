@@ -53,7 +53,7 @@ class IntentParser:
             return ParsedIntent(
                 intent="return_home",
                 confidence=0.95,
-                need_confirm=False,
+                need_confirm=True,
                 detail="已解析为返回起点任务。",
             )
 
@@ -62,7 +62,7 @@ class IntentParser:
                 intent="start_patrol",
                 payload={"patrol_id": "patrol_default"},
                 confidence=0.9,
-                need_confirm=False,
+                need_confirm=True,
                 detail="已解析为开始巡检任务。",
             )
 
@@ -81,7 +81,7 @@ class IntentParser:
                     intent="go_to_waypoint",
                     payload={"waypoint_id": waypoint.waypoint_id},
                     confidence=0.95,
-                    need_confirm=False,
+                    need_confirm=True,
                     detail=f"已解析为前往{waypoint.name or waypoint.waypoint_id}任务。",
                 )
             return ParsedIntent(

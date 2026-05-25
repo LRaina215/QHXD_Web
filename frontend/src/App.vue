@@ -237,6 +237,17 @@ let stateTimer: number | null = null
 let latestFrameTimer: number | null = null
 let clockTimer: number | null = null
 
+function getLatestFrameRefreshIntervalMs(): number {
+  const rawValue = import.meta.env.VITE_LATEST_FRAME_INTERVAL_MS
+  const intervalMs = Number(rawValue)
+  if (!Number.isFinite(intervalMs)) {
+    return 2000
+  }
+  return Math.max(200, intervalMs)
+}
+
+const latestFrameRefreshIntervalMs = getLatestFrameRefreshIntervalMs()
+
 const onlineStatus = computed(() => {
   if (!state.value) {
     return '未连接'
@@ -774,7 +785,7 @@ onMounted(async () => {
     void loadAlerts()
   }, 5000)
   refreshLatestFrame()
-  latestFrameTimer = window.setInterval(refreshLatestFrame, 2000)
+  latestFrameTimer = window.setInterval(refreshLatestFrame, latestFrameRefreshIntervalMs)
   stateTimer = window.setInterval(() => {
     void Promise.all([loadState(), loadImu()])
   }, 4000)

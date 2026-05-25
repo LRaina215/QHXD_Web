@@ -286,7 +286,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(logs[0].source, "test")
         self.assertEqual(logs[0].payload["waypoint_id"], "mock-waypoint")
 
-    async def test_voice_text_command_routes_to_existing_mission_gateway(self) -> None:
+    async def test_voice_text_motion_command_requires_confirmation_then_executes(self) -> None:
         response = await main_module.text_command(
             VoiceTextCommandRequest(
                 text="去一号点",
@@ -294,16 +294,34 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
                 requested_by="unittest",
             )
         )
-        logs = persistence.list_command_logs()
+        logs_before_confirm = persistence.list_command_logs()
 
         self.assertTrue(response.success)
-        self.assertTrue(response.data.accepted)
+        self.assertFalse(response.data.accepted)
+        self.assertTrue(response.data.need_confirm)
+        self.assertIsNotNone(response.data.pending_command_id)
         self.assertEqual(response.data.intent, "go_to_waypoint")
         self.assertEqual(response.data.command, "go_to_waypoint")
         self.assertEqual(response.data.payload["waypoint_id"], "wp_001")
-        self.assertIsNotNone(response.data.task_status)
-        self.assertEqual(response.data.task_status.task_type, "go_to_waypoint")
-        self.assertEqual(logs[0].source, "test-voice")
+        self.assertIsNone(response.data.task_status)
+        self.assertEqual(len(logs_before_confirm), 0)
+
+        confirm_response = await main_module.confirm_voice_command(
+            VoiceConfirmCommandRequest(
+                pending_command_id=response.data.pending_command_id,
+                confirmed=True,
+                requested_by="operator",
+            )
+        )
+        logs_after_confirm = persistence.list_command_logs()
+
+        self.assertTrue(confirm_response.success)
+        self.assertTrue(confirm_response.data.accepted)
+        self.assertEqual(confirm_response.data.command, "go_to_waypoint")
+        self.assertEqual(confirm_response.data.task_status.task_type, "go_to_waypoint")
+        self.assertEqual(len(logs_after_confirm), 1)
+        self.assertEqual(logs_after_confirm[0].source, "test-voice")
+        self.assertEqual(logs_after_confirm[0].payload["waypoint_id"], "wp_001")
 
     async def test_voice_text_command_unknown_does_not_trigger_mission(self) -> None:
         response = await main_module.text_command(

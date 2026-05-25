@@ -138,7 +138,7 @@ const motionItems = computed(() => [
         <p class="section-kicker">Navigation Assist</p>
         <h2>任务执行链路</h2>
       </div>
-      <span class="hint-text">后续可平滑接入真实导航流</span>
+      <span class="hint-text"></span>
     </div>
 
     <div class="assist-layout">
