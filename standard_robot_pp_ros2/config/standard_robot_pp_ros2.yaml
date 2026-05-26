@@ -1,0 +1,15 @@
+standard_robot_pp_ros2:
+  ros__parameters:
+    device_name: /dev/ttyCBoard
+    baud_rate: 115200
+    flow_control: none
+    parity: none
+    stop_bits: "1"
+    set_detector_color: false
+    record_rosbag: false
+    debug: false
+    bcp_d_addr: 3
+    bcp_rx_addr: 1
+    bcp_gimbal_ctrl_mode: 1
+    bcp_default_bullet_vel: 15
+    bcp_default_remain_bullet: 0
