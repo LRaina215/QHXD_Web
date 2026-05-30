@@ -1,33 +1,44 @@
-# standard_robot_pp_ros2
+# standard_robot_pp_ros2 导航通信启动说明
 
-RK3588 上用于上下位机串口通信的 ROS 2 Humble 包。当前版本保留主通信节点 `standard_robot_pp_ros2_node`，通过 BCP 串口协议和下位机通信；已移除原工程中不参与当前通信链路、且在本机接口依赖不匹配的云台管理桥接、auto_aim 跟踪订阅、机器人描述/RViz 启动项。
+`standard_robot_pp_ros2` 是当前 RK3588 与 C 板通信的正式 ROS 2 包。导航链路请使用这个包，不要再启动旧的 `rtt_nav_bridge`，否则两个节点会抢占 `/dev/ttyACM0` / `/dev/ttyCBoard`。
 
-## 功能
+## 当前功能
 
-- 读取下位机 BCP 帧并发布 IMU、底盘里程、云台关节、裁判系统相关话题。
-- 订阅 ROS 控制话题并下发底盘、云台、发射机构控制帧。
-- 串口断开或长时间收不到合法帧时自动重连。
-- 支持调试话题 `serial/debug/*`，通过参数 `debug:=true` 开启。
+- 打开 C 板 USB CDC 串口，默认设备 `/dev/ttyCBoard`，当前映射到 `/dev/ttyACM0`。
+- 通过 BCP 协议接收下位机数据。
+- 发布 IMU、底盘运动、云台状态和裁判系统话题。
+- 将下位机上发的底盘速度 `serial/robot_motion` 积分为标准导航话题 `/odom`。
+- 可选发布 `odom -> base_link` TF，默认开启。
+- 订阅 `/cmd_vel` 并向下位机发送底盘控制帧。
 
 ## 依赖
 
+系统环境：
+
 - Ubuntu 22.04
 - ROS 2 Humble
+- C 板枚举为 USB CDC ACM 设备
+
+ROS 包依赖：
+
+- `rclcpp`
+- `rclcpp_components`
+- `serial_driver`
+- `asio_cmake_module`
+- `geometry_msgs`
+- `nav_msgs`
+- `sensor_msgs`
+- `std_msgs`
+- `std_srvs`
+- `tf2_ros`
+- `tf2_geometry_msgs`
 - `pb_rm_interfaces`
-- `ros-humble-serial-driver`
-- `ros-humble-asio-cmake-module`
 
-如果从空工作区构建，先导入接口依赖：
+当前 RK3588 上编译已通过，未发现缺少新的系统依赖。如从新系统部署，可先安装：
 
 ```bash
-cd ~/QHXD
-vcs import . < standard_robot_pp_ros2/dependencies.repos
-```
-
-在本 RK3588 上已安装：
-
-```bash
-sudo apt-get install -y ros-humble-serial-driver ros-humble-asio-cmake-module
+sudo apt-get update
+sudo apt-get install -y   ros-humble-serial-driver   ros-humble-asio-cmake-module   ros-humble-nav-msgs   ros-humble-tf2-ros   ros-humble-tf2-geometry-msgs
 ```
 
 ## 编译
@@ -35,26 +46,38 @@ sudo apt-get install -y ros-humble-serial-driver ros-humble-asio-cmake-module
 ```bash
 cd ~/QHXD
 source /opt/ros/humble/setup.bash
-colcon build --packages-up-to standard_robot_pp_ros2 --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+colcon build --packages-up-to standard_robot_pp_ros2 --symlink-install   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 source install/setup.bash
 ```
 
-本机验证命令：
+只重编通信包：
 
 ```bash
-colcon build --packages-select standard_robot_pp_ros2 --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
-ros2 pkg executables standard_robot_pp_ros2
+cd ~/QHXD
+source /opt/ros/humble/setup.bash
+colcon build --packages-select standard_robot_pp_ros2 --symlink-install
+source install/setup.bash
 ```
 
-期望可执行文件：
+## 启动
 
-```text
-standard_robot_pp_ros2 standard_robot_pp_ros2_node
+先确认没有旧通信节点占用串口：
+
+```bash
+pkill -f rtt_nav_bridge_node || true
+pkill -f standard_robot_pp_ros2_node || true
+pkill -f 'ros2 launch standard_robot_pp_ros2' || true
+lsof /dev/ttyACM0 2>/dev/null || true
+lsof /dev/ttyCBoard 2>/dev/null || true
 ```
 
-## 启用通信
+确认设备：
 
-默认参数文件为 `config/standard_robot_pp_ros2.yaml`，默认串口为 `/dev/ttyCBoard`，波特率 `115200`。
+```bash
+ls -l /dev/ttyCBoard /dev/ttyACM0
+```
+
+启动通信节点：
 
 ```bash
 cd ~/QHXD
@@ -63,77 +86,98 @@ source install/setup.bash
 ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py
 ```
 
-如果当前没有配置 udev，但下位机枚举为 `/dev/ttyACM0` 或 `/dev/ttyUSB0`，可以临时覆盖串口参数：
+默认参数在：
 
-```bash
-ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py \
-  params_file:=/home/robomaster/QHXD/standard_robot_pp_ros2/config/standard_robot_pp_ros2.yaml \
-  --ros-args -p device_name:=/dev/ttyACM0
+```text
+standard_robot_pp_ros2/config/standard_robot_pp_ros2.yaml
 ```
 
-更推荐配置 udev，使 C 板稳定映射到 `/dev/ttyCBoard`：
+关键参数：
 
-```bash
-cd ~/QHXD/standard_robot_pp_ros2
-./script/create_udev_rules.sh
+```yaml
+device_name: /dev/ttyCBoard
+baud_rate: 115200
+publish_odom: true
+publish_odom_tf: true
+odom_frame_id: odom
+base_frame_id: base_link
+bcp_d_addr: 3
+bcp_rx_addr: 1
 ```
 
-## 常用话题
+## 导航相关话题
 
-订阅并下发给下位机：
+上层控制输入：
 
 | 话题 | 类型 | 说明 |
 | --- | --- | --- |
-| `cmd_vel` | `geometry_msgs/msg/Twist` | 底盘速度控制。代码内已做 ROS 坐标到当前底盘约定的映射。 |
-| `cmd_gimbal_joint` | `sensor_msgs/msg/JointState` | 云台目标，使用 `gimbal_pitch_joint`、`gimbal_yaw_joint`。 |
-| `cmd_shoot` | `std_msgs/msg/UInt8` | 发射控制值，按下位机约定解释。 |
+| `/cmd_vel` | `geometry_msgs/msg/Twist` | 导航栈底盘速度命令，节点会打包下发给 C 板。 |
 
-发布给上层：
+下位机上行与导航输出：
 
 | 话题 | 类型 | 说明 |
 | --- | --- | --- |
-| `serial/imu` | `sensor_msgs/msg/Imu` | 下位机 IMU 或云台回退姿态。 |
-| `serial/receive` | `geometry_msgs/msg/Vector3` | 调试用 yaw/pitch/roll。 |
-| `serial/gimbal_joint_state` | `sensor_msgs/msg/JointState` | 云台关节状态。 |
-| `serial/robot_motion` | `geometry_msgs/msg/Twist` | 底盘回传运动信息。 |
-| `referee/game_status` | `pb_rm_interfaces/msg/GameStatus` | 比赛状态。 |
-| `referee/all_robot_hp` | `pb_rm_interfaces/msg/GameRobotHP` | 全机器人血量。 |
-| `referee/event_data`、`referee/rfid_status`、`referee/robot_status`、`referee/buff` | `pb_rm_interfaces` | 兼容保留的裁判系统状态。 |
+| `/serial/robot_motion` | `geometry_msgs/msg/Twist` | 下位机上发底盘速度。 |
+| `/serial/imu` | `sensor_msgs/msg/Imu` | 下位机 IMU 或姿态数据。 |
+| `/odom` | `nav_msgs/msg/Odometry` | 由 `/serial/robot_motion` 积分生成，供导航栈使用。 |
+| `/tf` | `tf2_msgs/msg/TFMessage` | 默认发布 `odom -> base_link`。 |
 
-## 参数
+其他保留话题包括 `/serial/gimbal_joint_state`、`/serial/receive`、`/serial/robot_state_info` 和 `/referee/*`。
 
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `device_name` | `/dev/ttyCBoard` | 串口设备路径。 |
-| `baud_rate` | `115200` | 串口波特率。 |
-| `flow_control` | `none` | 串口流控。 |
-| `parity` | `none` | 校验位。 |
-| `stop_bits` | `1` | 停止位。 |
-| `debug` | `false` | 开启后发布 `serial/debug/*`。 |
-| `bcp_d_addr` | `3` | 发送帧目标地址。 |
-| `bcp_rx_addr` | `1` | 接收帧本机地址。 |
-| `bcp_gimbal_ctrl_mode` | `1` | 下发云台控制模式。 |
-| `bcp_default_bullet_vel` | `15` | 发射机构默认弹速字段。 |
-| `bcp_default_remain_bullet` | `0` | 发射机构默认剩余弹量字段。 |
+## 验证命令
 
-## RK3588 验证记录
-
-2026-05-26 在 `100.113.173.115` 上已完成验证：
+启动节点后，在另一个终端执行：
 
 ```bash
-ls -l /dev/ttyCBoard /dev/ttyACM0
-ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py
-ros2 topic echo /serial/imu --once
-ros2 topic hz /serial/imu
-ros2 topic echo /serial/receive --once
+cd ~/QHXD
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 topic list | sort | grep -E '^/(odom|tf|serial/robot_motion|serial/imu|cmd_vel)'
+ros2 topic info -v /odom
+ros2 topic echo /serial/robot_motion --once
+ros2 topic echo /odom --once
+ros2 topic echo /tf --once
+ros2 topic hz /odom
 ```
 
-结果：`/dev/ttyCBoard` 已映射到 `/dev/ttyACM0`，`/serial/imu` 可收到 C 板 IMU 数据，短时间观测频率约 `999 Hz`，`/serial/receive` 可收到 yaw/pitch/roll 调试数据。
+如果 `/odom` topic 存在但 `echo --once` 长时间没有输出，说明 ROS 侧 publisher 已创建，但还没有收到下位机有效底盘运动帧。继续做原始串口检查：
+
+```bash
+pkill -f standard_robot_pp_ros2_node || true
+stty -F /dev/ttyACM0 115200 raw -echo -crtscts
+timeout 4 dd if=/dev/ttyACM0 bs=1 count=128 2>/tmp/dd_serial_err | xxd -g1 -c16
+cat /tmp/dd_serial_err
+```
+
+- 能看到以 BCP 帧头开头的字节流：优先检查 `bcp_rx_addr` / `bcp_d_addr` 是否与下位机一致。
+- 完全没有字节：问题不在 ROS 解析层，需要检查下位机是否正在持续上发、是否需要先收到启动帧、USB CDC 是否进入发送状态。
+
+## 本次实测记录
+
+时间：2026-05-26 17:43 左右，设备 `100.113.173.115`。
+
+已完成：
+
+- `standard_robot_pp_ros2` 可打开 `/dev/ttyCBoard -> /dev/ttyACM0`。
+- `colcon build --packages-select standard_robot_pp_ros2 --symlink-install` 编译通过。
+- `/odom` publisher 已补齐并出现在 `ros2 topic list`。
+- `/tf` publisher 已补齐并出现在 `ros2 topic list`。
+- `ros2 topic info -v /odom` 显示 publisher 为 `standard_robot_pp_ros2`。
+
+当前未通过：
+
+- `ros2 topic echo /odom --once` 没有收到实际消息。
+- `ros2 topic hz /serial/robot_motion`、`/serial/imu`、`/odom` 均未测到频率。
+- 原始串口抓包 `timeout 4 dd if=/dev/ttyACM0 ...` 没有读到字节。
+- 节点日志持续出现 `No valid BCP frame for 12002 ms, forcing serial reopen.`。
+
+结论：ROS 侧导航 odom 出口已经补齐；当前真机链路卡在 C 板 USB CDC 上行没有持续吐出有效 BCP 数据。下位机需要确认持续上发 chassis odom / IMU，或者确认上位机是否需要发送特定启动帧后才开始上发。
 
 ## 注意事项
 
-- 启动前确认用户在 `dialout` 组内，或 udev 规则已给串口权限；否则节点会反复打开串口失败。
-- 已在当前 RK3588 上创建 udev 规则：`/dev/ttyCBoard -> /dev/ttyACM0`。若更换 C 板或串口号变化，重新运行 `./script/create_udev_rules.sh` 后用 `ls -l /dev/ttyCBoard` 确认映射。
-- 下位机帧头为 `0xFF`，地址需要与 `bcp_rx_addr`、`bcp_d_addr` 对齐。地址不匹配会丢帧。
-- 启动后超过初始宽限期仍收不到合法 BCP 帧，节点会自动关闭并重开串口。
-- 原 `cmd_gimbal -> gimbal_manager -> cmd_gimbal_joint` 桥接已删除；上层如需控制云台，请直接发布 `cmd_gimbal_joint`。
+- 不要同时启动 `rtt_nav_bridge` 和 `standard_robot_pp_ros2`。
+- 不要同时开多个 `standard_robot_pp_ros2_node`，否则会抢同一个串口。
+- 如果只杀 `ros2 launch` 父进程，子节点可能仍占用串口；建议用 `pkill -f standard_robot_pp_ros2_node` 清理。
+- 若更换 C 板或串口号变化，重新检查 `/dev/ttyCBoard` 映射。
+- `/odom` 由底盘速度积分得到，启动时位姿从 `(0, 0, 0)` 开始；后续如有绝对定位或轮式里程计位姿帧，可再替换为下位机直接上发位姿。

@@ -61,3 +61,58 @@ launch arguments: params_file, use_respawn, log_level
 - `ros2 topic echo /serial/imu --once` 成功收到 IMU 消息，返回码 `0`。
 - `ros2 topic hz /serial/imu` 短时间观测约 `999 Hz`。
 - `ros2 topic echo /serial/receive --once` 成功收到 yaw/pitch/roll：`x=-56.274, y=-32.109, z=-0.01`。
+
+## 通信节点重启问题排查与修复
+
+日期：2026-05-26
+
+### 复现结果
+
+- 在 RK3588 上启动一次 `ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py` 后，节点可打开 `/dev/ttyCBoard`。
+- 只杀掉 `ros2 launch` 父进程时，实际 `standard_robot_pp_ros2_node` 会残留为 PPID 1 的孤儿进程并继续持有 `/dev/ttyCBoard`。
+- 再次启动 launch 时，第二个节点也能打开同一个 CDC 串口，两个进程会同时读同一设备，导致 IMU 数据被抢走或无法解析。
+- 清理所有上位机节点后，直接裸读 `/dev/ttyCBoard` 未读到任何原始字节；重新 bind `cdc_acm` 后设备节点恢复，但仍无原始字节，说明当前板端发送/USB CDC 状态也存在问题，单靠上位机重启不能完全恢复。
+
+### 上位机修复
+
+- 在 `standard_robot_pp_ros2` 中增加串口进程锁：同一 `device_name` 只允许一个 `standard_robot_pp_ros2_node` 持有。
+- 增加 BCP 心跳帧发送：每 100 ms 发送 `ID=0xF0`、payload `1` 的心跳帧，避免没有控制输入时下位机 500 ms 心跳超时。
+- 重新编译验证通过：
+
+```bash
+cd ~/QHXD/standard_robot_pp_ros2
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+colcon build --packages-select standard_robot_pp_ros2 --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+```
+
+结果：`Summary: 1 package finished`。
+
+### 上位机验证
+
+- 第一个节点启动后占用 `/dev/ttyCBoard`。
+- 第二个节点重复启动时，子进程退出并提示：`Serial device /dev/ttyCBoard is already owned by another standard_robot_pp_ros2 process`。
+- 清理所有 ROS2 通信节点后，`fuser -v /dev/ttyCBoard` 无占用。
+
+### 下位机代码风险点
+
+- `/Users/lraina/Documents/RM-Vis/AutoAim/rm/src/task/transmission/transmission_task.c`：未收到心跳时每 500 ms 关闭并重新打开 `vcom`，会与高频 `rt_device_write` 发送任务交织，主机关闭/重开节点时容易把 USB CDC 状态打乱。
+- `/Users/lraina/Documents/RM-Vis/AutoAim/rm/rt-thread/components/drivers/usb/usbdevice/class/cdc_vcom.c`：`CDC_SET_CONTROL_LINE_STATE` 固定 `data->connected = 1`，忽略主机关闭串口时的 DTR=0，可能导致 C 板误以为主机仍连接，继续向不可用端点高频写入并触发 TX timeout。
+- `/Users/lraina/Documents/RM-Vis/AutoAim/rm/src/task/transmission/transmission_task.c`：接收回调固定取 `sizeof(RpyTypeDef)` 并只检查帧头，没有按 `LEN` 和校验恢复同步，异常/短帧时容易误解析。
+
+### 后续建议
+
+- 下位机将 `data->connected = 1` 改为根据 `setup->wValue & 0x01` 设置连接状态。
+- 下位机不要在心跳超时路径里高频 close/open `vcom`；建议只标记上位机离线、停止使用上位机控制量，并继续允许 CDC 接收新心跳恢复。
+- 修改并烧录 C 板后，再执行裸串口和 ROS2 IMU 复测。
+
+## Ctrl+C 重启后无数据复测
+
+日期：2026-05-26
+
+- 已将顶层工作区 `~/QHXD/install` 重新编译，确保从 `~/QHXD` 启动时使用包含串口锁和 BCP 心跳的新上位机节点。
+- 复测现象：通信节点可以打开 `/dev/ttyCBoard`，但 `/serial/imu` 与 `/serial/receive` 均无消息，节点日志持续出现 `No valid BCP frame for 12003 ms`。
+- 清理全部上位机节点后，`fuser -v /dev/ttyCBoard` 无占用；此时直接裸读 `/dev/ttyCBoard` 仍为 0 字节。
+- 对 C 板 USB 设备执行完整 authorized 0/1 重新枚举后，`/dev/ttyCBoard -> ttyACM0` 恢复，但裸读仍为 0 字节。
+- 结论：当前无数据不是 ROS2 topic 或串口占用问题，而是 C 板固件侧 USB CDC/发送任务已停止输出，需要烧录下位机修复后的固件或物理复位 C 板。
+- 已在本地电控源码 `/Users/lraina/Documents/RM-Vis/AutoAim/rm` 中做最小修复：CDC DTR 断开时正确置 `connected=false` 并清 TX 缓冲；心跳超时不再反复 close/open `vcom`，只标记上位机离线。

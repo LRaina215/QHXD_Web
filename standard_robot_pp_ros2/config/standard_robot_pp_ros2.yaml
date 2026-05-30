@@ -13,3 +13,7 @@ standard_robot_pp_ros2:
     bcp_gimbal_ctrl_mode: 1
     bcp_default_bullet_vel: 15
     bcp_default_remain_bullet: 0
+    publish_odom: true
+    publish_odom_tf: true
+    odom_frame_id: odom
+    base_frame_id: base_link

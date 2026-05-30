@@ -26,6 +26,7 @@
 #include "std_msgs/msg/u_int8.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "pb_rm_interfaces/msg/buff.hpp"
 #include "pb_rm_interfaces/msg/event_data.hpp"
 #include "pb_rm_interfaces/msg/game_robot_hp.hpp"
@@ -40,6 +41,7 @@
 #include "serial_driver/serial_driver.hpp"
 #include "standard_robot_pp_ros2/packet_typedef.hpp"
 #include "standard_robot_pp_ros2/robot_info.hpp"
+#include "tf2_ros/transform_broadcaster.h"
 
 namespace standard_robot_pp_ros2
 {
@@ -69,6 +71,8 @@ private:
   std::atomic<int64_t> last_cmd_update_time_ms_{0};
   std::atomic<uint32_t> serial_reopen_count_{0};
   std::mutex serial_port_tx_mutex_;
+  int serial_lock_fd_ = -1;
+  std::string serial_lock_path_;
 
   // Publish
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
@@ -78,11 +82,13 @@ private:
   rclcpp::Publisher<pb_rm_interfaces::msg::GameRobotHP>::SharedPtr all_robot_hp_pub_;
   rclcpp::Publisher<pb_rm_interfaces::msg::GameStatus>::SharedPtr game_status_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr robot_motion_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<pb_rm_interfaces::msg::GroundRobotPosition>::SharedPtr
     ground_robot_position_pub_;
   rclcpp::Publisher<pb_rm_interfaces::msg::RfidStatus>::SharedPtr rfid_status_pub_;
   rclcpp::Publisher<pb_rm_interfaces::msg::RobotStatus>::SharedPtr robot_status_pub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
+  std::unique_ptr<tf2_ros::TransformBroadcaster> odom_tf_broadcaster_;
   rclcpp::Publisher<pb_rm_interfaces::msg::Buff>::SharedPtr buff_pub_;
 
   // Subscribe
@@ -115,8 +121,19 @@ private:
   double bcp_last_imu_roll_ = 0.0;
   double bcp_last_gimbal_yaw_ = 0.0;
   double bcp_last_gimbal_pitch_ = 0.0;
+  bool publish_odom_ = true;
+  bool publish_odom_tf_ = true;
+  std::string odom_frame_id_ = "odom";
+  std::string base_frame_id_ = "base_link";
+  bool odom_initialized_ = false;
+  rclcpp::Time last_odom_stamp_;
+  double odom_x_ = 0.0;
+  double odom_y_ = 0.0;
+  double odom_yaw_ = 0.0;
 
   void getParams();
+  void acquireSerialPortLock();
+  void releaseSerialPortLock();
   void createPublisher();
   void createSubscription();
   void createNewDebugPublisher(const std::string & name);
@@ -137,6 +154,7 @@ private:
   void publishAllRobotHp(ReceiveAllRobotHpData & data);
   void publishGameStatus(ReceiveGameStatusData & data);
   void publishRobotMotion(ReceiveRobotMotionData & data);
+  void publishOdomFromTwist(const geometry_msgs::msg::Twist & twist_msg);
   void publishGroundRobotPosition(ReceiveGroundRobotPosition & data);
   void publishRfidStatus(ReceiveRfidStatus & data);
   void publishRobotStatus(ReceiveRobotStatus & data);
@@ -148,6 +166,7 @@ private:
   std::vector<uint8_t> buildBcpChassisCtrlFrame() const;
   std::vector<uint8_t> buildBcpGimbalFrame() const;
   std::vector<uint8_t> buildBcpBarrelFrame() const;
+  std::vector<uint8_t> buildBcpHeartbeatFrame() const;
   bool receiveBcpBytes(size_t expected_size, std::vector<uint8_t> & buffer);
   bool receiveBcpFrame(std::vector<uint8_t> & frame);
   bool verifyBcpFrame(const std::vector<uint8_t> & frame);

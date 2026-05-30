@@ -20,7 +20,9 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp_components
   serial_driver
   tf2_geometry_msgs
+  tf2_ros
   geometry_msgs
+  nav_msgs
   sensor_msgs
   std_msgs
   std_srvs

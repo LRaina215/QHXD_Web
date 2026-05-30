@@ -15,17 +15,21 @@
 #include "standard_robot_pp_ros2/standard_robot_pp_ros2.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
 #include <memory>
+#include <sys/file.h>
 #include <termios.h>
 #include <unistd.h>
 
 #include "standard_robot_pp_ros2/crc8_crc16.hpp"
 #include "standard_robot_pp_ros2/packet_typedef.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include "tf2/LinearMath/Quaternion.h"
 
 #define USB_NOT_OK_SLEEP_TIME 1000   // (ms)
 #define USB_PROTECT_SLEEP_TIME 1000  // (ms)
@@ -48,9 +52,11 @@ constexpr uint8_t BCP_ID_GAME_STATUS = 0x30;
 constexpr uint8_t BCP_ID_ROBOT_HP = 0x31;
 constexpr uint8_t BCP_ID_ICRA_ZONE = 0x32;
 constexpr uint8_t BCP_ID_BARREL = 0x40;
+constexpr uint8_t BCP_ID_HEARTBEAT = 0xF0;
 constexpr double BCP_PI = 3.14159265358979323846;
 constexpr int64_t BCP_CMD_ACTIVE_TIMEOUT_MS = 300;
 constexpr int64_t BCP_SEND_INTERVAL_MS = 10;
+constexpr int64_t BCP_HEARTBEAT_INTERVAL_MS = 100;
 
 template <typename T>
 void appendLittleEndian(std::vector<uint8_t> & payload, T value)
@@ -90,6 +96,17 @@ bool isFiniteDouble(double value)
   return std::isfinite(value);
 }
 
+double normalizeAngle(double value)
+{
+  while (value > BCP_PI) {
+    value -= 2.0 * BCP_PI;
+  }
+  while (value < -BCP_PI) {
+    value += 2.0 * BCP_PI;
+  }
+  return value;
+}
+
 bool isPlausibleBcpImuSample(
   double yaw_deg, double pitch_deg, double roll_deg, double angle_x_deg, double angle_y_deg,
   double angle_z_deg, double acc_x, double acc_y, double acc_z)
@@ -108,6 +125,13 @@ int64_t nowSteadyMs()
   return std::chrono::duration_cast<std::chrono::milliseconds>(
            std::chrono::steady_clock::now().time_since_epoch())
     .count();
+}
+
+std::string makeSerialLockPath(const std::string & device_name)
+{
+  std::string safe_name = device_name.empty() ? "unknown" : device_name;
+  std::replace(safe_name.begin(), safe_name.end(), '/', '_');
+  return "/tmp/standard_robot_pp_ros2" + safe_name + ".lock";
 }
 
 speed_t toTermiosBaud(uint32_t baud_rate)
@@ -138,6 +162,7 @@ StandardRobotPpRos2Node::StandardRobotPpRos2Node(const rclcpp::NodeOptions & opt
   RCLCPP_INFO(get_logger(), "Start StandardRobotPpRos2Node!");
 
   getParams();
+  acquireSerialPortLock();
   createPublisher();
   createSubscription();
 
@@ -178,6 +203,8 @@ StandardRobotPpRos2Node::~StandardRobotPpRos2Node()
   if (owned_ctx_) {
     owned_ctx_->waitForExit();
   }
+
+  releaseSerialPortLock();
 }
 
 void StandardRobotPpRos2Node::createPublisher()
@@ -189,6 +216,10 @@ void StandardRobotPpRos2Node::createPublisher()
   joint_state_pub_ =
     this->create_publisher<sensor_msgs::msg::JointState>("serial/gimbal_joint_state", 10);
   robot_motion_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("serial/robot_motion", 10);
+  odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("odom", 10);
+  if (publish_odom_tf_) {
+    odom_tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+  }
   event_data_pub_ =
     this->create_publisher<pb_rm_interfaces::msg::EventData>("referee/event_data", 10);
   all_robot_hp_pub_ =
@@ -356,6 +387,38 @@ void StandardRobotPpRos2Node::getParams()
   bcp_default_bullet_vel_ = declare_parameter("bcp_default_bullet_vel", 15);
   bcp_default_remain_bullet_ =
     static_cast<int16_t>(declare_parameter("bcp_default_remain_bullet", 0));
+  publish_odom_ = declare_parameter("publish_odom", true);
+  publish_odom_tf_ = declare_parameter("publish_odom_tf", true);
+  odom_frame_id_ = declare_parameter<std::string>("odom_frame_id", "odom");
+  base_frame_id_ = declare_parameter<std::string>("base_frame_id", "base_link");
+}
+
+void StandardRobotPpRos2Node::acquireSerialPortLock()
+{
+  serial_lock_path_ = makeSerialLockPath(device_name_);
+  serial_lock_fd_ = ::open(serial_lock_path_.c_str(), O_CREAT | O_RDWR, 0666);
+  if (serial_lock_fd_ < 0) {
+    throw std::runtime_error(
+      "Failed to create serial lock " + serial_lock_path_ + ": " + std::strerror(errno));
+  }
+
+  if (::flock(serial_lock_fd_, LOCK_EX | LOCK_NB) != 0) {
+    const std::string error = std::strerror(errno);
+    ::close(serial_lock_fd_);
+    serial_lock_fd_ = -1;
+    throw std::runtime_error(
+      "Serial device " + device_name_ + " is already owned by another "
+      "standard_robot_pp_ros2 process. Lock: " + serial_lock_path_ + ", error: " + error);
+  }
+}
+
+void StandardRobotPpRos2Node::releaseSerialPortLock()
+{
+  if (serial_lock_fd_ >= 0) {
+    ::flock(serial_lock_fd_, LOCK_UN);
+    ::close(serial_lock_fd_);
+    serial_lock_fd_ = -1;
+  }
 }
 
 /********************************************************/
@@ -670,6 +733,66 @@ void StandardRobotPpRos2Node::publishRobotMotion(ReceiveRobotMotionData & robot_
   msg.angular.z = robot_motion.data.speed_vector.wz;
 
   robot_motion_pub_->publish(msg);
+  publishOdomFromTwist(msg);
+}
+
+void StandardRobotPpRos2Node::publishOdomFromTwist(const geometry_msgs::msg::Twist & twist_msg)
+{
+  if (!publish_odom_) {
+    return;
+  }
+
+  const auto stamp = this->now();
+  if (!odom_initialized_) {
+    last_odom_stamp_ = stamp;
+    odom_initialized_ = true;
+  }
+
+  double dt = (stamp - last_odom_stamp_).seconds();
+  if (dt < 0.0) {
+    dt = 0.0;
+  } else if (dt > 0.2) {
+    dt = 0.2;
+  }
+  last_odom_stamp_ = stamp;
+
+  odom_x_ += (twist_msg.linear.x * std::cos(odom_yaw_) - twist_msg.linear.y * std::sin(odom_yaw_)) * dt;
+  odom_y_ += (twist_msg.linear.x * std::sin(odom_yaw_) + twist_msg.linear.y * std::cos(odom_yaw_)) * dt;
+  odom_yaw_ = normalizeAngle(odom_yaw_ + twist_msg.angular.z * dt);
+
+  tf2::Quaternion q;
+  q.setRPY(0.0, 0.0, odom_yaw_);
+
+  nav_msgs::msg::Odometry odom_msg;
+  odom_msg.header.stamp = stamp;
+  odom_msg.header.frame_id = odom_frame_id_;
+  odom_msg.child_frame_id = base_frame_id_;
+  odom_msg.pose.pose.position.x = odom_x_;
+  odom_msg.pose.pose.position.y = odom_y_;
+  odom_msg.pose.pose.position.z = 0.0;
+  odom_msg.pose.pose.orientation.x = q.x();
+  odom_msg.pose.pose.orientation.y = q.y();
+  odom_msg.pose.pose.orientation.z = q.z();
+  odom_msg.pose.pose.orientation.w = q.w();
+  odom_msg.twist.twist = twist_msg;
+  odom_msg.pose.covariance[0] = 0.02;
+  odom_msg.pose.covariance[7] = 0.02;
+  odom_msg.pose.covariance[35] = 0.05;
+  odom_msg.twist.covariance[0] = 0.05;
+  odom_msg.twist.covariance[7] = 0.05;
+  odom_msg.twist.covariance[35] = 0.1;
+  odom_pub_->publish(odom_msg);
+
+  if (publish_odom_tf_ && odom_tf_broadcaster_) {
+    geometry_msgs::msg::TransformStamped tf_msg;
+    tf_msg.header = odom_msg.header;
+    tf_msg.child_frame_id = odom_msg.child_frame_id;
+    tf_msg.transform.translation.x = odom_x_;
+    tf_msg.transform.translation.y = odom_y_;
+    tf_msg.transform.translation.z = 0.0;
+    tf_msg.transform.rotation = odom_msg.pose.pose.orientation;
+    odom_tf_broadcaster_->sendTransform(tf_msg);
+  }
 }
 
 void StandardRobotPpRos2Node::publishGroundRobotPosition(
@@ -830,6 +953,7 @@ void StandardRobotPpRos2Node::sendBcpData()
   RCLCPP_INFO(get_logger(), "Start sendBcpData!");
 
   int retry_count = 0;
+  int64_t last_heartbeat_time_ms = 0;
   while (rclcpp::ok()) {
     if (!is_usb_ok_) {
       RCLCPP_WARN(get_logger(), "send bcp: usb is not ok! Retry count: %d", retry_count++);
@@ -838,16 +962,27 @@ void StandardRobotPpRos2Node::sendBcpData()
     }
 
     const auto now_ms = nowSteadyMs();
-    if (now_ms - last_cmd_update_time_ms_.load() > BCP_CMD_ACTIVE_TIMEOUT_MS) {
+    const bool should_send_command =
+      now_ms - last_cmd_update_time_ms_.load() <= BCP_CMD_ACTIVE_TIMEOUT_MS;
+    const bool should_send_heartbeat =
+      now_ms - last_heartbeat_time_ms >= BCP_HEARTBEAT_INTERVAL_MS;
+
+    if (!should_send_command && !should_send_heartbeat) {
       std::this_thread::sleep_for(std::chrono::milliseconds(BCP_SEND_INTERVAL_MS));
       continue;
     }
 
     try {
       std::lock_guard<std::mutex> tx_lock(serial_port_tx_mutex_);
-      serial_driver_->port()->send(buildBcpChassisCtrlFrame());
-      serial_driver_->port()->send(buildBcpGimbalFrame());
-      serial_driver_->port()->send(buildBcpBarrelFrame());
+      if (should_send_heartbeat) {
+        serial_driver_->port()->send(buildBcpHeartbeatFrame());
+        last_heartbeat_time_ms = now_ms;
+      }
+      if (should_send_command) {
+        serial_driver_->port()->send(buildBcpChassisCtrlFrame());
+        serial_driver_->port()->send(buildBcpGimbalFrame());
+        serial_driver_->port()->send(buildBcpBarrelFrame());
+      }
     } catch (const std::exception & ex) {
       RCLCPP_ERROR(get_logger(), "Error sending BCP data: %s", ex.what());
       is_usb_ok_ = false;
@@ -934,6 +1069,14 @@ std::vector<uint8_t> StandardRobotPpRos2Node::buildBcpBarrelFrame() const
   appendLittleEndian(payload, bcp_default_bullet_vel_);
   appendLittleEndian(payload, bcp_default_remain_bullet_);
   return buildBcpFrame(BCP_ID_BARREL, payload);
+}
+
+std::vector<uint8_t> StandardRobotPpRos2Node::buildBcpHeartbeatFrame() const
+{
+  std::vector<uint8_t> payload;
+  payload.reserve(sizeof(uint8_t));
+  appendLittleEndian(payload, static_cast<uint8_t>(1));
+  return buildBcpFrame(BCP_ID_HEARTBEAT, payload);
 }
 
 bool StandardRobotPpRos2Node::receiveBcpFrame(std::vector<uint8_t> & frame)
@@ -1204,6 +1347,7 @@ void StandardRobotPpRos2Node::handleBcpChassisOdomFrame(const std::vector<uint8_
   msg.linear.y = static_cast<double>(readLittleEndian<int32_t>(payload, 4)) / 10000.0;
   msg.angular.z = static_cast<double>(readLittleEndian<int32_t>(payload, 8)) / 10000.0;
   robot_motion_pub_->publish(msg);
+  publishOdomFromTwist(msg);
 }
 
 void StandardRobotPpRos2Node::handleBcpGimbalFrame(const std::vector<uint8_t> & payload)
