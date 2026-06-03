@@ -1,0 +1,19 @@
+[Unit]
+Description=QHXD RK3588 Backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=robomaster
+Group=robomaster
+WorkingDirectory=/home/robomaster/QHXD
+ExecStart=/home/robomaster/QHXD/scripts/run_backend_service.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillSignal=SIGINT
+SyslogIdentifier=qhxd-backend
+
+[Install]
+WantedBy=multi-user.target
