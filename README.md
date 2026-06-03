@@ -109,6 +109,36 @@ curl -X POST https://lingxunrobot.cn/api/voice/record_command
 
 第三条应返回 `403` 或 `404`，说明公网没有暴露 RK 板端录音接口。
 
+### Phase 8B 公网双语音入口
+
+公网前端的语音 / LLM 面板提供两个麦克风入口：
+
+- 网页麦克风识别：使用当前浏览器、手机或电脑的麦克风录音，上传到 `/api/voice/browser_audio_command`，云端用 `ffmpeg` 转为 `16kHz mono wav` 后转发 RK3588 `/api/voice/audio_command`。
+- 车载麦克风识别：通过 `/api/robot/voice/onboard_record_command` 触发 RK3588 车载 USB 麦克风录音，并转发到 RK3588 `/api/voice/record_command`。
+
+安全边界：
+
+- 两个公网语音入口都需要顶部保存公网 Token。
+- 原始 `/api/voice/record_command` 仍不直接暴露公网。
+- `PUBLIC_CONTROL_ENABLED=false` 时允许语音识别和语义解析，但移动类 mission 仍不能执行。
+- 移动类命令仍复用原有二次确认弹窗。
+
+云服务器需要安装并验证 `ffmpeg`：
+
+```bash
+ffmpeg -version
+```
+
+浏览器录音限制由云端环境变量控制：
+
+```env
+PUBLIC_BROWSER_AUDIO_MAX_MB=5
+PUBLIC_BROWSER_AUDIO_MAX_SECONDS=10
+GATEWAY_AUDIO_TMP_DIR=/tmp/lingxun-cloud-gateway-audio
+GATEWAY_AUDIO_KEEP_DIR=/var/log/lingxun-cloud-gateway/audio_records
+GATEWAY_AUDIO_KEEP_MAX_FILES=20
+```
+
 
 ## 相机采集、YOLO 处理与前端刷新频率
 

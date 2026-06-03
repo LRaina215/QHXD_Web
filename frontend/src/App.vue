@@ -136,14 +136,14 @@ type VoiceCommandResponse = {
 
 type VoiceRecordCommandResult = VoiceCommandResult & {
   recognized_text: string
-  raw_text: string | null
-  asr_backend: string
-  asr_time_s: number | null
-  model_load_time_s: number | null
-  audio_path: string | null
-  duration: number
-  audio_device: string
-  audio_retained: boolean
+  raw_text?: string | null
+  asr_backend?: string
+  asr_time_s?: number | null
+  model_load_time_s?: number | null
+  audio_path?: string | null
+  duration?: number
+  audio_device?: string
+  audio_retained?: boolean
 }
 
 type VoiceRecordCommandResponse = {
@@ -238,6 +238,8 @@ const apiTokenSaved = ref(Boolean(apiTokenInput.value.trim()))
 const isSending = ref(false)
 const isSendingTextCommand = ref(false)
 const isRecordingVoice = ref(false)
+const isBrowserVoiceRecording = ref(false)
+const isOnboardVoiceRecording = ref(false)
 const isConfirmingVoiceCommand = ref(false)
 const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
@@ -286,6 +288,7 @@ const detectionEventHoldMs = getEnvNumber('VITE_DETECTION_EVENT_HOLD_MS', 15000,
 const detectionEventMaxItems = Math.floor(getEnvNumber('VITE_DETECTION_EVENT_MAX_ITEMS', 12, 1))
 const enableLocalRecordCommand = ENABLE_LOCAL_RECORD_COMMAND
 const apiAuthLabel = computed(() => (apiTokenSaved.value ? '公网 Token 已保存' : '公网 Token 未设置'))
+const isAnyVoiceRecording = computed(() => isRecordingVoice.value || isBrowserVoiceRecording.value || isOnboardVoiceRecording.value)
 
 const onlineStatus = computed(() => {
   if (!state.value) {
@@ -617,6 +620,14 @@ const navigationAssistConfirmationState = computed(() => {
 })
 
 const voiceRecordStatusHint = computed(() => {
+  if (isBrowserVoiceRecording.value) {
+    return '网页麦克风录音识别中'
+  }
+
+  if (isOnboardVoiceRecording.value) {
+    return '车载麦克风录音识别中'
+  }
+
   if (isRecordingVoice.value) {
     return '正在录音并识别，请说话...'
   }
@@ -1136,6 +1147,172 @@ async function recordVoiceCommand() {
   }
 }
 
+function preferredBrowserAudioMimeType() {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+  ]
+  if (typeof MediaRecorder === 'undefined') {
+    return ''
+  }
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? ''
+}
+
+function browserAudioFilename(mimeType: string) {
+  if (mimeType.includes('ogg')) {
+    return 'browser_audio.ogg'
+  }
+  return 'browser_audio.webm'
+}
+
+async function uploadVoiceFormData(path: string, formData: FormData, fallback: string) {
+  const response = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+    },
+    body: formData,
+  })
+  if (!response.ok) {
+    throw new Error(await readApiError(response, fallback))
+  }
+  return (await response.json()) as VoiceRecordCommandResponse
+}
+
+async function handleVoiceResponsePayload(payload: VoiceRecordCommandResponse | null, fallback: string) {
+  if (!payload?.success) {
+    voiceRecordResult.value = payload?.data ?? null
+    const message = payload?.detail || payload?.error || payload?.data?.error || fallback
+    voiceRecordError.value = message
+    voiceRecordStatus.value = '失败'
+    actionMessage.value = message
+    return
+  }
+
+  if (!payload.data) {
+    throw new Error('语音接口未返回识别结果')
+  }
+
+  handleVoiceCommandResult(payload.data, 'record')
+  if (!shouldOpenVoiceConfirm(payload.data)) {
+    await Promise.all([loadState(), loadAlerts()])
+  }
+}
+
+async function recordBrowserVoiceCommand() {
+  if (isAnyVoiceRecording.value) {
+    return
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    voiceRecordError.value = '当前浏览器不支持网页麦克风录音'
+    voiceRecordStatus.value = '失败'
+    actionMessage.value = voiceRecordError.value
+    return
+  }
+
+  isBrowserVoiceRecording.value = true
+  voiceRecordStatus.value = '网页麦克风录音中'
+  voiceRecordError.value = ''
+  voiceRecordResult.value = null
+
+  let stream: MediaStream | null = null
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const mimeType = preferredBrowserAudioMimeType()
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    const chunks: BlobPart[] = []
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        chunks.push(event.data)
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      recorder.onerror = () => reject(new Error('浏览器录音失败'))
+      recorder.onstop = () => resolve()
+      recorder.start()
+      window.setTimeout(() => {
+        if (recorder.state !== 'inactive') {
+          recorder.stop()
+        }
+      }, Math.max(1, voiceRecordDuration.value) * 1000)
+    })
+
+    const effectiveMimeType = recorder.mimeType || mimeType || 'audio/webm'
+    const audioBlob = new Blob(chunks, { type: effectiveMimeType })
+    if (!audioBlob.size) {
+      throw new Error('网页麦克风没有录到有效音频')
+    }
+
+    voiceRecordStatus.value = '网页麦克风上传识别中'
+    const formData = new FormData()
+    formData.append('file', audioBlob, browserAudioFilename(effectiveMimeType))
+    formData.append('source', 'browser-mic')
+    formData.append('requested_by', 'operator')
+    formData.append('keep_audio', 'false')
+
+    const payload = await uploadVoiceFormData(
+      '/api/voice/browser_audio_command',
+      formData,
+      '网页麦克风识别失败',
+    )
+    await handleVoiceResponsePayload(payload, '网页麦克风识别失败')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '网页麦克风识别失败'
+    voiceRecordError.value = message.includes('Permission') || message.includes('denied')
+      ? '浏览器麦克风权限被拒绝'
+      : message
+    voiceRecordStatus.value = '失败'
+    actionMessage.value = voiceRecordError.value
+  } finally {
+    stream?.getTracks().forEach((track) => track.stop())
+    isBrowserVoiceRecording.value = false
+  }
+}
+
+async function recordOnboardVoiceCommand() {
+  if (isAnyVoiceRecording.value) {
+    return
+  }
+
+  isOnboardVoiceRecording.value = true
+  voiceRecordStatus.value = '车载麦克风录音中'
+  voiceRecordError.value = ''
+  voiceRecordResult.value = null
+
+  try {
+    const response = await fetch(apiUrl('/api/robot/voice/onboard_record_command'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        duration: voiceRecordDuration.value,
+        source: 'web-onboard-mic',
+        requested_by: 'operator',
+        keep_audio: true,
+      }),
+    })
+    if (!response.ok) {
+      throw new Error(await readApiError(response, '车载麦克风识别失败'))
+    }
+
+    const payload = (await response.json()) as VoiceRecordCommandResponse
+    await handleVoiceResponsePayload(payload, '车载麦克风识别失败')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '车载麦克风识别失败'
+    voiceRecordError.value = message
+    voiceRecordStatus.value = '失败'
+    actionMessage.value = message
+  } finally {
+    isOnboardVoiceRecording.value = false
+  }
+}
+
 async function switchMode(mode: 'mock' | 'real') {
   isSwitchingMode.value = true
 
@@ -1259,6 +1436,21 @@ async function readApiError(response: Response, fallback: string) {
     }
     if (code === 'robot_offline') {
       return '机器人离线，命令未转发'
+    }
+    if (code === 'ffmpeg_not_installed') {
+      return '云服务器未安装 ffmpeg，无法转码浏览器录音'
+    }
+    if (code === 'ffmpeg_transcode_failed') {
+      return payload.detail || '浏览器录音转码失败'
+    }
+    if (code === 'unsupported_audio_type') {
+      return payload.detail || '浏览器录音格式不受支持'
+    }
+    if (code === 'browser_audio_too_large') {
+      return '浏览器录音文件过大'
+    }
+    if (code === 'browser_audio_too_long') {
+      return '浏览器录音时间过长'
     }
     if (code?.startsWith('robot_fault:')) {
       return `机器人故障状态，命令未执行：${code.replace('robot_fault:', '')}`
@@ -1522,29 +1714,48 @@ function saveApiToken() {
               <button :disabled="isSendingTextCommand || !textCommand.trim()" type="button" @click="sendTextCommand">
                 {{ isSendingTextCommand ? '发送中...' : '发送文本命令' }}
               </button>
-              <label v-if="enableLocalRecordCommand" class="field compact-field duration-field">
-                <span>板端录音</span>
-                <select v-model.number="voiceRecordDuration" :disabled="isRecordingVoice">
+              <label class="field compact-field duration-field">
+                <span>录音时长</span>
+                <select v-model.number="voiceRecordDuration" :disabled="isAnyVoiceRecording">
                   <option :value="2">2 秒</option>
                   <option :value="3">3 秒</option>
                   <option :value="5">5 秒</option>
                 </select>
               </label>
               <button
+                class="secondary"
+                :disabled="isAnyVoiceRecording"
+                type="button"
+                title="使用当前浏览器、手机或电脑的麦克风录音并上传云端转码"
+                @click="recordBrowserVoiceCommand"
+              >
+                {{ isBrowserVoiceRecording ? '网页麦克风识别中...' : '网页麦克风识别' }}
+              </button>
+              <button
+                class="secondary"
+                :disabled="isAnyVoiceRecording"
+                type="button"
+                title="通过云端安全接口触发机器人 RK3588 上的 USB 麦克风录音"
+                @click="recordOnboardVoiceCommand"
+              >
+                {{ isOnboardVoiceRecording ? '车载麦克风录音中...' : '车载麦克风识别' }}
+              </button>
+              <button
                 v-if="enableLocalRecordCommand"
                 class="secondary"
-                :disabled="isRecordingVoice"
+                :disabled="isAnyVoiceRecording"
                 type="button"
                 @click="recordVoiceCommand"
               >
                 {{ isRecordingVoice ? '录音识别中...' : '开始录音识别' }}
               </button>
-              <p v-else class="inline-status">公网语音请使用浏览器/小程序录音上传。</p>
             </div>
           </div>
 
           <div class="status-message-stack">
-            <p v-if="isRecordingVoice" class="inline-status">正在录音并识别，请说话...</p>
+            <p v-if="isBrowserVoiceRecording" class="inline-status">正在使用当前浏览器麦克风录音，请说话...</p>
+            <p v-if="isOnboardVoiceRecording" class="inline-status">正在触发机器人车载麦克风录音，请靠近机器人说话...</p>
+            <p v-if="isRecordingVoice" class="inline-status">正在使用 RK3588 本地录音接口识别，请说话...</p>
             <p v-if="voiceRecordNoCommandLabel" class="inline-status warn-status">{{ voiceRecordNoCommandLabel }}</p>
             <p v-if="voiceRecordError" class="inline-status error-status">{{ voiceRecordError }}</p>
           </div>

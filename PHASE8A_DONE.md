@@ -194,3 +194,17 @@ POST /api/voice/record_command
 - 带 Token 调用 `/api/mission/go_to_waypoint` 在 `PUBLIC_CONTROL_ENABLED=false` 时仍返回 `403 public_control_disabled`，符合公网安全开关要求。
 
 注意：公网页面需要先在顶部保存 Token，写接口才会执行。移动类 mission 还需要云服务器 `/etc/lingxun-cloud-gateway.env` 中 `PUBLIC_CONTROL_ENABLED=true` 才允许进入真实执行链路。
+
+使用方式：
+
+刷新 https://lingxunrobot.cn
+在顶部“公网 Token”输入框填入云服务器 /etc/lingxun-cloud-gateway.env 里的 PUBLIC_API_TOKEN
+点击“保存 Token”
+再测试切到 Real、发送文本命令
+当前移动类 mission 仍不会真正执行，因为云端安全开关还是：
+
+PUBLIC_CONTROL_ENABLED=false
+需要真实移动验收时，在云服务器把它改成 true 并重启 gateway：
+
+sudo sed -i 's/^PUBLIC_CONTROL_ENABLED=.*/PUBLIC_CONTROL_ENABLED=true/' /etc/lingxun-cloud-gateway.env
+sudo systemctl restart lingxun-cloud-gateway

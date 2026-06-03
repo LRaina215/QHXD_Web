@@ -2,7 +2,10 @@ import asyncio
 import contextlib
 import json
 import os
+import shutil
+import subprocess
 import time
+import wave
 import uuid
 from collections import defaultdict, deque
 from pathlib import Path
@@ -10,7 +13,7 @@ from typing import Deque
 
 import httpx
 import websockets
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -21,6 +24,11 @@ PUBLIC_API_TOKEN = os.getenv("PUBLIC_API_TOKEN", "")
 PUBLIC_CONTROL_ENABLED = os.getenv("PUBLIC_CONTROL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 PUBLIC_RATE_LIMIT_PER_MINUTE = int(os.getenv("PUBLIC_RATE_LIMIT_PER_MINUTE", "60"))
 PUBLIC_AUDIO_MAX_MB = float(os.getenv("PUBLIC_AUDIO_MAX_MB", "20"))
+PUBLIC_BROWSER_AUDIO_MAX_MB = float(os.getenv("PUBLIC_BROWSER_AUDIO_MAX_MB", "5"))
+PUBLIC_BROWSER_AUDIO_MAX_SECONDS = float(os.getenv("PUBLIC_BROWSER_AUDIO_MAX_SECONDS", "10"))
+GATEWAY_AUDIO_TMP_DIR = Path(os.getenv("GATEWAY_AUDIO_TMP_DIR", "/tmp/lingxun-cloud-gateway-audio"))
+GATEWAY_AUDIO_KEEP_DIR = Path(os.getenv("GATEWAY_AUDIO_KEEP_DIR", "/var/log/lingxun-cloud-gateway/audio_records"))
+GATEWAY_AUDIO_KEEP_MAX_FILES = int(os.getenv("GATEWAY_AUDIO_KEEP_MAX_FILES", "20"))
 ROBOT_STATE_TIMEOUT_SECONDS = float(os.getenv("ROBOT_STATE_TIMEOUT_SECONDS", "3"))
 FORWARD_TIMEOUT_SECONDS = float(os.getenv("FORWARD_TIMEOUT_SECONDS", "30"))
 STREAM_TIMEOUT_SECONDS = float(os.getenv("STREAM_TIMEOUT_SECONDS", "300"))
@@ -41,7 +49,9 @@ BLOCKED_PUBLIC_PATHS = {
 WRITE_PATH_PREFIXES = (
     "/api/voice/text_command",
     "/api/voice/audio_command",
+    "/api/voice/browser_audio_command",
     "/api/voice/confirm_command",
+    "/api/robot/voice/onboard_record_command",
     "/api/mission/",
     "/api/system/mode/switch",
 )
@@ -61,7 +71,9 @@ ALLOWED_PATH_PREFIXES = (
     "/api/perception/frame_stream",
     "/api/voice/text_command",
     "/api/voice/audio_command",
+    "/api/voice/browser_audio_command",
     "/api/voice/confirm_command",
+    "/api/robot/voice/onboard_record_command",
     "/api/mission/",
     "/api/system/mode/switch",
 )
@@ -178,6 +190,90 @@ def _response_headers(headers: httpx.Headers) -> dict[str, str]:
     }
 
 
+def _parse_bool(value: str | bool | None, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _validate_browser_audio_upload(file: UploadFile, data: bytes) -> JSONResponse | None:
+    allowed_mimes = {"audio/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/wave"}
+    content_type = (file.content_type or "").split(";", 1)[0].lower()
+    if content_type not in allowed_mimes:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "unsupported_audio_type", "detail": f"不支持的音频类型：{file.content_type}"},
+        )
+    if not data:
+        return JSONResponse(status_code=400, content={"success": False, "error": "empty_audio", "detail": "上传音频为空。"})
+    if len(data) > int(PUBLIC_BROWSER_AUDIO_MAX_MB * 1024 * 1024):
+        return JSONResponse(
+            status_code=413,
+            content={"success": False, "error": "browser_audio_too_large", "detail": "浏览器录音超过大小限制。"},
+        )
+    return None
+
+
+def _wav_duration_seconds(path: Path) -> float:
+    try:
+        with wave.open(str(path), "rb") as wav_file:
+            frame_rate = wav_file.getframerate()
+            frame_count = wav_file.getnframes()
+            return frame_count / frame_rate if frame_rate else 0.0
+    except wave.Error:
+        return 0.0
+
+
+def _cleanup_kept_audio() -> None:
+    if GATEWAY_AUDIO_KEEP_MAX_FILES <= 0 or not GATEWAY_AUDIO_KEEP_DIR.exists():
+        return
+    files = sorted(
+        [path for path in GATEWAY_AUDIO_KEEP_DIR.iterdir() if path.is_file()],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in files[GATEWAY_AUDIO_KEEP_MAX_FILES:]:
+        with contextlib.suppress(Exception):
+            stale.unlink()
+
+
+async def _forward_wav_to_rk(
+    wav_path: Path,
+    *,
+    source: str,
+    requested_by: str | None,
+    keep_audio: bool,
+    request_id: str,
+) -> httpx.Response:
+    fields = {
+        "source": source,
+        "requested_by": requested_by or "",
+        "keep_audio": "true" if keep_audio else "false",
+    }
+    async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT_SECONDS, trust_env=False) as client:
+        with wav_path.open("rb") as handle:
+            files = {
+                "file": ("browser_audio.wav", handle, "audio/wav"),
+            }
+            return await client.post(
+                f"{RK_BACKEND_BASE_URL}/api/voice/audio_command",
+                data=fields,
+                files=files,
+                headers={"x-cloud-gateway": SERVICE_NAME, "x-request-id": request_id},
+            )
+
+
+async def _forward_json_to_rk(path: str, payload: dict, request_id: str) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT_SECONDS, trust_env=False) as client:
+        return await client.post(
+            f"{RK_BACKEND_BASE_URL}{path}",
+            json=payload,
+            headers={"x-cloud-gateway": SERVICE_NAME, "x-request-id": request_id},
+        )
+
+
 async def _robot_state() -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=ROBOT_STATE_TIMEOUT_SECONDS, trust_env=False) as client:
@@ -246,6 +342,177 @@ async def health() -> dict:
         "rk_online": state is not None,
         "public_control_enabled": PUBLIC_CONTROL_ENABLED,
     }
+
+
+@app.post("/api/voice/browser_audio_command")
+async def browser_audio_command(
+    request: Request,
+    file: UploadFile = File(...),
+    source: str = Form("browser-mic"),
+    requested_by: str | None = Form("operator"),
+    keep_audio: str | bool | None = Form(False),
+):
+    request_id = str(uuid.uuid4())
+    if not _check_rate_limit(request):
+        return _reject(429, "rate_limited", request, request_id)
+    if not _auth_ok(request):
+        return _reject(401, "unauthorized", request, request_id)
+
+    state = await _robot_state()
+    if state is None:
+        return _reject(503, "robot_offline", request, request_id)
+
+    raw_audio = await file.read()
+    invalid = _validate_browser_audio_upload(file, raw_audio)
+    if invalid is not None:
+        return invalid
+
+    if shutil.which("ffmpeg") is None:
+        return _reject(500, "ffmpeg_not_installed", request, request_id)
+
+    keep = _parse_bool(keep_audio, False)
+    GATEWAY_AUDIO_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    input_suffix = Path(file.filename or "browser_audio.webm").suffix or ".webm"
+    input_path = GATEWAY_AUDIO_TMP_DIR / f"{request_id}{input_suffix}"
+    wav_path = GATEWAY_AUDIO_TMP_DIR / f"{request_id}.wav"
+    input_path.write_bytes(raw_audio)
+
+    try:
+        command = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(input_path),
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-sample_fmt",
+            "s16",
+            str(wav_path),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
+        if result.returncode != 0 or not wav_path.exists() or wav_path.stat().st_size == 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": "ffmpeg_transcode_failed",
+                    "detail": result.stderr.strip() or "浏览器录音转码失败。",
+                    "request_id": request_id,
+                },
+            )
+
+        duration_s = _wav_duration_seconds(wav_path)
+        if duration_s <= 0:
+            return JSONResponse(status_code=400, content={"success": False, "error": "invalid_audio_duration", "request_id": request_id})
+        if duration_s > PUBLIC_BROWSER_AUDIO_MAX_SECONDS:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "browser_audio_too_long", "duration_s": round(duration_s, 3), "request_id": request_id},
+            )
+
+        upstream_response = await _forward_wav_to_rk(
+            wav_path,
+            source=source or "browser-mic",
+            requested_by=requested_by,
+            keep_audio=keep,
+            request_id=request_id,
+        )
+
+        if keep:
+            GATEWAY_AUDIO_KEEP_DIR.mkdir(parents=True, exist_ok=True)
+            kept_base = GATEWAY_AUDIO_KEEP_DIR / request_id
+            shutil.copy2(input_path, kept_base.with_suffix(input_suffix))
+            shutil.copy2(wav_path, kept_base.with_suffix(".wav"))
+            _cleanup_kept_audio()
+
+        _operation_log(
+            {
+                "timestamp": time.time(),
+                "request_id": request_id,
+                "client_ip": _client_ip(request),
+                "method": request.method,
+                "path": request.url.path,
+                "accepted": True,
+                "forward_status": upstream_response.status_code,
+                "duration_s": round(duration_s, 3),
+                "source": source,
+            }
+        )
+        return Response(
+            content=upstream_response.content,
+            status_code=upstream_response.status_code,
+            headers=_response_headers(upstream_response.headers),
+            media_type=upstream_response.headers.get("content-type"),
+        )
+    except subprocess.TimeoutExpired:
+        return JSONResponse(status_code=400, content={"success": False, "error": "ffmpeg_timeout", "request_id": request_id})
+    except Exception as exc:
+        return _reject(503, f"browser_audio_forward_failed:{exc.__class__.__name__}", request, request_id)
+    finally:
+        if not keep:
+            with contextlib.suppress(Exception):
+                input_path.unlink()
+            with contextlib.suppress(Exception):
+                wav_path.unlink()
+
+
+@app.post("/api/robot/voice/onboard_record_command")
+async def onboard_record_command(request: Request):
+    request_id = str(uuid.uuid4())
+    if not _check_rate_limit(request):
+        return _reject(429, "rate_limited", request, request_id)
+    if not _auth_ok(request):
+        return _reject(401, "unauthorized", request, request_id)
+
+    state = await _robot_state()
+    if state is None:
+        return _reject(503, "robot_offline", request, request_id)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    try:
+        duration = int(payload.get("duration", 3))
+    except (TypeError, ValueError):
+        duration = 3
+    payload["duration"] = min(max(duration, 1), int(PUBLIC_BROWSER_AUDIO_MAX_SECONDS))
+    payload["source"] = payload.get("source") or "web-onboard-mic"
+    payload["requested_by"] = payload.get("requested_by") or "operator"
+    payload["keep_audio"] = bool(payload.get("keep_audio", True))
+
+    try:
+        upstream_response = await _forward_json_to_rk("/api/voice/record_command", payload, request_id)
+    except Exception as exc:
+        return _reject(503, f"onboard_record_forward_failed:{exc.__class__.__name__}", request, request_id)
+
+    _operation_log(
+        {
+            "timestamp": time.time(),
+            "request_id": request_id,
+            "client_ip": _client_ip(request),
+            "method": request.method,
+            "path": request.url.path,
+            "accepted": True,
+            "forward_status": upstream_response.status_code,
+            "source": payload["source"],
+            "public_control_enabled": PUBLIC_CONTROL_ENABLED,
+        }
+    )
+    return Response(
+        content=upstream_response.content,
+        status_code=upstream_response.status_code,
+        headers=_response_headers(upstream_response.headers),
+        media_type=upstream_response.headers.get("content-type"),
+    )
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
