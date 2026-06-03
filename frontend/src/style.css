@@ -188,6 +188,33 @@ h2 {
   background: rgba(255, 247, 232, 0.08);
 }
 
+.public-auth-control {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 220px) auto;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px;
+  border: 1px solid rgba(255, 247, 232, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 247, 232, 0.08);
+}
+
+.public-auth-control input {
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 247, 232, 0.24);
+  border-radius: 7px;
+  color: #fff7e8;
+  background: rgba(23, 20, 15, 0.72);
+  font: inherit;
+}
+
+.public-auth-control input::placeholder {
+  color: rgba(255, 247, 232, 0.48);
+}
+
 .compact-button {
   min-height: 38px;
   width: auto;
@@ -848,7 +875,8 @@ button:disabled {
 
   .button-row,
   .voice-actions,
-  .mode-switch-group {
+  .mode-switch-group,
+  .public-auth-control {
     display: grid;
     grid-template-columns: 1fr;
   }

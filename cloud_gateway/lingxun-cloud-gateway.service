@@ -1,0 +1,18 @@
+[Unit]
+Description=Lingxun Cloud Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/lingxun-cloud-gateway
+EnvironmentFile=/etc/lingxun-cloud-gateway.env
+ExecStart=/opt/lingxun-cloud-gateway/.venv/bin/uvicorn cloud_gateway:app --host 127.0.0.1 --port 9000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+

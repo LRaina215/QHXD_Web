@@ -36,6 +36,80 @@
 三项服务默认配置：后端 `8000`、前端 `5173`、YOLO 配置 `experiments/rknn_yolo/camera_config.json`、日志目录 `logs/`、pid 目录 `.runtime/`。`start_hik_web.sh` 会默认重启前端并将 `yolo_camera` 切到 Hik 配置；如需保留现有前端或 YOLO 进程，可分别设置 `HIK_WEB_RESTART_FRONTEND=false`、`HIK_WEB_RESTART_YOLO=false`。`setup_usb_camera_alias.sh` 会写入 udev 规则，执行时需要 sudo。`camera_config.json` 默认使用稳定设备名 `/dev/qhxd-usb-camera` 作为 USB 摄像头入口；Hik 快捷脚本使用 `experiments/rknn_yolo/camera_config_hik.example.json`，并复用同一个 `yolo_camera` 服务名，所以 `status_all.sh` / `stop_all.sh` 对 USB 与 Hik 启动方式都有效。切换 USB 和 Hik 前，建议先执行 `./scripts/stop_all.sh` 或确认 `yolo_camera` 已停止。
 
 
+## Phase 8A 公网访问与 Cloud Gateway
+
+公网最终架构：
+
+```text
+浏览器 / 小程序 / 外部客户端
+        -> 云服务器 Nginx
+        -> Cloud Gateway 127.0.0.1:9000
+        -> RK3588 QHXD backend
+```
+
+完整 QHXD backend 继续运行在 RK3588 上。云服务器不运行完整 backend，只运行静态前端、Nginx 和 `cloud_gateway/` 中的云端中继服务。
+
+公网入口：
+
+```text
+Web 前端：https://lingxunrobot.cn
+Web 同域 API：https://lingxunrobot.cn/api
+Web 同域 WS：wss://lingxunrobot.cn/ws/state 与 /ws/imu
+
+外部 API：https://api.lingxunrobot.cn
+外部 WS：wss://api.lingxunrobot.cn/ws/state 与 /ws/imu
+```
+
+两种入口最终都反代到云服务器本机：
+
+```text
+http://127.0.0.1:9000
+```
+
+Cloud Gateway 环境变量在云服务器：
+
+```text
+/etc/lingxun-cloud-gateway.env
+```
+
+关键配置：
+
+```env
+RK_BACKEND_BASE_URL=http://100.113.173.115:8000
+PUBLIC_API_TOKEN=替换为实际 token
+PUBLIC_CONTROL_ENABLED=false
+PUBLIC_RATE_LIMIT_PER_MINUTE=60
+PUBLIC_AUDIO_MAX_MB=20
+```
+
+安全边界：
+
+- `/api/voice/record_command` 不公网暴露；它是 RK3588 本机录音接口，只允许本地测试使用。
+- 公网语音使用浏览器/小程序录音后上传到 `/api/voice/audio_command`。
+- 写接口需要 `Authorization: Bearer <token>`。
+- `PUBLIC_CONTROL_ENABLED` 默认必须是 `false`；即使 token 正确，移动类 mission 也会被拒绝。
+- mission 控制需要 token、安全开关、命令白名单、操作日志、限流，并在机器人离线、急停、故障时拒绝执行。
+
+云服务器常用命令：
+
+```bash
+sudo systemctl status lingxun-cloud-gateway
+sudo journalctl -u lingxun-cloud-gateway -f
+curl http://127.0.0.1:9000/health
+tail -f /var/log/lingxun-cloud-gateway/operations.jsonl
+```
+
+公网验收命令：
+
+```bash
+curl https://lingxunrobot.cn/api/state/latest
+curl https://api.lingxunrobot.cn/health
+curl -X POST https://lingxunrobot.cn/api/voice/record_command
+```
+
+第三条应返回 `403` 或 `404`，说明公网没有暴露 RK 板端录音接口。
+
+
 ## 相机采集、YOLO 处理与前端刷新频率
 
 这里有三层频率，含义不同，现场调试时不要混在一起：

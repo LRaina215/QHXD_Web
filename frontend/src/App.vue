@@ -3,6 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import NavMapPlaceholder from './components/NavMapPlaceholder.vue'
 import NavigationAssistPanel from './components/NavigationAssistPanel.vue'
 import VoiceConfirmDialog from './components/VoiceConfirmDialog.vue'
+import {
+  ENABLE_LOCAL_RECORD_COMMAND,
+  apiUrl,
+  authHeaders,
+  perceptionFrameStreamUrl,
+  perceptionLatestFrameUrl,
+  wsUrl,
+} from './config/api'
 
 type DetectionStatus = {
   enabled: boolean
@@ -225,6 +233,8 @@ const voiceConfirmError = ref('')
 const connectionLabel = ref('连接中')
 const imuConnectionLabel = ref('IMU 流连接中')
 const actionMessage = ref('等待命令')
+const apiTokenInput = ref(window.localStorage.getItem('qhxd_api_token') ?? '')
+const apiTokenSaved = ref(Boolean(apiTokenInput.value.trim()))
 const isSending = ref(false)
 const isSendingTextCommand = ref(false)
 const isRecordingVoice = ref(false)
@@ -274,6 +284,8 @@ const latestFrameRefreshIntervalMs = getLatestFrameRefreshIntervalMs()
 const useMjpegFrameStream = getEnvBool('VITE_USE_MJPEG_STREAM', true)
 const detectionEventHoldMs = getEnvNumber('VITE_DETECTION_EVENT_HOLD_MS', 15000, 1000)
 const detectionEventMaxItems = Math.floor(getEnvNumber('VITE_DETECTION_EVENT_MAX_ITEMS', 12, 1))
+const enableLocalRecordCommand = ENABLE_LOCAL_RECORD_COMMAND
+const apiAuthLabel = computed(() => (apiTokenSaved.value ? '公网 Token 已保存' : '公网 Token 未设置'))
 
 const onlineStatus = computed(() => {
   if (!state.value) {
@@ -714,10 +726,11 @@ async function confirmVoiceCommand(
   confirmed: boolean,
   requestedBy = 'operator',
 ) {
-  const response = await fetch('/api/voice/confirm_command', {
+  const response = await fetch(apiUrl('/api/voice/confirm_command'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
     },
     body: JSON.stringify({
       pending_command_id: pendingCommandId,
@@ -859,7 +872,7 @@ onBeforeUnmount(() => {
 
 async function loadState() {
   try {
-    const response = await fetch('/api/state/latest')
+    const response = await fetch(apiUrl('/api/state/latest'))
     if (!response.ok) {
       throw new Error('状态接口不可用')
     }
@@ -873,7 +886,7 @@ async function loadState() {
 
 async function loadAlerts() {
   try {
-    const response = await fetch('/api/alerts')
+    const response = await fetch(apiUrl('/api/alerts'))
     if (!response.ok) {
       throw new Error('告警接口不可用')
     }
@@ -887,7 +900,7 @@ async function loadAlerts() {
 
 async function loadImu() {
   try {
-    const response = await fetch('/api/imu/latest')
+    const response = await fetch(apiUrl('/api/imu/latest'))
     if (!response.ok) {
       throw new Error('IMU 接口不可用')
     }
@@ -901,7 +914,7 @@ async function loadImu() {
 
 function startLatestFrameStream() {
   latestFrameAvailable.value = true
-  latestFrameUrl.value = `/api/perception/frame_stream?t=${Date.now()}`
+  latestFrameUrl.value = perceptionFrameStreamUrl()
 }
 
 function startLatestFramePolling() {
@@ -913,7 +926,7 @@ function startLatestFramePolling() {
 
 function refreshLatestFrame() {
   latestFrameAvailable.value = true
-  latestFrameUrl.value = `/api/perception/latest_frame?t=${Date.now()}`
+  latestFrameUrl.value = perceptionLatestFrameUrl()
 }
 
 function handleLatestFrameError() {
@@ -928,8 +941,7 @@ function handleLatestFrameLoad() {
 }
 
 function connectWebSocket() {
-  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  socket = new WebSocket(`${protocol}://${window.location.host}/ws/state`)
+  socket = new WebSocket(wsUrl('/ws/state'))
 
   socket.onopen = () => {
     wsConnected.value = true
@@ -958,8 +970,7 @@ function connectWebSocket() {
 }
 
 function connectImuWebSocket() {
-  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  imuSocket = new WebSocket(`${protocol}://${window.location.host}/ws/imu`)
+  imuSocket = new WebSocket(wsUrl('/ws/imu'))
 
   imuSocket.onopen = () => {
     imuWsConnected.value = true
@@ -995,15 +1006,16 @@ async function sendMission(
   isSending.value = true
 
   try {
-    const response = await fetch(path, {
+    const response = await fetch(apiUrl(path), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
       },
       body: JSON.stringify(body),
     })
     if (!response.ok) {
-      throw new Error('任务接口调用失败')
+      throw new Error(await readApiError(response, '任务接口调用失败'))
     }
 
     const payload = (await response.json()) as MissionActionResponse
@@ -1026,10 +1038,11 @@ async function sendTextCommand() {
   isSendingTextCommand.value = true
 
   try {
-    const response = await fetch('/api/voice/text_command', {
+    const response = await fetch(apiUrl('/api/voice/text_command'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
       },
       body: JSON.stringify({
         text: textCommand.value,
@@ -1038,7 +1051,7 @@ async function sendTextCommand() {
       }),
     })
     if (!response.ok) {
-      throw new Error('文本命令接口调用失败')
+      throw new Error(await readApiError(response, '文本命令接口调用失败'))
     }
 
     const payload = (await response.json()) as VoiceCommandResponse
@@ -1054,6 +1067,13 @@ async function sendTextCommand() {
 }
 
 async function recordVoiceCommand() {
+  if (!enableLocalRecordCommand) {
+    voiceRecordError.value = '公网模式不提供板端录音，请使用浏览器/小程序录音上传。'
+    voiceRecordStatus.value = '公网禁用'
+    actionMessage.value = voiceRecordError.value
+    return
+  }
+
   if (isRecordingVoice.value) {
     return
   }
@@ -1064,10 +1084,11 @@ async function recordVoiceCommand() {
   voiceRecordResult.value = null
 
   try {
-    const response = await fetch('/api/voice/record_command', {
+    const response = await fetch(apiUrl('/api/voice/record_command'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
       },
       body: JSON.stringify({
         duration: voiceRecordDuration.value,
@@ -1119,10 +1140,11 @@ async function switchMode(mode: 'mock' | 'real') {
   isSwitchingMode.value = true
 
   try {
-    const response = await fetch('/api/system/mode/switch', {
+    const response = await fetch(apiUrl('/api/system/mode/switch'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
       },
       body: JSON.stringify({
         mode,
@@ -1131,7 +1153,7 @@ async function switchMode(mode: 'mock' | 'real') {
       }),
     })
     if (!response.ok) {
-      throw new Error('模式切换失败')
+      throw new Error(await readApiError(response, '模式切换失败'))
     }
 
     const payload = (await response.json()) as ModeSwitchResponse
@@ -1221,6 +1243,45 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
   const age = object.age_s && object.age_s > 0 ? ` / ${object.age_s.toFixed(1)}s 前` : ''
   return `${object.class_name} ${object.confidence.toFixed(2)}${age}`
 }
+
+async function readApiError(response: Response, fallback: string) {
+  try {
+    const payload = await response.json() as { detail?: string; error?: string }
+    const code = payload.detail || payload.error
+    if (code === 'unauthorized') {
+      return '公网写接口需要 Token，请先在顶部保存访问 Token'
+    }
+    if (code === 'public_control_disabled') {
+      return '云端 PUBLIC_CONTROL_ENABLED=false，移动类控制已被安全开关拦截'
+    }
+    if (code === 'public_endpoint_disabled') {
+      return '该接口不对公网开放'
+    }
+    if (code === 'robot_offline') {
+      return '机器人离线，命令未转发'
+    }
+    if (code?.startsWith('robot_fault:')) {
+      return `机器人故障状态，命令未执行：${code.replace('robot_fault:', '')}`
+    }
+    return code || fallback
+  } catch {
+    return fallback
+  }
+}
+
+function saveApiToken() {
+  const token = apiTokenInput.value.trim()
+  if (token) {
+    window.localStorage.setItem('qhxd_api_token', token)
+    apiTokenSaved.value = true
+    actionMessage.value = '公网 Token 已保存，写接口将携带 Authorization'
+    return
+  }
+
+  window.localStorage.removeItem('qhxd_api_token')
+  apiTokenSaved.value = false
+  actionMessage.value = '公网 Token 已清除'
+}
 </script>
 
 <template>
@@ -1263,6 +1324,22 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
             @click="switchMode('real')"
           >
             切到 Real
+          </button>
+        </div>
+
+        <div class="public-auth-control" aria-label="公网写接口鉴权">
+          <span class="status-badge" :class="toneClass(apiTokenSaved ? 'success' : 'warning')">
+            {{ apiAuthLabel }}
+          </span>
+          <input
+            v-model="apiTokenInput"
+            type="password"
+            autocomplete="off"
+            placeholder="输入公网 Token"
+            @keyup.enter="saveApiToken"
+          />
+          <button class="secondary compact-button" type="button" @click="saveApiToken">
+            保存 Token
           </button>
         </div>
       </div>
@@ -1445,7 +1522,7 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
               <button :disabled="isSendingTextCommand || !textCommand.trim()" type="button" @click="sendTextCommand">
                 {{ isSendingTextCommand ? '发送中...' : '发送文本命令' }}
               </button>
-              <label class="field compact-field duration-field">
+              <label v-if="enableLocalRecordCommand" class="field compact-field duration-field">
                 <span>板端录音</span>
                 <select v-model.number="voiceRecordDuration" :disabled="isRecordingVoice">
                   <option :value="2">2 秒</option>
@@ -1453,9 +1530,16 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
                   <option :value="5">5 秒</option>
                 </select>
               </label>
-              <button class="secondary" :disabled="isRecordingVoice" type="button" @click="recordVoiceCommand">
+              <button
+                v-if="enableLocalRecordCommand"
+                class="secondary"
+                :disabled="isRecordingVoice"
+                type="button"
+                @click="recordVoiceCommand"
+              >
                 {{ isRecordingVoice ? '录音识别中...' : '开始录音识别' }}
               </button>
+              <p v-else class="inline-status">公网语音请使用浏览器/小程序录音上传。</p>
             </div>
           </div>
 
