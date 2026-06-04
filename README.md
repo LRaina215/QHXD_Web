@@ -34,6 +34,9 @@ RK3588 侧推荐安装 backend 开机自启：
 # 平时启动公网所需的机器人本体最小运行环境
 ./scripts/start_public_robot.sh
 
+# 接入 C 板真实 IMU / 里程计时启动 backend + C 板通信 + IMU bridge
+PUBLIC_ROBOT_START_CBOARD=true ./scripts/start_public_robot.sh
+
 # 检查 RK backend、Tailscale、公网 gateway 与可选本地服务
 ./scripts/status_public_robot.sh
 ```
@@ -46,7 +49,7 @@ sudo systemctl restart qhxd-backend
 sudo journalctl -u qhxd-backend -f
 ```
 
-`qhxd-backend.service` 只负责 RK3588 后端。公网前端由云服务器静态托管；YOLO、Hik、导航桥接、C 板通信依赖现场硬件，不默认开机自启。
+`qhxd-backend.service` 只负责 RK3588 后端。公网前端由云服务器静态托管；YOLO、Hik、导航桥接、C 板通信依赖现场硬件，不默认开机自启。C 板接入现场可通过 `PUBLIC_ROBOT_START_CBOARD=true` 显式启用。
 
 ### 本地调试启动
 
@@ -116,6 +119,17 @@ stop_service yolo_camera
 
 当前正式 C 板通信包是 `standard_robot_pp_ros2`，不要再把旧 `rtt_nav_bridge` 当作主链路启动，否则可能抢占串口。
 
+推荐使用脚本托管通信节点，避免手动 `ros2 launch` 后留下孤儿进程继续占用串口：
+
+```bash
+cd /home/robomaster/QHXD
+./scripts/start_cboard_comm.sh
+./scripts/status_public_robot.sh
+./scripts/stop_cboard_comm.sh
+```
+
+如果需要手动调试，也可以直接启动 ROS 2 launch：
+
 ```bash
 cd /home/robomaster/QHXD
 source /opt/ros/humble/setup.bash
@@ -137,10 +151,72 @@ publish_odom_tf: true
 
 ```bash
 ros2 topic list | sort | grep -E '^/(cmd_vel|odom|tf|serial/robot_motion|serial/imu)'
+ros2 topic echo /serial/imu --once
 ros2 topic echo /serial/robot_motion --once
 ros2 topic echo /odom --once
 ros2 topic hz /odom
 ```
+
+### C 板 IMU 到前端状态流
+
+公网前端已经部署在云服务器，浏览器仍然只访问 `https://lingxunrobot.cn/api` 与 `wss://lingxunrobot.cn/ws`。C 板直接接入 RK3588 后，前端不直连 ROS 2；RK3588 本地 IMU bridge 将 ROS 2 话题写入现有后端契约：
+
+```text
+C 板 -> standard_robot_pp_ros2 -> /serial/imu
+-> scripts/ros2_imu_bridge.py
+-> POST /api/internal/nuc/imu
+-> GET /api/imu/latest 与 WS /ws/imu
+-> Cloud Gateway -> 公网前端
+```
+
+真实 IMU 接入前必须切到 `real` 模式，否则后端会按设计忽略 `/api/internal/nuc/imu` 输入：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/system/mode/switch \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"real"}'
+```
+
+启动完整现场链路：
+
+```bash
+cd /home/robomaster/QHXD
+PUBLIC_ROBOT_START_CBOARD=true ./scripts/start_public_robot.sh
+```
+
+IMU bridge 默认订阅 `/serial/imu`，以 20Hz 写入 `http://127.0.0.1:8000/api/internal/nuc/imu`，数据源标记为 `rk3588_cboard_ros2`。可通过环境变量覆盖：
+
+```bash
+ROS2_IMU_TOPIC=/serial/imu \
+ROS2_IMU_BRIDGE_RATE_HZ=20 \
+ROS2_IMU_BRIDGE_BACKEND_URL=http://127.0.0.1:8000 \
+ROS2_IMU_BRIDGE_SOURCE=rk3588_cboard_ros2 \
+./scripts/start_cboard_comm.sh
+```
+
+本地验收：
+
+```bash
+ros2 topic echo /serial/imu --once
+tail -f logs/ros2_imu_bridge.log
+curl --noproxy '*' -s http://127.0.0.1:8000/api/imu/latest
+```
+
+公网验收：
+
+```bash
+curl -s https://api.lingxunrobot.cn/health
+curl -s https://lingxunrobot.cn/api/imu/latest
+```
+
+注意：默认串口配置仍是 `/dev/ttyCBoard`。如果当前只检测到 `/dev/ttyACM0`，先运行：
+
+```bash
+cd /home/robomaster/QHXD/standard_robot_pp_ros2
+sudo ./script/create_udev_rules.sh
+```
+
+或者临时修改 `standard_robot_pp_ros2/config/standard_robot_pp_ros2.yaml` 与安装后的参数文件，将 `device_name` 改为实际串口。不要同时启动 `rtt_nav_bridge` 和 `standard_robot_pp_ros2`。
 
 ## 当前入口
 
@@ -910,16 +986,20 @@ tail -f logs/yolo_camera.log
 
 ```bash
 ros2 topic echo /serial/robot_motion --once
+ros2 topic echo /serial/imu --once
 ros2 topic echo /odom --once
 lsof /dev/ttyACM0 2>/dev/null || true
 ```
 
-确认没有旧节点占串口：
+确认没有旧节点占串口，并优先使用脚本停止通信链路：
 
 ```bash
-pkill -f rtt_nav_bridge_node || true
-pkill -f standard_robot_pp_ros2_node || true
+./scripts/stop_cboard_comm.sh
+ps -eo pid,ppid,cmd | grep -E 'standard_robot_pp_ros2_node|rtt_nav_bridge' | grep -v grep || true
+fuser -v /dev/ttyCBoard 2>/dev/null || true
 ```
+
+如果 `logs/standard_robot_pp_ros2.log` 出现 `No valid BCP frame`，说明通信节点打开了串口但没有收到 C 板有效帧；如果 `logs/ros2_imu_bridge.log` 持续出现 `waiting for IMU messages`，说明 bridge 已运行但 `/serial/imu` 本身没有真实消息。
 
 ### 语音识别失败？
 

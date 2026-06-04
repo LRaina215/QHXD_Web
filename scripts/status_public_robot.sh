@@ -58,3 +58,11 @@ echo
 echo "Optional local services:"
 status_service frontend
 status_service yolo_camera
+status_service standard_robot_pp_ros2
+status_service ros2_imu_bridge
+
+if command -v ros2 >/dev/null 2>&1; then
+  echo
+  echo "ROS 2 topics:"
+  bash -lc "source /opt/ros/humble/setup.bash && source '${PROJECT_ROOT}/install/setup.bash' 2>/dev/null || true; ros2 topic list 2>/dev/null | sort | grep -E '^/(cmd_vel|odom|serial/imu|serial/robot_motion)$' || true"
+fi

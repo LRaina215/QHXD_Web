@@ -48,5 +48,11 @@ else
   echo "YOLO camera service skipped; start USB/Hik camera service only when hardware is connected."
 fi
 
+if [[ "${PUBLIC_ROBOT_START_CBOARD:-false}" == "true" ]]; then
+  "${PROJECT_ROOT}/scripts/start_cboard_comm.sh"
+else
+  echo "C board communication skipped; set PUBLIC_ROBOT_START_CBOARD=true when the C board is connected."
+fi
+
 echo
 "${PROJECT_ROOT}/scripts/status_public_robot.sh"
