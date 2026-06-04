@@ -25,6 +25,14 @@ class IntentParser:
         if not normalized:
             return ParsedIntent(intent=None, detail="文本命令为空，未触发任务。")
 
+        if self._contains_any(normalized, ["使用的模型", "用的模型", "什么模型", "大模型", "deepseek", "llm模型"]):
+            return ParsedIntent(
+                intent="query_assistant_model",
+                confidence=0.97,
+                need_confirm=False,
+                detail="已解析为智能助手模型查询。",
+            )
+
         if self._contains_any(normalized, ["你是谁", "你叫什么名字", "叫什么", "自我介绍", "介绍一下自己"]):
             return ParsedIntent(
                 intent="query_self_identity",

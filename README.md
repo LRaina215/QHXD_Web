@@ -273,8 +273,11 @@ WS  /ws/imu
 POST /api/voice/text_command
 POST /api/voice/asr_text_mock
 POST /api/voice/smart_command
+POST /api/voice/smart_audio_command
+POST /api/voice/smart_record_command
 POST /api/voice/audio_command
 POST /api/voice/record_command
+POST /api/robot/voice/onboard_smart_command
 POST /api/voice/confirm_command
 POST /api/voice/speak
 GET  /api/voice/tts/latest
@@ -318,7 +321,9 @@ backend/app/config/robot_profile.json
 
 修改机器人名称、能力列表、安全规则、自我介绍时，只改这个配置文件；后端查询回复会从该配置读取，不在多个业务文件中硬编码。
 
-智能助手统一接口：
+Dashboard 的“发送文本命令”“网页麦克风识别”“车载麦克风识别”默认都进入智能助手链路，不需要再单独点击“智能助手解析”。Legacy 的 `/api/voice/text_command`、`audio_command`、`record_command` 保留用于兼容和底层调试。
+
+智能助手文本接口：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
@@ -347,6 +352,7 @@ curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
 
 ```text
 你是谁
+你使用的模型是什么
 你能做什么
 你可以自己控制底盘吗
 当前机器人状态正常吗
@@ -357,6 +363,16 @@ curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
 现在天气怎么样
 当前环境适合巡检吗
 ```
+
+开放问答会通过 DeepSeek fallback 返回 `open_chat` 的 `reply_text`，但不能触发机器人运动：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"请用一句话解释你如何协助导航","use_llm":true}'
+```
+
+其中 `open_chat` 只能用于回答，不能包含 `mission_candidate`。涉及导航时，回复应说明运动控制仍由结构化任务、本地安全校验和用户确认流程接管。
 
 运动类命令只生成候选任务和待确认 ID：
 
@@ -506,15 +522,15 @@ curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
 本地接口：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/voice/record_command \
+curl -X POST http://127.0.0.1:8000/api/voice/smart_record_command \
   -H "Content-Type: application/json" \
   -d '{"duration":3,"source":"rk3588-record-command","requested_by":"operator"}'
 ```
 
-公网不直接暴露 `/api/voice/record_command`，因为它会录云服务器本机而不是机器人本体。公网车载麦克风走：
+公网不直接暴露 `/api/voice/record_command`，因为它会录云服务器本机而不是机器人本体。公网车载麦克风默认走智能助手：
 
 ```text
-POST /api/robot/voice/onboard_record_command
+POST /api/robot/voice/onboard_smart_command
 ```
 
 ### 浏览器麦克风
@@ -523,9 +539,10 @@ POST /api/robot/voice/onboard_record_command
 
 ```text
 浏览器 webm/ogg/wav
--> /api/voice/browser_audio_command
+-> /api/voice/browser_smart_command
 -> 云端 ffmpeg 转 16kHz mono wav
--> RK3588 /api/voice/audio_command
+-> RK3588 /api/voice/smart_audio_command
+-> ASR 结果进入 /api/voice/smart_command
 ```
 
 ### LLM 配置
@@ -720,7 +737,7 @@ tail -f /var/log/lingxun-cloud-gateway/operations.jsonl
 公网 endpoint 策略：
 
 - 读接口：`/health`、`/api/state/latest`、`/api/alerts`、`/api/tasks/current`、`/api/imu/latest`、`/api/perception/*`、`/api/external/weather/latest`、`/api/voice/tts/latest`、`/ws/state`、`/ws/imu`。
-- 写接口：`/api/voice/text_command`、`/api/voice/audio_command`、`/api/voice/browser_audio_command`、`/api/voice/smart_command`、`/api/voice/speak`、`/api/voice/confirm_command` 等都需要 `Authorization: Bearer <PUBLIC_API_TOKEN>`。
+- 写接口：`/api/voice/text_command`、`/api/voice/audio_command`、`/api/voice/browser_audio_command`、`/api/voice/browser_smart_command`、`/api/voice/smart_command`、`/api/voice/smart_audio_command`、`/api/voice/smart_record_command`、`/api/robot/voice/onboard_smart_command`、`/api/voice/speak`、`/api/voice/confirm_command` 等都需要 `Authorization: Bearer <PUBLIC_API_TOKEN>`。
 - mission 控制：还需要 `PUBLIC_CONTROL_ENABLED=true`。
 - 禁止公网直连：`POST /api/voice/record_command`。
 

@@ -530,6 +530,54 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         latest_tts = await main_module.get_latest_tts()
         self.assertEqual(latest_tts.data.status, "generated")
 
+    async def test_phase9b_smart_model_query_and_open_chat(self) -> None:
+        os.environ["LLM_ENABLE"] = "true"
+        os.environ["DEEPSEEK_API_KEY"] = "test-placeholder-key"
+        os.environ["DEEPSEEK_MODEL"] = "deepseek-v4-flash"
+        original_chat_json = llm_intent_parser_module.llm_client.chat_json
+
+        model_reply = await main_module.smart_command(
+            SmartCommandRequest(text="你使用的模型是什么", source="test-smart", requested_by="unittest")
+        )
+        self.assertEqual(model_reply.data.intent, "query_assistant_model")
+        self.assertEqual(model_reply.data.data_source, "llm_config")
+        self.assertIn("DeepSeek", model_reply.data.reply_text)
+        self.assertIn("deepseek-v4-flash", model_reply.data.reply_text)
+        self.assertIsNone(model_reply.data.mission_candidate)
+
+        def fake_chat_json(**kwargs):
+            return LLMClientResponse(
+                success=True,
+                content=json.dumps({
+                    "intent": "open_chat",
+                    "command": "open_chat",
+                    "waypoint_alias": None,
+                    "waypoint_id": None,
+                    "confidence": 0.92,
+                    "need_confirm": False,
+                    "reason": "开放问答",
+                    "reply_text": "可以，我会用简短的话解释导航状态，并且不会直接控制底盘。",
+                    "missing_slots": [],
+                    "ask_text": None,
+                }, ensure_ascii=False),
+                model="deepseek-v4-flash",
+            )
+
+        llm_intent_parser_module.llm_client.chat_json = fake_chat_json
+        try:
+            response = await main_module.smart_command(
+                SmartCommandRequest(text="请用一句话解释你如何协助导航", source="test-smart", requested_by="unittest", use_llm=True)
+            )
+            self.assertEqual(response.data.intent, "open_chat")
+            self.assertEqual(response.data.data_source, "deepseek")
+            self.assertEqual(response.data.parser, "llm")
+            self.assertIn("不会直接控制底盘", response.data.reply_text)
+            self.assertFalse(response.data.need_confirm)
+            self.assertIsNone(response.data.mission_candidate)
+            self.assertEqual(len(persistence.list_command_logs()), 0)
+        finally:
+            llm_intent_parser_module.llm_client.chat_json = original_chat_json
+
     async def test_phase9a_smart_motion_candidate_confirm_and_reject_speed(self) -> None:
         response = await main_module.smart_command(
             SmartCommandRequest(text="帮我送到二零一实验室", source="test-smart", requested_by="unittest")

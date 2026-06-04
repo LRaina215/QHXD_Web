@@ -188,6 +188,8 @@ type SmartCommandResult = {
 type SmartCommandResponse = {
   success: boolean
   data: SmartCommandResult
+  error?: string | null
+  detail?: string | null
 }
 
 type ModeSwitchResponse = {
@@ -275,7 +277,6 @@ const apiTokenInput = ref(window.localStorage.getItem('qhxd_api_token') ?? '')
 const apiTokenSaved = ref(Boolean(apiTokenInput.value.trim()))
 const isSending = ref(false)
 const isSendingTextCommand = ref(false)
-const isSendingSmartCommand = ref(false)
 const isRecordingVoice = ref(false)
 const isBrowserVoiceRecording = ref(false)
 const isOnboardVoiceRecording = ref(false)
@@ -809,6 +810,40 @@ function closeVoiceConfirmDialog() {
   voiceConfirmError.value = ''
 }
 
+async function handleSmartCommandResult(payload: SmartCommandResponse, source: 'text' | 'record') {
+  smartCommandResult.value = payload.data
+  actionMessage.value = payload.data.reply_text || payload.data.error_reason || '智能助手已处理'
+
+  if (payload.data.mission_candidate?.pending_command_id) {
+    const candidate = payload.data.mission_candidate
+    handleVoiceCommandResult(
+      {
+        accepted: false,
+        intent: payload.data.intent,
+        command: candidate.command,
+        payload: candidate.payload,
+        confidence: payload.data.confidence,
+        need_confirm: true,
+        pending_command_id: candidate.pending_command_id,
+        recognized_text: payload.data.recognized_text,
+        waypoint_id: valueAsString(candidate.payload.waypoint_id),
+        parser: payload.data.parser,
+        llm_backend: payload.data.llm_backend ?? null,
+        llm_model: payload.data.llm_model ?? null,
+        detail: payload.data.reply_text || candidate.detail,
+        task_status: null,
+      },
+      source,
+      payload.data.recognized_text,
+    )
+  } else {
+    pendingVoiceCommand.value = null
+    voiceConfirmError.value = ''
+  }
+
+  await Promise.all([loadState(), loadAlerts()])
+}
+
 async function handleVoiceConfirm(confirmed: boolean) {
   if (isConfirmingVoiceCommand.value) {
     return
@@ -1088,44 +1123,6 @@ async function sendTextCommand() {
   isSendingTextCommand.value = true
 
   try {
-    const response = await fetch(apiUrl('/api/voice/text_command'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify({
-        text: textCommand.value,
-        source: 'dashboard-text',
-        requested_by: 'dashboard',
-      }),
-    })
-    if (!response.ok) {
-      throw new Error(await readApiError(response, '文本命令接口调用失败'))
-    }
-
-    const payload = (await response.json()) as VoiceCommandResponse
-    handleVoiceCommandResult(payload.data, 'text', textCommand.value)
-    if (!shouldOpenVoiceConfirm(payload.data)) {
-      await Promise.all([loadState(), loadAlerts()])
-    }
-  } catch (error) {
-    actionMessage.value = error instanceof Error ? error.message : '文本命令发送失败'
-  } finally {
-    isSendingTextCommand.value = false
-  }
-}
-
-async function sendSmartCommand() {
-  if (!textCommand.value.trim()) {
-    smartCommandResult.value = null
-    actionMessage.value = '请输入智能助手文本'
-    return
-  }
-
-  isSendingSmartCommand.value = true
-
-  try {
     const response = await fetch(apiUrl('/api/voice/smart_command'), {
       method: 'POST',
       headers: {
@@ -1134,67 +1131,21 @@ async function sendSmartCommand() {
       },
       body: JSON.stringify({
         text: textCommand.value,
-        source: 'dashboard-smart',
+        source: 'dashboard-smart-text',
         requested_by: 'dashboard',
         generate_tts: true,
       }),
     })
     if (!response.ok) {
-      throw new Error(await readApiError(response, '智能助手接口调用失败'))
+      throw new Error(await readApiError(response, '智能语音助手接口调用失败'))
     }
 
     const payload = (await response.json()) as SmartCommandResponse
-    smartCommandResult.value = payload.data
-    actionMessage.value = payload.data.reply_text || payload.data.error_reason || '智能助手已处理'
-
-    if (payload.data.mission_candidate?.pending_command_id) {
-      const candidate = payload.data.mission_candidate
-      handleVoiceCommandResult(
-        {
-          accepted: false,
-          intent: payload.data.intent,
-          command: candidate.command,
-          payload: candidate.payload,
-          confidence: payload.data.confidence,
-          need_confirm: true,
-          pending_command_id: candidate.pending_command_id,
-          recognized_text: payload.data.recognized_text,
-          waypoint_id: valueAsString(candidate.payload.waypoint_id),
-          parser: payload.data.parser,
-          llm_backend: payload.data.llm_backend ?? null,
-          llm_model: payload.data.llm_model ?? null,
-          detail: payload.data.reply_text,
-          task_status: null,
-        },
-        'text',
-        payload.data.recognized_text,
-      )
-    } else {
-      pendingVoiceCommand.value = null
-      voiceConfirmError.value = ''
-    }
-
-    await Promise.all([loadState(), loadAlerts()])
+    await handleSmartCommandResult(payload, 'text')
   } catch (error) {
-    const message = error instanceof Error ? error.message : '智能助手请求失败'
-    actionMessage.value = message
-    smartCommandResult.value = {
-      request_id: '',
-      recognized_text: textCommand.value,
-      intent: null,
-      data_source: null,
-      reply_text: '',
-      need_confirm: false,
-      mission_candidate: null,
-      pending_command_id: null,
-      tts_status: null,
-      error_reason: message,
-      confidence: 0,
-      parser: 'frontend',
-      timestamp: new Date().toISOString(),
-    }
+    actionMessage.value = error instanceof Error ? error.message : '文本命令发送失败'
   } finally {
-    isSendingSmartCommand.value = false
+    isSendingTextCommand.value = false
   }
 }
 
@@ -1216,7 +1167,7 @@ async function recordVoiceCommand() {
   voiceRecordResult.value = null
 
   try {
-    const response = await fetch(apiUrl('/api/voice/record_command'), {
+    const response = await fetch(apiUrl('/api/voice/smart_record_command'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1224,15 +1175,15 @@ async function recordVoiceCommand() {
       },
       body: JSON.stringify({
         duration: voiceRecordDuration.value,
-        source: 'dashboard-record-button',
+        source: 'dashboard-smart-record-button',
         requested_by: 'operator',
         keep_audio: true,
       }),
     })
 
-    let payload: VoiceRecordCommandResponse | null = null
+    let payload: SmartCommandResponse | null = null
     try {
-      payload = (await response.json()) as VoiceRecordCommandResponse
+      payload = (await response.json()) as SmartCommandResponse
     } catch {
       payload = null
     }
@@ -1242,8 +1193,7 @@ async function recordVoiceCommand() {
     }
 
     if (!payload?.success) {
-      voiceRecordResult.value = payload?.data ?? null
-      const message = payload?.detail || payload?.error || payload?.data?.error || '板端录音识别失败'
+      const message = payload?.detail || payload?.error || payload?.data?.error_reason || '板端录音识别失败'
       voiceRecordError.value = message
       voiceRecordStatus.value = '失败'
       actionMessage.value = message
@@ -1254,10 +1204,8 @@ async function recordVoiceCommand() {
       throw new Error('板端录音接口未返回识别结果')
     }
 
-    handleVoiceCommandResult(payload.data, 'record')
-    if (!shouldOpenVoiceConfirm(payload.data)) {
-      await Promise.all([loadState(), loadAlerts()])
-    }
+    voiceRecordStatus.value = '智能助手已处理'
+    await handleSmartCommandResult(payload, 'record')
   } catch (error) {
     const message = error instanceof Error ? error.message : '板端录音识别失败'
     voiceRecordError.value = message
@@ -1299,13 +1247,12 @@ async function uploadVoiceFormData(path: string, formData: FormData, fallback: s
   if (!response.ok) {
     throw new Error(await readApiError(response, fallback))
   }
-  return (await response.json()) as VoiceRecordCommandResponse
+  return (await response.json()) as SmartCommandResponse
 }
 
-async function handleVoiceResponsePayload(payload: VoiceRecordCommandResponse | null, fallback: string) {
+async function handleVoiceResponsePayload(payload: SmartCommandResponse | null, fallback: string) {
   if (!payload?.success) {
-    voiceRecordResult.value = payload?.data ?? null
-    const message = payload?.detail || payload?.error || payload?.data?.error || fallback
+    const message = payload?.detail || payload?.error || payload?.data?.error_reason || fallback
     voiceRecordError.value = message
     voiceRecordStatus.value = '失败'
     actionMessage.value = message
@@ -1316,10 +1263,8 @@ async function handleVoiceResponsePayload(payload: VoiceRecordCommandResponse | 
     throw new Error('语音接口未返回识别结果')
   }
 
-  handleVoiceCommandResult(payload.data, 'record')
-  if (!shouldOpenVoiceConfirm(payload.data)) {
-    await Promise.all([loadState(), loadAlerts()])
-  }
+  voiceRecordStatus.value = '智能助手已处理'
+  await handleSmartCommandResult(payload, 'record')
 }
 
 async function recordBrowserVoiceCommand() {
@@ -1374,9 +1319,10 @@ async function recordBrowserVoiceCommand() {
     formData.append('source', 'browser-mic')
     formData.append('requested_by', 'operator')
     formData.append('keep_audio', 'false')
+    formData.append('smart', 'true')
 
     const payload = await uploadVoiceFormData(
-      '/api/voice/browser_audio_command',
+      '/api/voice/browser_smart_command',
       formData,
       '网页麦克风识别失败',
     )
@@ -1405,7 +1351,7 @@ async function recordOnboardVoiceCommand() {
   voiceRecordResult.value = null
 
   try {
-    const response = await fetch(apiUrl('/api/robot/voice/onboard_record_command'), {
+    const response = await fetch(apiUrl('/api/robot/voice/onboard_smart_command'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1416,13 +1362,14 @@ async function recordOnboardVoiceCommand() {
         source: 'web-onboard-mic',
         requested_by: 'operator',
         keep_audio: true,
+        smart: true,
       }),
     })
     if (!response.ok) {
       throw new Error(await readApiError(response, '车载麦克风识别失败'))
     }
 
-    const payload = (await response.json()) as VoiceRecordCommandResponse
+    const payload = (await response.json()) as SmartCommandResponse
     await handleVoiceResponsePayload(payload, '车载麦克风识别失败')
   } catch (error) {
     const message = error instanceof Error ? error.message : '车载麦克风识别失败'
@@ -1828,15 +1775,12 @@ function saveApiToken() {
 
           <div class="command-input-shell">
             <label class="field command-field">
-              <span>输入任务命令</span>
-              <input v-model="textCommand" type="text" placeholder="例如 帮我把样品送到二零一实验室" @keyup.enter="sendTextCommand" />
+              <span>输入对话或任务</span>
+              <input v-model="textCommand" type="text" placeholder="例如 你使用的模型是什么 / 帮我把样品送到二零一实验室" @keyup.enter="sendTextCommand" />
             </label>
             <div class="command-actions">
               <button :disabled="isSendingTextCommand || !textCommand.trim()" type="button" @click="sendTextCommand">
-                {{ isSendingTextCommand ? '发送中...' : '发送文本命令' }}
-              </button>
-              <button class="accent" :disabled="isSendingSmartCommand || !textCommand.trim()" type="button" @click="sendSmartCommand">
-                {{ isSendingSmartCommand ? '思考中...' : '智能助手解析' }}
+                {{ isSendingTextCommand ? '思考中...' : '发送文本命令' }}
               </button>
               <label class="field compact-field duration-field">
                 <span>录音时长</span>

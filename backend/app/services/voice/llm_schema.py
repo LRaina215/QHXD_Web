@@ -15,6 +15,7 @@ ALLOWED_INTENTS = {
     "query_self_identity",
     "query_capability",
     "query_safety_rule",
+    "query_assistant_model",
     "query_robot_status",
     "query_task_status",
     "query_battery",
@@ -23,6 +24,7 @@ ALLOWED_INTENTS = {
     "query_weather",
     "query_environment",
     "speak_last_result",
+    "open_chat",
     "unknown",
 }
 
@@ -38,6 +40,7 @@ ALLOWED_COMMANDS = {
     "query_self_identity",
     "query_capability",
     "query_safety_rule",
+    "query_assistant_model",
     "query_robot_status",
     "query_task_status",
     "query_battery",
@@ -46,6 +49,7 @@ ALLOWED_COMMANDS = {
     "query_weather",
     "query_environment",
     "speak_last_result",
+    "open_chat",
 }
 
 MOTION_COMMANDS = {"go_to_waypoint", "start_patrol", "return_home"}
@@ -58,6 +62,7 @@ LOW_RISK_COMMANDS = {
     "query_self_identity",
     "query_capability",
     "query_safety_rule",
+    "query_assistant_model",
     "query_robot_status",
     "query_task_status",
     "query_battery",
@@ -66,6 +71,7 @@ LOW_RISK_COMMANDS = {
     "query_weather",
     "query_environment",
     "speak_last_result",
+    "open_chat",
 }
 
 

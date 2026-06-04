@@ -139,6 +139,7 @@ private:
   void createNewDebugPublisher(const std::string & name);
   void publishNamedDebugValue(const std::string & name, double value);
   bool configureSerialPortTermios();
+  bool assertSerialModemLines();
   bool openSerialPort(bool reopen);
   void publishBcpImuFromEulerDegrees(
     double yaw_deg, double pitch_deg, double roll_deg, double angle_x_deg, double angle_y_deg,

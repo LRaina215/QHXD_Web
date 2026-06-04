@@ -50,10 +50,13 @@ WRITE_PATH_PREFIXES = (
     "/api/voice/text_command",
     "/api/voice/audio_command",
     "/api/voice/browser_audio_command",
+    "/api/voice/browser_smart_command",
     "/api/voice/smart_command",
+    "/api/voice/smart_audio_command",
     "/api/voice/speak",
     "/api/voice/confirm_command",
     "/api/robot/voice/onboard_record_command",
+    "/api/robot/voice/onboard_smart_command",
     "/api/mission/",
     "/api/system/mode/switch",
 )
@@ -75,11 +78,14 @@ ALLOWED_PATH_PREFIXES = (
     "/api/voice/text_command",
     "/api/voice/audio_command",
     "/api/voice/browser_audio_command",
+    "/api/voice/browser_smart_command",
     "/api/voice/smart_command",
+    "/api/voice/smart_audio_command",
     "/api/voice/speak",
     "/api/voice/tts/latest",
     "/api/voice/confirm_command",
     "/api/robot/voice/onboard_record_command",
+    "/api/robot/voice/onboard_smart_command",
     "/api/mission/",
     "/api/system/mode/switch",
 )
@@ -252,6 +258,7 @@ async def _forward_wav_to_rk(
     requested_by: str | None,
     keep_audio: bool,
     request_id: str,
+    rk_path: str = "/api/voice/audio_command",
 ) -> httpx.Response:
     fields = {
         "source": source,
@@ -264,7 +271,7 @@ async def _forward_wav_to_rk(
                 "file": ("browser_audio.wav", handle, "audio/wav"),
             }
             return await client.post(
-                f"{RK_BACKEND_BASE_URL}/api/voice/audio_command",
+                f"{RK_BACKEND_BASE_URL}{rk_path}",
                 data=fields,
                 files=files,
                 headers={"x-cloud-gateway": SERVICE_NAME, "x-request-id": request_id},
@@ -351,12 +358,14 @@ async def health() -> dict:
 
 
 @app.post("/api/voice/browser_audio_command")
+@app.post("/api/voice/browser_smart_command")
 async def browser_audio_command(
     request: Request,
     file: UploadFile = File(...),
     source: str = Form("browser-mic"),
     requested_by: str | None = Form("operator"),
     keep_audio: str | bool | None = Form(False),
+    smart: str | bool | None = Form(False),
 ):
     request_id = str(uuid.uuid4())
     if not _check_rate_limit(request):
@@ -421,12 +430,14 @@ async def browser_audio_command(
                 content={"success": False, "error": "browser_audio_too_long", "duration_s": round(duration_s, 3), "request_id": request_id},
             )
 
+        use_smart = request.url.path.endswith("/browser_smart_command") or _parse_bool(smart, False)
         upstream_response = await _forward_wav_to_rk(
             wav_path,
             source=source or "browser-mic",
             requested_by=requested_by,
             keep_audio=keep,
             request_id=request_id,
+            rk_path="/api/voice/smart_audio_command" if use_smart else "/api/voice/audio_command",
         )
 
         if keep:
@@ -468,6 +479,7 @@ async def browser_audio_command(
 
 
 @app.post("/api/robot/voice/onboard_record_command")
+@app.post("/api/robot/voice/onboard_smart_command")
 async def onboard_record_command(request: Request):
     request_id = str(uuid.uuid4())
     if not _check_rate_limit(request):
@@ -494,9 +506,14 @@ async def onboard_record_command(request: Request):
     payload["source"] = payload.get("source") or "web-onboard-mic"
     payload["requested_by"] = payload.get("requested_by") or "operator"
     payload["keep_audio"] = bool(payload.get("keep_audio", True))
+    use_smart = request.url.path.endswith("/onboard_smart_command") or _parse_bool(payload.pop("smart", False), False)
 
     try:
-        upstream_response = await _forward_json_to_rk("/api/voice/record_command", payload, request_id)
+        upstream_response = await _forward_json_to_rk(
+            "/api/voice/smart_record_command" if use_smart else "/api/voice/record_command",
+            payload,
+            request_id,
+        )
     except Exception as exc:
         return _reject(503, f"onboard_record_forward_failed:{exc.__class__.__name__}", request, request_id)
 

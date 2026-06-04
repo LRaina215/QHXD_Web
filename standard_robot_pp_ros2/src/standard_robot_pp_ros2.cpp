@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <memory>
 #include <sys/file.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -462,6 +463,33 @@ bool StandardRobotPpRos2Node::configureSerialPortTermios()
   return ok;
 }
 
+bool StandardRobotPpRos2Node::assertSerialModemLines()
+{
+  const int fd = ::open(device_name_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+  if (fd < 0) {
+    RCLCPP_WARN(get_logger(), "Serial modem line setup skipped: open %s failed", device_name_.c_str());
+    return false;
+  }
+
+  termios tio {};
+  if (::tcgetattr(fd, &tio) == 0) {
+    tio.c_cflag |= (CLOCAL | CREAD);
+    tio.c_cflag &= ~HUPCL;
+    ::tcsetattr(fd, TCSANOW, &tio);
+  }
+
+  int modem_bits = TIOCM_DTR | TIOCM_RTS;
+  const bool ok = ::ioctl(fd, TIOCMBIS, &modem_bits) == 0;
+  if (!ok) {
+    RCLCPP_WARN(get_logger(), "Serial modem line setup skipped: ioctl TIOCMBIS failed");
+  } else if (debug_) {
+    publishNamedDebugValue("serial_modem_lines_asserted", 1.0);
+  }
+
+  ::close(fd);
+  return ok;
+}
+
 bool StandardRobotPpRos2Node::openSerialPort(bool reopen)
 {
   try {
@@ -473,6 +501,7 @@ bool StandardRobotPpRos2Node::openSerialPort(bool reopen)
     }
 
     serial_driver_->port()->open();
+    assertSerialModemLines();
     std::this_thread::sleep_for(std::chrono::milliseconds(USB_OPEN_STABILIZE_SLEEP_TIME));
 
     const auto now_ms = nowSteadyMs();

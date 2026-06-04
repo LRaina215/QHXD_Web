@@ -35,6 +35,7 @@ from app.schemas import (
     ReturnHomeRequest,
     SmartCommandRequest,
     SmartCommandResponse,
+    SmartCommandResult,
     SpeakRequest,
     SpeakResponse,
     StartPatrolRequest,
@@ -405,6 +406,42 @@ def _voice_result_from_asr(
     )
 
 
+def _smart_result_from_asr(
+    asr_result: ASRResult,
+    *,
+    source: str,
+    requested_by: str | None,
+    use_llm: bool | None = None,
+    generate_tts: bool = True,
+) -> tuple[SmartCommandResult, object | None]:
+    if not asr_result.success or not asr_result.recognized_text.strip():
+        return (
+            SmartCommandResult(
+                request_id=f"smart_asr_{int(time.time() * 1000)}",
+                recognized_text=asr_result.recognized_text,
+                intent=None,
+                data_source="asr",
+                reply_text=asr_result.error or "ASR 未识别到有效文本，未触发任务。",
+                need_confirm=False,
+                error_reason=asr_result.error or "empty-recognized-text",
+                confidence=0.0,
+                parser="asr",
+                timestamp=datetime.now(timezone.utc),
+            ),
+            None,
+        )
+
+    return smart_voice_service.handle(
+        SmartCommandRequest(
+            text=asr_result.recognized_text,
+            source=source,
+            requested_by=requested_by,
+            use_llm=use_llm,
+            generate_tts=generate_tts,
+        )
+    )
+
+
 def _record_result_from_audio_result(
     audio_result: VoiceAudioCommandResult,
     *,
@@ -500,6 +537,93 @@ async def smart_command(request: SmartCommandRequest) -> SmartCommandResponse:
     result, state = smart_voice_service.handle(request)
     if state is not None:
         await ws_manager.broadcast_state(state)
+    return SmartCommandResponse(data=result)
+
+
+@app.post("/api/voice/smart_audio_command", response_model=SmartCommandResponse)
+async def smart_audio_command(request: Request) -> SmartCommandResponse:
+    upload = await _read_voice_upload(request)
+    temp_path: Path | None = None
+    source = upload["fields"].get("source") or "smart-audio-upload"
+    requested_by = upload["fields"].get("requested_by")
+    use_llm = _parse_optional_bool(upload["fields"].get("use_llm"))
+    generate_tts = _parse_optional_bool(upload["fields"].get("generate_tts"))
+    if generate_tts is None:
+        generate_tts = True
+
+    try:
+        temp_path = _save_temp_wav(upload["file_bytes"])
+        _validate_wav_duration(temp_path)
+        result, state = _smart_result_from_asr(
+            asr_service.transcribe_audio_file(str(temp_path)),
+            source=source,
+            requested_by=requested_by,
+            use_llm=use_llm,
+            generate_tts=generate_tts,
+        )
+        if state is not None:
+            await ws_manager.broadcast_state(state)
+        return SmartCommandResponse(data=result)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+@app.post("/api/voice/smart_record_command", response_model=SmartCommandResponse)
+@app.post("/api/robot/voice/onboard_smart_command", response_model=SmartCommandResponse)
+async def smart_record_command(request: VoiceRecordCommandRequest) -> SmartCommandResponse:
+    duration = request.duration if request.duration is not None else audio_recorder.default_duration()
+    keep_audio = request.keep_audio if request.keep_audio is not None else audio_recorder.default_keep_audio()
+    source = request.source or "rk3588-smart-record-command"
+    requested_by = request.requested_by
+    record_result = audio_recorder.record(duration)
+
+    if not record_result.success:
+        if record_result.audio_path is not None and not keep_audio:
+            record_result.audio_path.unlink(missing_ok=True)
+        result = SmartCommandResult(
+            request_id=f"smart_record_{int(time.time() * 1000)}",
+            recognized_text="",
+            intent=None,
+            data_source="audio_recorder",
+            reply_text=record_result.detail or "录音失败。",
+            need_confirm=False,
+            error_reason=record_result.error or "audio_record_failed",
+            confidence=0.0,
+            parser="recorder",
+            timestamp=datetime.now(timezone.utc),
+        )
+        return SmartCommandResponse(success=False, data=result)
+
+    audio_path = record_result.audio_path
+    if audio_path is None:
+        result = SmartCommandResult(
+            request_id=f"smart_record_{int(time.time() * 1000)}",
+            recognized_text="",
+            intent=None,
+            data_source="audio_recorder",
+            reply_text="录音文件不存在。",
+            need_confirm=False,
+            error_reason="empty_audio_file",
+            confidence=0.0,
+            parser="recorder",
+            timestamp=datetime.now(timezone.utc),
+        )
+        return SmartCommandResponse(success=False, data=result)
+
+    result, state = _smart_result_from_asr(
+        asr_service.transcribe_audio_file(str(audio_path)),
+        source=source,
+        requested_by=requested_by,
+        use_llm=request.use_llm,
+        generate_tts=True,
+    )
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+
+    if not keep_audio:
+        audio_path.unlink(missing_ok=True)
+
     return SmartCommandResponse(data=result)
 
 

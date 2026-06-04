@@ -25,6 +25,7 @@ VoiceIntentValue = Literal[
     "query_self_identity",
     "query_capability",
     "query_safety_rule",
+    "query_assistant_model",
     "query_robot_status",
     "query_task_status",
     "query_battery",
@@ -33,6 +34,7 @@ VoiceIntentValue = Literal[
     "query_weather",
     "query_environment",
     "speak_last_result",
+    "open_chat",
     "unknown",
 ]
 

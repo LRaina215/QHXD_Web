@@ -116,3 +116,29 @@ colcon build --packages-select standard_robot_pp_ros2 --symlink-install --cmake-
 - 对 C 板 USB 设备执行完整 authorized 0/1 重新枚举后，`/dev/ttyCBoard -> ttyACM0` 恢复，但裸读仍为 0 字节。
 - 结论：当前无数据不是 ROS2 topic 或串口占用问题，而是 C 板固件侧 USB CDC/发送任务已停止输出，需要烧录下位机修复后的固件或物理复位 C 板。
 - 已在本地电控源码 `/Users/lraina/Documents/RM-Vis/AutoAim/rm` 中做最小修复：CDC DTR 断开时正确置 `connected=false` 并清 TX 缓冲；心跳超时不再反复 close/open `vcom`，只标记上位机离线。
+
+## 烧录下位机修复后回归测试
+
+日期：2026-06-05
+
+- 用户重新编译并烧录当前 C 板固件后，RK3588 侧 `/dev/ttyCBoard -> ttyACM0` 正常存在。
+- 清理所有 ROS2 通信节点后，直接裸读 `/dev/ttyCBoard` 已恢复 BCP 原始数据，能看到连续 `ff 01 20 19 ...` 帧。
+- 首次启动 `ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py` 后，`/serial/imu` 和 `/serial/receive` 均能收到数据。
+- 模拟 Ctrl+C 停止首次 launch 后，裸串口仍持续输出 BCP 帧，说明下位机 USB CDC 发送链路没有再被上位机关闭串口卡死。
+- 重新启动第二次 launch 后，`/serial/imu --once` 成功，`/serial/receive --once` 成功，回传示例为 `x=-174.563, y=-32.296, z=-0.847`。
+- `/serial/imu` 频率短时间观测约 998 Hz。
+
+结论：下位机 CDC/DTR 与心跳超时修复生效，当前已经通过“启动 -> 停止 -> 重新启动 -> 继续接收 IMU/receive”的回归测试。
+
+## 重启后再次无数据的进一步定位
+
+日期：2026-06-05
+
+- 用户反馈重新启动通信节点后再次收不到数据。
+- RK3588 复查：没有通信节点运行时，`/serial/imu` 和 `/serial/receive` 均为 Unknown topic；最新节点日志显示串口能打开，但持续 `No valid BCP frame for 12002 ms`。
+- 清理所有节点并裸读 `/dev/ttyCBoard`，结果为 0 字节；手动拉起 DTR/RTS 并同 fd 读取仍为 0 字节。
+- Host 侧 authorized 0/1 重新枚举后 `/dev/ttyCBoard -> ttyACM0` 恢复，但同 fd 读取仍为 0 字节。
+- RK3588 上位机已追加显式 `TIOCM_DTR | TIOCM_RTS` 置位，并重新编译通过；但当前 C 板已经无原始输出，上位机补丁无法单独恢复。
+- 本地下位机源码继续修正：移除 DTR=false 分支中的 `rt_ringbuffer_reset(&data->tx_ringbuffer)`，改为只发送 `CDC_TX_HAS_DATE` 唤醒 TX 线程丢弃队列，避免异步控制请求和 vcom TX 线程并发破坏 ringbuffer 状态。
+
+结论：第一次下位机修复仍不完整，重启上位机仍可能触发下位机 CDC TX 路径卡死。需要重新烧录包含“移除 rt_ringbuffer_reset”的第二版下位机补丁后再复测；当前 C 板状态需要物理复位或重新烧录才能恢复吐数据。

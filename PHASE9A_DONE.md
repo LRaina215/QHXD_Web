@@ -135,3 +135,29 @@ vue-tsc --noEmit && vite build
 - 天气数据当前来自配置/mock provider，不是机器人本体环境传感器；后续 C 板环境数据接入后可替换/叠加。
 - DeepSeek 只参与结构化理解和总结，不能绕过本地 mission 校验与确认流程。
 - 运动类命令仍由原 mission bridge 执行，Phase 9A 未改底盘控制链路。
+
+## Phase 9A 入口收口补充
+
+根据实际前端使用反馈，已继续修正智能助手入口和开放问答能力：
+
+- `backend/app/schemas.py:28` 增加 `query_assistant_model`；`backend/app/schemas.py:37` 增加 `open_chat`。
+- `backend/app/services/data_service.py:20` 增加助手模型配置回复，“你使用的模型是什么”会返回当前 DeepSeek backend/model，而不是误答机器人身份。
+- `backend/app/services/intent_parser.py:26` 增加模型查询规则，优先走本地配置。
+- `backend/app/services/voice/llm_prompt.py:5` 将 DeepSeek 定位从“只能解析固定命令”调整为“受控型智能语音助手”，允许在 JSON 的 `reply_text` 中返回自然语言回答。
+- `backend/app/services/voice/llm_safety.py:47` 增加 `open_chat` 安全校验：只能返回回答，不能生成 mission candidate。
+- `backend/app/services/smart_voice_service.py:38` 增加 `open_chat` 处理，直接展示 DeepSeek `reply_text`。
+- `backend/app/main.py:543` 新增 `POST /api/voice/smart_audio_command`，音频 ASR 后直接进入智能助手。
+- `backend/app/main.py:572` 新增 `POST /api/voice/smart_record_command` 与 `POST /api/robot/voice/onboard_smart_command`，车载麦克风录音后直接进入智能助手。
+- `cloud_gateway/cloud_gateway.py:53` 增加公网 `browser_smart/onboard_smart/smart_audio` 白名单与转发。
+- `frontend/src/App.vue:1081` 将“发送文本命令”改为默认调用 `/api/voice/smart_command`。
+- `frontend/src/App.vue:1215` 将板端录音改为 `/api/voice/smart_record_command`。
+- `frontend/src/App.vue:1325` 将网页麦克风改为 `/api/voice/browser_smart_command`。
+- `frontend/src/App.vue:1354` 将车载麦克风改为 `/api/robot/voice/onboard_smart_command`。
+
+新增验收：
+
+- “你使用的模型是什么”返回 `query_assistant_model`，回复包含 `DeepSeek` 和 `deepseek-v4-flash`。
+- “请用一句话解释你如何协助导航”返回 `open_chat`，`data_source=deepseek`，不生成 `mission_candidate`。
+- “帮我送到二零一实验室”仍返回 `mission_candidate` 且 `need_confirm=true`。
+- “向前走一米”仍由本地规则拒绝，不经过 DeepSeek，不触发 mission。
+- 前端不再需要单独“智能助手解析”按钮；文本、网页麦克风、车载麦克风默认进入智能助手。

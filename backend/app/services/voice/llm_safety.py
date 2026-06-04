@@ -44,6 +44,19 @@ class LLMSafetyValidator:
             return self._reject(result, f"LLM 置信度 {result.confidence:.2f} 低于阈值。")
         if result.missing_slots:
             return self._reject(result, result.ask_text or f"缺少必要槽位：{', '.join(result.missing_slots)}。")
+        if command == "open_chat":
+            reply_text = (result.reply_text or result.reason or "").strip()
+            if not reply_text:
+                return self._reject(result, "LLM 开放回答缺少 reply_text，未触发任务。")
+            return SafeLLMIntent(
+                ok=True,
+                intent="open_chat",
+                command="open_chat",
+                payload={},
+                confidence=result.confidence,
+                need_confirm=False,
+                detail=reply_text,
+            )
 
         payload: dict[str, str] = {}
         if command == "go_to_waypoint":
@@ -72,7 +85,7 @@ class LLMSafetyValidator:
             payload=payload,
             confidence=result.confidence,
             need_confirm=need_confirm,
-            detail=result.reason or "LLM 语义解析通过本地安全校验。",
+            detail=result.reply_text or result.reason or "LLM 语义解析通过本地安全校验。",
         )
 
     @staticmethod

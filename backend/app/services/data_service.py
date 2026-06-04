@@ -1,3 +1,5 @@
+import os
+
 from app.schemas import AlertEvent, RobotProfile, RobotState, TaskStatus, WeatherData
 from app.services.profile_provider import profile_provider
 from app.services.robot_status_provider import robot_status_provider
@@ -20,6 +22,13 @@ class DataService:
     def weather(self) -> WeatherData:
         return weather_provider.latest()
 
+    def assistant_model_reply(self) -> str:
+        backend = os.getenv("LLM_BACKEND", "deepseek").strip() or "deepseek"
+        model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip() or "deepseek-v4-flash"
+        if backend == "deepseek":
+            return f"当前智能语音助手的大模型后端是 DeepSeek，模型配置为 {model}。机器人运动控制仍由本地安全校验和确认流程接管。"
+        return f"当前智能语音助手的大模型后端配置为 {backend}，模型配置为 {model}。机器人运动控制仍由本地安全校验和确认流程接管。"
+
     def reply_for_query(self, intent: str) -> tuple[str, str]:
         if intent == "query_self_identity":
             return "robot_profile", profile_provider.identity_reply()
@@ -27,6 +36,8 @@ class DataService:
             return "robot_profile", profile_provider.capability_reply()
         if intent == "query_safety_rule":
             return "robot_profile", profile_provider.safety_reply()
+        if intent == "query_assistant_model":
+            return "llm_config", self.assistant_model_reply()
         if intent in {"query_robot_status", "query_status"}:
             return "state_store", robot_status_provider.robot_status_reply()
         if intent in {"query_task_status", "query_task"}:

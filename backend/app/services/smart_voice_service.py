@@ -35,6 +35,24 @@ class SmartVoiceService:
 
         parsed = llm_intent_parser.parse(text, use_llm=request.use_llm)
 
+        if parsed.intent == "open_chat":
+            result = SmartCommandResult(
+                request_id=request_id,
+                recognized_text=text,
+                intent=parsed.intent,
+                data_source="deepseek",
+                reply_text=parsed.detail,
+                need_confirm=False,
+                confidence=parsed.confidence,
+                parser=parsed.parser,
+                llm_backend=parsed.llm_backend,
+                llm_model=parsed.llm_model,
+                timestamp=timestamp,
+            )
+            result = self._with_tts(result, request.generate_tts)
+            self._log(result)
+            return result, None
+
         if parsed.intent in QUERY_INTENTS:
             data_source, reply_text = data_service.reply_for_query(parsed.intent)
             result = SmartCommandResult(
