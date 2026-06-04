@@ -35,6 +35,8 @@ from app.schemas import (
     Vector3Sample,
     VoiceConfirmCommandRequest,
     VoiceRecordCommandRequest,
+    SmartCommandRequest,
+    SpeakRequest,
     VoiceTextCommandRequest,
 )
 from app.services.imu_store import imu_store
@@ -439,7 +441,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         try:
             response = await main_module.text_command(
                 VoiceTextCommandRequest(
-                    text="今天天气不错",
+                    text="随便闲聊一句",
                     source="test-voice",
                     requested_by="unittest",
                     use_llm=True,
@@ -498,6 +500,65 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(logs), 0)
         finally:
             llm_intent_parser_module.llm_client.chat_json = original_chat_json
+
+    async def test_phase9a_smart_identity_weather_and_tts(self) -> None:
+        identity = await main_module.smart_command(
+            SmartCommandRequest(text="你是谁", source="test-smart", requested_by="unittest", generate_tts=True)
+        )
+        self.assertTrue(identity.success)
+        self.assertEqual(identity.data.intent, "query_self_identity")
+        self.assertEqual(identity.data.data_source, "robot_profile")
+        self.assertIn("灵巡 Sentinel", identity.data.reply_text)
+        self.assertIsNotNone(identity.data.tts_status)
+        self.assertEqual(identity.data.tts_status.status, "generated")
+
+        weather = await main_module.get_latest_weather()
+        self.assertTrue(weather.success)
+        self.assertIsNotNone(weather.data)
+        self.assertEqual(weather.data.source, "weather_provider")
+
+        weather_reply = await main_module.smart_command(
+            SmartCommandRequest(text="现在天气怎么样", source="test-smart", requested_by="unittest")
+        )
+        self.assertEqual(weather_reply.data.intent, "query_weather")
+        self.assertEqual(weather_reply.data.data_source, "weather_provider")
+        self.assertIn("天气数据来自外部天气源", weather_reply.data.reply_text)
+
+        tts = await main_module.speak(SpeakRequest(text="我是灵巡 Sentinel。", source="test"))
+        self.assertTrue(tts.success)
+        self.assertEqual(tts.data.status, "generated")
+        latest_tts = await main_module.get_latest_tts()
+        self.assertEqual(latest_tts.data.status, "generated")
+
+    async def test_phase9a_smart_motion_candidate_confirm_and_reject_speed(self) -> None:
+        response = await main_module.smart_command(
+            SmartCommandRequest(text="帮我送到二零一实验室", source="test-smart", requested_by="unittest")
+        )
+        self.assertTrue(response.success)
+        self.assertEqual(response.data.intent, "go_to_waypoint")
+        self.assertTrue(response.data.need_confirm)
+        self.assertIsNotNone(response.data.mission_candidate)
+        self.assertEqual(response.data.mission_candidate.payload["waypoint_id"], "wp_201")
+        self.assertIsNotNone(response.data.pending_command_id)
+        self.assertEqual(len(persistence.list_command_logs()), 0)
+
+        confirm_response = await main_module.confirm_voice_command(
+            VoiceConfirmCommandRequest(
+                pending_command_id=response.data.pending_command_id,
+                confirmed=True,
+                requested_by="operator",
+            )
+        )
+        self.assertTrue(confirm_response.data.accepted)
+        self.assertEqual(confirm_response.data.command, "go_to_waypoint")
+        self.assertEqual(persistence.list_command_logs()[0].payload["waypoint_id"], "wp_201")
+
+        rejected = await main_module.smart_command(
+            SmartCommandRequest(text="向前走一米", source="test-smart", requested_by="unittest")
+        )
+        self.assertEqual(rejected.data.intent, "unknown")
+        self.assertIsNone(rejected.data.mission_candidate)
+        self.assertIn("拒绝直接速度控制", rejected.data.reply_text)
 
     async def test_detection_status_update_is_visible_in_latest_state(self) -> None:
         response = await main_module.ingest_detection_status(
@@ -624,10 +685,18 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response.success)
         self.assertIsNotNone(response.data)
         self.assertEqual(response.data.intent, "start_patrol")
-        self.assertTrue(response.data.accepted)
+        self.assertFalse(response.data.accepted)
+        self.assertTrue(response.data.need_confirm)
+        self.assertIsNotNone(response.data.pending_command_id)
         self.assertFalse(response.data.audio_retained)
         self.assertIsNone(response.data.audio_path)
         self.assertFalse(recorded_path.exists())
+        logs = persistence.list_command_logs()
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].command, "voice_audio_command")
+        self.assertFalse(logs[0].accepted)
+        self.assertEqual(logs[0].payload["intent"], "start_patrol")
+        self.assertTrue(logs[0].payload["need_confirm"])
 
     async def test_record_command_recording_failure_does_not_call_asr(self) -> None:
         os.environ["ASR_BACKEND"] = "mock"

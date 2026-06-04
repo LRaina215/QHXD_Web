@@ -25,9 +25,81 @@ class IntentParser:
         if not normalized:
             return ParsedIntent(intent=None, detail="文本命令为空，未触发任务。")
 
-        if self._contains_any(normalized, ["当前状态", "现在在哪", "现在位置", "在哪", "状态"]):
+        if self._contains_any(normalized, ["你是谁", "你叫什么名字", "叫什么", "自我介绍", "介绍一下自己"]):
             return ParsedIntent(
-                intent="query_status",
+                intent="query_self_identity",
+                confidence=0.98,
+                need_confirm=False,
+                detail="已解析为身份查询。",
+            )
+
+        if self._contains_any(normalized, ["你能做什么", "你会做什么", "有什么能力", "你的能力", "可以做什么"]):
+            return ParsedIntent(
+                intent="query_capability",
+                confidence=0.97,
+                need_confirm=False,
+                detail="已解析为能力查询。",
+            )
+
+        if self._contains_any(normalized, ["安全规则", "安全边界", "自己控制底盘", "直接控制底盘", "控制底盘吗"]):
+            return ParsedIntent(
+                intent="query_safety_rule",
+                confidence=0.97,
+                need_confirm=False,
+                detail="已解析为安全规则查询。",
+            )
+
+        if self._contains_any(normalized, ["向前走", "往前走", "开快", "快一点", "走一米", "撞过去", "速度", "底盘速度"]):
+            return ParsedIntent(
+                intent="unknown",
+                confidence=0.95,
+                need_confirm=True,
+                detail="拒绝直接速度控制或危险运动请求，未触发任务。",
+            )
+
+        if self._contains_any(normalized, ["天气", "下雨", "温度", "湿度", "环境适合", "适合巡检"]):
+            return ParsedIntent(
+                intent="query_weather",
+                confidence=0.94,
+                need_confirm=False,
+                detail="已解析为天气/环境查询。",
+            )
+
+        if self._contains_any(normalized, ["视觉检测", "看到了什么", "检测到了什么", "识别到了什么", "刚才看到了"]):
+            return ParsedIntent(
+                intent="query_perception_status",
+                confidence=0.94,
+                need_confirm=False,
+                detail="已解析为视觉状态查询。",
+            )
+
+        if self._contains_any(normalized, ["当前任务", "任务是什么", "任务状态", "任务进度"]):
+            return ParsedIntent(
+                intent="query_task_status",
+                confidence=0.93,
+                need_confirm=False,
+                detail="已解析为任务状态查询。",
+            )
+
+        if self._contains_any(normalized, ["多少电", "电量", "还有电"]):
+            return ParsedIntent(
+                intent="query_battery",
+                confidence=0.93,
+                need_confirm=False,
+                detail="已解析为电量查询。",
+            )
+
+        if self._contains_any(normalized, ["急停", "有没有急停"]):
+            return ParsedIntent(
+                intent="query_emergency_stop",
+                confidence=0.93,
+                need_confirm=False,
+                detail="已解析为急停状态查询。",
+            )
+
+        if self._contains_any(normalized, ["当前状态", "现在在哪", "现在位置", "在哪", "状态", "正常吗"]):
+            return ParsedIntent(
+                intent="query_robot_status",
                 confidence=0.92,
                 need_confirm=False,
                 detail="已解析为状态查询。",

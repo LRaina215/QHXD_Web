@@ -22,6 +22,17 @@ VoiceIntentValue = Literal[
     "query_status",
     "query_task",
     "query_detection",
+    "query_self_identity",
+    "query_capability",
+    "query_safety_rule",
+    "query_robot_status",
+    "query_task_status",
+    "query_battery",
+    "query_emergency_stop",
+    "query_perception_status",
+    "query_weather",
+    "query_environment",
+    "speak_last_result",
     "unknown",
 ]
 
@@ -139,6 +150,34 @@ class AlertsResponse(ContractModel):
 class CurrentTaskResponse(ContractModel):
     success: bool = Field(default=True)
     data: TaskStatus
+
+
+class RobotProfile(ContractModel):
+    robot_name: str
+    english_name: str
+    full_name: str
+    role: str
+    team: str
+    abilities: list[str]
+    safety_rules: list[str]
+    self_intro: str
+
+
+class WeatherData(ContractModel):
+    location: str
+    temperature_c: float | None = None
+    humidity_percent: float | None = None
+    weather: str
+    wind: str | None = None
+    source: str = Field(default="weather_provider")
+    updated_at: datetime
+
+
+class ExternalWeatherLatestResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: WeatherData | None = None
+    error: str | None = None
+    detail: str | None = None
 
 
 class MissionRequestBase(ContractModel):
@@ -267,6 +306,69 @@ class VoiceConfirmCommandRequest(ContractModel):
 class VoiceConfirmCommandResponse(ContractModel):
     success: bool = Field(default=True)
     data: VoiceCommandResult
+
+
+class MissionCandidate(ContractModel):
+    command: MissionCommandValue
+    payload: dict[str, JsonScalar] = Field(default_factory=dict)
+    pending_command_id: str | None = None
+    detail: str
+
+
+class TTSStatus(ContractModel):
+    backend: str = Field(default="mock")
+    status: str = Field(default="idle")
+    text: str | None = None
+    audio_path: str | None = None
+    detail: str | None = None
+    updated_at: datetime | None = None
+
+
+class SmartCommandRequest(ContractModel):
+    text: str = Field(min_length=1, description="文本或 ASR 识别结果")
+    source: str = Field(default="smart-command", description="命令来源")
+    requested_by: str | None = Field(default=None, description="命令发起人")
+    use_llm: bool | None = Field(default=None, description="是否允许 DeepSeek fallback")
+    generate_tts: bool = Field(default=False, description="是否为 reply_text 生成 TTS")
+
+
+class SmartCommandResult(ContractModel):
+    request_id: str
+    recognized_text: str
+    intent: VoiceIntentValue | None = None
+    data_source: str | None = None
+    reply_text: str
+    need_confirm: bool = False
+    mission_candidate: MissionCandidate | None = None
+    pending_command_id: str | None = None
+    tts_status: TTSStatus | None = None
+    error_reason: str | None = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    parser: str = Field(default="rule")
+    llm_backend: str | None = None
+    llm_model: str | None = None
+    timestamp: datetime
+
+
+class SmartCommandResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: SmartCommandResult
+
+
+class SpeakRequest(ContractModel):
+    text: str = Field(min_length=1, description="需要播报的文本")
+    source: str = Field(default="dashboard", description="播报来源")
+    requested_by: str | None = Field(default=None, description="请求人")
+
+
+class SpeakResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: TTSStatus
+
+
+class TTSLatestResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: TTSStatus | None = None
 
 
 class ModeSwitchRequest(ContractModel):

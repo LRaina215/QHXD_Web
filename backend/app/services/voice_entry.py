@@ -17,13 +17,29 @@ from app.schemas import (
     VoiceTextCommandRequest,
 )
 from app.services.intent_parser import ParsedIntent
+from app.services.data_service import data_service
 from app.services.mission_gateway import mission_gateway
 from app.services.state_store import state_store
 from app.services.voice.llm_intent_parser import llm_intent_parser
 
 
 MOTION_INTENTS = {"go_to_waypoint", "start_patrol", "return_home"}
-QUERY_INTENTS = {"query_status", "query_task", "query_detection"}
+QUERY_INTENTS = {
+    "query_status",
+    "query_task",
+    "query_detection",
+    "query_self_identity",
+    "query_capability",
+    "query_safety_rule",
+    "query_robot_status",
+    "query_task_status",
+    "query_battery",
+    "query_emergency_stop",
+    "query_perception_status",
+    "query_weather",
+    "query_environment",
+    "speak_last_result",
+}
 
 
 @dataclass(frozen=True)
@@ -123,23 +139,8 @@ class VoiceEntryService:
         )
 
     def _handle_query(self, parsed: ParsedIntent) -> VoiceCommandResult:
+        _, detail = data_service.reply_for_query(parsed.intent or "unknown")
         latest_state = state_store.get_latest_state()
-        if parsed.intent == "query_detection":
-            detection = latest_state.detection_status
-            if detection is None:
-                detail = "当前没有视觉检测状态。"
-            else:
-                objects = ", ".join(f"{obj.class_name}:{obj.confidence:.2f}" for obj in detection.objects[:5]) or "无目标"
-                detail = f"视觉检测来源 {detection.source}，最近目标：{objects}。"
-        elif parsed.intent == "query_task":
-            task = latest_state.task_status
-            detail = f"当前任务 {task.task_type}/{task.state}，进度 {task.progress}%。"
-        else:
-            detail = (
-                f"当前模式 {latest_state.system_mode.mode}，"
-                f"任务 {latest_state.task_status.task_type}/{latest_state.task_status.state}，"
-                f"目标 {latest_state.nav_status.current_goal or '未设置'}。"
-            )
         return self._result(True, parsed, parsed.intent, detail, latest_state)
 
     def _dispatch_mission(self, intent: str, payload: dict, request: VoiceTextCommandRequest):

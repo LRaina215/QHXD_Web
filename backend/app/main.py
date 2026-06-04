@@ -15,6 +15,7 @@ from app.schemas import (
     AlertsResponse,
     CommandLogsResponse,
     CurrentTaskResponse,
+    ExternalWeatherLatestResponse,
     GoToWaypointRequest,
     HealthResponse,
     ImuLatestResponse,
@@ -32,8 +33,13 @@ from app.schemas import (
     PerceptionDetectionStatusResult,
     ResumeMissionRequest,
     ReturnHomeRequest,
+    SmartCommandRequest,
+    SmartCommandResponse,
+    SpeakRequest,
+    SpeakResponse,
     StartPatrolRequest,
     StateLatestResponse,
+    TTSLatestResponse,
     VoiceAudioCommandResponse,
     VoiceAudioCommandResult,
     VoiceCommandResponse,
@@ -52,8 +58,11 @@ from app.services.mode_manager import mode_manager
 from app.services.mock_state import mock_state_service
 from app.services.nuc_adapter import nuc_adapter
 from app.services.persistence import persistence
+from app.services.smart_voice_service import smart_voice_service
 from app.services.state_store import state_store
+from app.services.tts_service import tts_service
 from app.services.voice_entry import voice_entry_service
+from app.services.weather_provider import weather_provider
 from app.services.ws_manager import ws_manager
 
 
@@ -466,12 +475,32 @@ async def get_latest_imu() -> ImuLatestResponse:
     return ImuLatestResponse(data=imu_store.get_latest())
 
 
+@app.get("/api/external/weather/latest", response_model=ExternalWeatherLatestResponse)
+async def get_latest_weather() -> ExternalWeatherLatestResponse:
+    try:
+        return ExternalWeatherLatestResponse(data=weather_provider.latest())
+    except Exception as exc:
+        return ExternalWeatherLatestResponse(
+            success=False,
+            error="weather_provider_failed",
+            detail=f"天气数据读取失败：{type(exc).__name__}",
+        )
+
+
 @app.post("/api/voice/text_command", response_model=VoiceCommandResponse)
 async def text_command(request: VoiceTextCommandRequest) -> VoiceCommandResponse:
     result, state = voice_entry_service.handle_text_command(request)
     if state is not None:
         await ws_manager.broadcast_state(state)
     return VoiceCommandResponse(data=result)
+
+
+@app.post("/api/voice/smart_command", response_model=SmartCommandResponse)
+async def smart_command(request: SmartCommandRequest) -> SmartCommandResponse:
+    result, state = smart_voice_service.handle(request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    return SmartCommandResponse(data=result)
 
 
 @app.post("/api/voice/asr_text_mock", response_model=VoiceCommandResponse)
@@ -491,6 +520,16 @@ async def confirm_voice_command(request: VoiceConfirmCommandRequest) -> VoiceCon
     if state is not None:
         await ws_manager.broadcast_state(state)
     return VoiceConfirmCommandResponse(data=result)
+
+
+@app.post("/api/voice/speak", response_model=SpeakResponse)
+async def speak(request: SpeakRequest) -> SpeakResponse:
+    return SpeakResponse(data=tts_service.speak(request.text))
+
+
+@app.get("/api/voice/tts/latest", response_model=TTSLatestResponse)
+async def get_latest_tts() -> TTSLatestResponse:
+    return TTSLatestResponse(data=tts_service.latest())
 
 
 @app.post("/api/voice/audio_command", response_model=VoiceAudioCommandResponse)

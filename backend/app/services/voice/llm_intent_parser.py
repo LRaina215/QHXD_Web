@@ -86,6 +86,8 @@ class LLMIntentParser:
             return False
         if use_llm is None and not _env_bool("LLM_ENABLE", _env_bool("DEEPSEEK_ENABLE", False)):
             return False
+        if rule_result.intent == "unknown" and rule_result.confidence >= 0.9:
+            return False
         if rule_result.intent is None:
             return True
         if rule_result.need_confirm or rule_result.confidence < 0.75:

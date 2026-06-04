@@ -537,6 +537,18 @@ button.warn {
   box-shadow: 0 12px 20px rgba(217, 130, 24, 0.22);
 }
 
+button.accent {
+  color: #15130f;
+  border-color: #f3ad44;
+  background: #f3ad44;
+  box-shadow: 0 12px 24px rgba(243, 173, 68, 0.26);
+}
+
+button.accent:hover:not(:disabled) {
+  background: #ffc15f;
+  border-color: #ffc15f;
+}
+
 .command-header button.secondary {
   color: #fff7e8;
   border-color: rgba(255, 247, 232, 0.26);
@@ -1151,4 +1163,50 @@ button:disabled {
   color: rgba(255, 247, 232, 0.48);
   border-color: rgba(255, 247, 232, 0.18);
   background: rgba(255, 247, 232, 0.08);
+}
+
+.smart-assistant-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid rgba(37, 93, 232, 0.24);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(37, 93, 232, 0.08), rgba(255, 250, 240, 0.96));
+}
+
+.smart-assistant-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.smart-assistant-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.smart-reply {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e0d4c4;
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.78);
+}
+
+.smart-reply span {
+  display: block;
+  color: #726a5f;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.smart-reply strong {
+  display: block;
+  margin-top: 5px;
+  color: #15130f;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }

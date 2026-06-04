@@ -260,6 +260,7 @@ GET /api/alerts
 GET /api/commands/logs
 GET /api/tasks/current
 GET /api/imu/latest
+GET /api/external/weather/latest
 GET /api/perception/latest_frame
 GET /api/perception/frame_stream
 WS  /ws/state
@@ -271,9 +272,12 @@ WS  /ws/imu
 ```text
 POST /api/voice/text_command
 POST /api/voice/asr_text_mock
+POST /api/voice/smart_command
 POST /api/voice/audio_command
 POST /api/voice/record_command
 POST /api/voice/confirm_command
+POST /api/voice/speak
+GET  /api/voice/tts/latest
 ```
 
 任务接口：
@@ -298,6 +302,104 @@ POST /api/internal/nuc/imu
 
 ## 语音与 LLM
 
+### 灵巡 Sentinel 智能助手
+
+Phase 9A 后，机器人正式身份为：
+
+```text
+灵巡 Sentinel
+```
+
+统一身份档案：
+
+```text
+backend/app/config/robot_profile.json
+```
+
+修改机器人名称、能力列表、安全规则、自我介绍时，只改这个配置文件；后端查询回复会从该配置读取，不在多个业务文件中硬编码。
+
+智能助手统一接口：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你是谁","source":"curl","requested_by":"operator","generate_tts":true}'
+```
+
+典型返回字段：
+
+```json
+{
+  "recognized_text": "你是谁",
+  "intent": "query_self_identity",
+  "data_source": "robot_profile",
+  "reply_text": "你好，我是灵巡 Sentinel...",
+  "need_confirm": false,
+  "mission_candidate": null,
+  "tts_status": {
+    "backend": "mock",
+    "status": "generated"
+  }
+}
+```
+
+查询类命令会直接返回自然语言回复，不触发 mission：
+
+```text
+你是谁
+你能做什么
+你可以自己控制底盘吗
+当前机器人状态正常吗
+当前任务是什么
+你还有多少电
+急停了吗
+视觉检测到了什么
+现在天气怎么样
+当前环境适合巡检吗
+```
+
+运动类命令只生成候选任务和待确认 ID：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"帮我送到二零一实验室","source":"curl","requested_by":"operator"}'
+```
+
+返回中应包含：
+
+```text
+intent=go_to_waypoint
+need_confirm=true
+mission_candidate.command=go_to_waypoint
+mission_candidate.payload.waypoint_id=wp_201
+pending_command_id=...
+```
+
+确认执行仍使用原有接口：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/confirm_command \
+  -H "Content-Type: application/json" \
+  -d '{"pending_command_id":"<id>","confirmed":true,"requested_by":"operator"}'
+```
+
+取消：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/confirm_command \
+  -H "Content-Type: application/json" \
+  -d '{"pending_command_id":"<id>","confirmed":false,"requested_by":"operator"}'
+```
+
+智能助手交互日志：
+
+```text
+backend/data/smart_voice_logs.jsonl
+```
+
+日志字段包括 `request_id`、`recognized_text`、`intent`、`data_source`、`reply_text`、`need_confirm`、`mission_candidate`、`tts_status`、`error_reason`、`timestamp`。
+
 ### 支持命令
 
 配置文件：
@@ -321,12 +423,58 @@ backend/app/config/waypoints.json
 
 ```text
 wp_201：二零一实验室，别名：二零一实验室 / 201实验室 / 二零一 / 201
-wp_001：一号点，别名：一号点 / 1号点 / 1 号点 / 一号 / 201 / 实验室 / 送到实验室
+wp_001：一号点，别名：一号点 / 1号点 / 1 号点 / 一号
 wp_002：二号点，别名：二号点 / 2号点 / 2 号点 / 二号 / 202
-home：起点，别名：起点 / home / 家
+home：起点，别名：起点 / 装载点 / 返回点 / home / 家
 ```
 
-注意：当前 `201` 同时出现在 `wp_201` 与 `wp_001` 的别名中，可能产生歧义。需要清晰验收时建议调整别名，避免同一口令映射多个 waypoint。
+注意：不要让多个 waypoint 共享同一个短别名，例如 `201` 或 `实验室`。歧义地点不会触发 mission。
+
+### 天气 / 环境查询
+
+传感器板正式接入前，环境查询先走 weather provider，不伪装成机器人本体传感器：
+
+```bash
+curl http://127.0.0.1:8000/api/external/weather/latest
+```
+
+返回字段包含：
+
+```text
+location, temperature_c, humidity_percent, weather, wind, source, updated_at
+```
+
+`source` 固定为 `weather_provider`。当前可用 `.env` 覆盖 mock 天气：
+
+```env
+WEATHER_LOCATION=海南海口
+WEATHER_TEMPERATURE_C=28.6
+WEATHER_HUMIDITY_PERCENT=82
+WEATHER_TEXT=多云
+WEATHER_WIND=东南风
+```
+
+### TTS 播报
+
+第一版 TTS 默认是 mock，占位接口稳定但不阻塞任务主流程：
+
+```env
+TTS_BACKEND=mock
+```
+
+手动播报：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/speak \
+  -H "Content-Type: application/json" \
+  -d '{"text":"我是灵巡 Sentinel。","source":"curl"}'
+```
+
+查询最近一次 TTS 状态：
+
+```bash
+curl http://127.0.0.1:8000/api/voice/tts/latest
+```
 
 ### 本地文本命令
 
@@ -571,8 +719,8 @@ tail -f /var/log/lingxun-cloud-gateway/operations.jsonl
 
 公网 endpoint 策略：
 
-- 读接口：`/health`、`/api/state/latest`、`/api/alerts`、`/api/tasks/current`、`/api/imu/latest`、`/api/perception/*`、`/ws/state`、`/ws/imu`。
-- 写接口：需要 `Authorization: Bearer <PUBLIC_API_TOKEN>`。
+- 读接口：`/health`、`/api/state/latest`、`/api/alerts`、`/api/tasks/current`、`/api/imu/latest`、`/api/perception/*`、`/api/external/weather/latest`、`/api/voice/tts/latest`、`/ws/state`、`/ws/imu`。
+- 写接口：`/api/voice/text_command`、`/api/voice/audio_command`、`/api/voice/browser_audio_command`、`/api/voice/smart_command`、`/api/voice/speak`、`/api/voice/confirm_command` 等都需要 `Authorization: Bearer <PUBLIC_API_TOKEN>`。
 - mission 控制：还需要 `PUBLIC_CONTROL_ENABLED=true`。
 - 禁止公网直连：`POST /api/voice/record_command`。
 
@@ -651,6 +799,28 @@ python3 camera_detect_service.py --config camera_config_hik.example.json --dry-r
 ```bash
 curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
   -F "file=@/home/robomaster/QHXD/audio_test/cmd_201.wav;type=audio/wav"
+```
+
+智能助手：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你是谁","generate_tts":true}'
+
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"帮我送到二零一实验室"}'
+```
+
+天气与 TTS：
+
+```bash
+curl http://127.0.0.1:8000/api/external/weather/latest
+curl -X POST http://127.0.0.1:8000/api/voice/speak \
+  -H "Content-Type: application/json" \
+  -d '{"text":"我是灵巡 Sentinel。"}'
+curl http://127.0.0.1:8000/api/voice/tts/latest
 ```
 
 公网 gateway：

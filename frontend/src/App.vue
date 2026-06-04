@@ -153,6 +153,43 @@ type VoiceRecordCommandResponse = {
   detail: string | null
 }
 
+type SmartTtsStatus = {
+  backend: string
+  status: string
+  text?: string | null
+  audio_path?: string | null
+  detail?: string | null
+  updated_at?: string | null
+}
+
+type SmartCommandResult = {
+  request_id: string
+  recognized_text: string
+  intent: string | null
+  data_source: string | null
+  reply_text: string
+  need_confirm: boolean
+  mission_candidate: {
+    command: string
+    payload: Record<string, VoicePayloadValue>
+    pending_command_id: string | null
+    detail: string
+  } | null
+  pending_command_id: string | null
+  tts_status: SmartTtsStatus | null
+  error_reason: string | null
+  confidence: number
+  parser: string
+  llm_backend?: string | null
+  llm_model?: string | null
+  timestamp: string
+}
+
+type SmartCommandResponse = {
+  success: boolean
+  data: SmartCommandResult
+}
+
 type ModeSwitchResponse = {
   success: boolean
   data: {
@@ -224,6 +261,7 @@ const waypointId = ref('mock-waypoint')
 const textCommand = ref('去一号点')
 const voiceResult = ref<VoiceCommandResponse['data'] | null>(null)
 const voiceRecordResult = ref<VoiceRecordCommandResult | null>(null)
+const smartCommandResult = ref<SmartCommandResult | null>(null)
 const voiceRecordError = ref('')
 const voiceRecordStatus = ref('空闲')
 const voiceRecordDuration = ref(3)
@@ -237,6 +275,7 @@ const apiTokenInput = ref(window.localStorage.getItem('qhxd_api_token') ?? '')
 const apiTokenSaved = ref(Boolean(apiTokenInput.value.trim()))
 const isSending = ref(false)
 const isSendingTextCommand = ref(false)
+const isSendingSmartCommand = ref(false)
 const isRecordingVoice = ref(false)
 const isBrowserVoiceRecording = ref(false)
 const isOnboardVoiceRecording = ref(false)
@@ -1077,6 +1116,88 @@ async function sendTextCommand() {
   }
 }
 
+async function sendSmartCommand() {
+  if (!textCommand.value.trim()) {
+    smartCommandResult.value = null
+    actionMessage.value = '请输入智能助手文本'
+    return
+  }
+
+  isSendingSmartCommand.value = true
+
+  try {
+    const response = await fetch(apiUrl('/api/voice/smart_command'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        text: textCommand.value,
+        source: 'dashboard-smart',
+        requested_by: 'dashboard',
+        generate_tts: true,
+      }),
+    })
+    if (!response.ok) {
+      throw new Error(await readApiError(response, '智能助手接口调用失败'))
+    }
+
+    const payload = (await response.json()) as SmartCommandResponse
+    smartCommandResult.value = payload.data
+    actionMessage.value = payload.data.reply_text || payload.data.error_reason || '智能助手已处理'
+
+    if (payload.data.mission_candidate?.pending_command_id) {
+      const candidate = payload.data.mission_candidate
+      handleVoiceCommandResult(
+        {
+          accepted: false,
+          intent: payload.data.intent,
+          command: candidate.command,
+          payload: candidate.payload,
+          confidence: payload.data.confidence,
+          need_confirm: true,
+          pending_command_id: candidate.pending_command_id,
+          recognized_text: payload.data.recognized_text,
+          waypoint_id: valueAsString(candidate.payload.waypoint_id),
+          parser: payload.data.parser,
+          llm_backend: payload.data.llm_backend ?? null,
+          llm_model: payload.data.llm_model ?? null,
+          detail: payload.data.reply_text,
+          task_status: null,
+        },
+        'text',
+        payload.data.recognized_text,
+      )
+    } else {
+      pendingVoiceCommand.value = null
+      voiceConfirmError.value = ''
+    }
+
+    await Promise.all([loadState(), loadAlerts()])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '智能助手请求失败'
+    actionMessage.value = message
+    smartCommandResult.value = {
+      request_id: '',
+      recognized_text: textCommand.value,
+      intent: null,
+      data_source: null,
+      reply_text: '',
+      need_confirm: false,
+      mission_candidate: null,
+      pending_command_id: null,
+      tts_status: null,
+      error_reason: message,
+      confidence: 0,
+      parser: 'frontend',
+      timestamp: new Date().toISOString(),
+    }
+  } finally {
+    isSendingSmartCommand.value = false
+  }
+}
+
 async function recordVoiceCommand() {
   if (!enableLocalRecordCommand) {
     voiceRecordError.value = '公网模式不提供板端录音，请使用浏览器/小程序录音上传。'
@@ -1714,6 +1835,9 @@ function saveApiToken() {
               <button :disabled="isSendingTextCommand || !textCommand.trim()" type="button" @click="sendTextCommand">
                 {{ isSendingTextCommand ? '发送中...' : '发送文本命令' }}
               </button>
+              <button class="accent" :disabled="isSendingSmartCommand || !textCommand.trim()" type="button" @click="sendSmartCommand">
+                {{ isSendingSmartCommand ? '思考中...' : '智能助手解析' }}
+              </button>
               <label class="field compact-field duration-field">
                 <span>录音时长</span>
                 <select v-model.number="voiceRecordDuration" :disabled="isAnyVoiceRecording">
@@ -1751,6 +1875,48 @@ function saveApiToken() {
               </button>
             </div>
           </div>
+
+          <section class="smart-assistant-card" aria-label="灵巡 Sentinel 智能语音助手">
+            <div class="smart-assistant-head">
+              <div>
+                <p class="section-kicker">Lingxun Sentinel</p>
+                <h3>灵巡 Sentinel 智能语音助手</h3>
+              </div>
+              <span class="status-badge" :class="toneClass(smartCommandResult?.error_reason ? 'danger' : smartCommandResult ? 'info' : 'muted')">
+                {{ smartCommandResult?.error_reason ? 'rejected' : smartCommandResult ? 'ready' : 'waiting' }}
+              </span>
+            </div>
+            <div class="smart-reply">
+              <span>回复</span>
+              <strong>{{ smartCommandResult?.reply_text || '等待智能语音交互' }}</strong>
+            </div>
+            <div class="command-meta-grid smart-meta-grid">
+              <div>
+                <span>recognized_text</span>
+                <strong>{{ smartCommandResult?.recognized_text || '--' }}</strong>
+              </div>
+              <div>
+                <span>intent</span>
+                <strong>{{ smartCommandResult?.intent || '--' }}</strong>
+              </div>
+              <div>
+                <span>data_source</span>
+                <strong>{{ smartCommandResult?.data_source || '--' }}</strong>
+              </div>
+              <div>
+                <span>TTS</span>
+                <strong>{{ smartCommandResult?.tts_status?.status || '--' }}</strong>
+              </div>
+              <div>
+                <span>mission_candidate</span>
+                <strong>{{ smartCommandResult?.mission_candidate?.command || '--' }}</strong>
+              </div>
+              <div>
+                <span>error_reason</span>
+                <strong>{{ smartCommandResult?.error_reason || '--' }}</strong>
+              </div>
+            </div>
+          </section>
 
           <div class="status-message-stack">
             <p v-if="isBrowserVoiceRecording" class="inline-status">正在使用当前浏览器麦克风录音，请说话...</p>
