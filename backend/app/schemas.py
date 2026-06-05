@@ -322,7 +322,10 @@ class TTSStatus(ContractModel):
     status: str = Field(default="idle")
     text: str | None = None
     audio_path: str | None = None
+    audio_url: str | None = None
     detail: str | None = None
+    error_reason: str | None = None
+    created_at: datetime | None = None
     updated_at: datetime | None = None
 
 

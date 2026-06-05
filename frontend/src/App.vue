@@ -158,7 +158,10 @@ type SmartTtsStatus = {
   status: string
   text?: string | null
   audio_path?: string | null
+  audio_url?: string | null
   detail?: string | null
+  error_reason?: string | null
+  created_at?: string | null
   updated_at?: string | null
 }
 
@@ -280,6 +283,7 @@ const isSendingTextCommand = ref(false)
 const isRecordingVoice = ref(false)
 const isBrowserVoiceRecording = ref(false)
 const isOnboardVoiceRecording = ref(false)
+const ttsAudioPlayer = ref<HTMLAudioElement | null>(null)
 const isConfirmingVoiceCommand = ref(false)
 const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
@@ -812,7 +816,7 @@ function closeVoiceConfirmDialog() {
 
 async function handleSmartCommandResult(payload: SmartCommandResponse, source: 'text' | 'record') {
   smartCommandResult.value = payload.data
-  actionMessage.value = payload.data.reply_text || payload.data.error_reason || '智能助手已处理'
+  actionMessage.value = "payload.data.reply_text || payload.data.error_reason || '智能助手已处理'"
 
   if (payload.data.mission_candidate?.pending_command_id) {
     const candidate = payload.data.mission_candidate
@@ -965,7 +969,7 @@ async function loadState() {
     const payload = (await response.json()) as StateResponse
     state.value = payload.data
   } catch (error) {
-    actionMessage.value = error instanceof Error ? error.message : '状态加载失败'
+    actionMessage.value = "error instanceof Error ? error.message : '状态加载失败'"
   }
 }
 
@@ -1107,7 +1111,7 @@ async function sendMission(
     actionMessage.value = payload.data.detail || successText
     await Promise.all([loadState(), loadAlerts()])
   } catch (error) {
-    actionMessage.value = error instanceof Error ? error.message : '命令发送失败'
+    actionMessage.value = "error instanceof Error ? error.message : '命令发送失败'"
   } finally {
     isSending.value = false
   }
@@ -1143,7 +1147,7 @@ async function sendTextCommand() {
     const payload = (await response.json()) as SmartCommandResponse
     await handleSmartCommandResult(payload, 'text')
   } catch (error) {
-    actionMessage.value = error instanceof Error ? error.message : '文本命令发送失败'
+    actionMessage.value = "error instanceof Error ? error.message : '文本命令发送失败'"
   } finally {
     isSendingTextCommand.value = false
   }
@@ -1405,7 +1409,7 @@ async function switchMode(mode: 'mock' | 'real') {
     actionMessage.value = payload.data.detail
     await Promise.all([loadState(), loadAlerts()])
   } catch (error) {
-    actionMessage.value = error instanceof Error ? error.message : '模式切换失败'
+    actionMessage.value = "error instanceof Error ? error.message : '模式切换失败'"
   } finally {
     isSwitchingMode.value = false
   }
@@ -1487,6 +1491,24 @@ function formatTime(value: string) {
 function formatDetectionObject(object: { class_name: string; confidence: number; age_s?: number | null }) {
   const age = object.age_s && object.age_s > 0 ? ` / ${object.age_s.toFixed(1)}s 前` : ''
   return `${object.class_name} ${object.confidence.toFixed(2)}${age}`
+}
+
+async function playTtsAudio(url: string) {
+  const player = ttsAudioPlayer.value
+  if (!player) return
+  player.src = url
+  player.play().catch(() => {
+    actionMessage.value = "语音播放失败"
+  })
+  actionMessage.value = "正在播放语音回复..."
+}
+
+function onTtsAudioError() {
+  actionMessage.value = "语音播放失败：音频无法加载"
+}
+
+function onTtsAudioEnded() {
+  actionMessage.value = "语音播放完毕"
 }
 
 async function readApiError(response: Response, fallback: string) {

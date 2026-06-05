@@ -83,6 +83,7 @@ ALLOWED_PATH_PREFIXES = (
     "/api/voice/smart_audio_command",
     "/api/voice/speak",
     "/api/voice/tts/latest",
+        "/api/voice/tts/audio/",
     "/api/voice/confirm_command",
     "/api/robot/voice/onboard_record_command",
     "/api/robot/voice/onboard_smart_command",

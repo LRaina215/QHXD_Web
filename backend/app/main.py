@@ -656,6 +656,29 @@ async def get_latest_tts() -> TTSLatestResponse:
     return TTSLatestResponse(data=tts_service.latest())
 
 
+@app.get("/api/voice/tts/audio/{filename}")
+async def get_tts_audio(filename: str):
+    import re
+    from app.services.tts_service import _tts_dir
+
+    if not re.fullmatch(r"[a-zA-Z0-9_.\-]+", filename):
+        raise HTTPException(status_code=400, detail="invalid filename")
+
+    audio_path = _tts_dir() / filename
+    if not audio_path.exists() or not audio_path.is_file():
+        raise HTTPException(status_code=404, detail="audio file not found")
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    media_map = {"wav": "audio/wav", "mp3": "audio/mpeg", "ogg": "audio/ogg", "flac": "audio/flac"}
+    media_type = media_map.get(ext, "application/octet-stream")
+
+    return FileResponse(
+        audio_path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 @app.post("/api/voice/audio_command", response_model=VoiceAudioCommandResponse)
 async def audio_command(request: Request) -> VoiceAudioCommandResponse:
     upload = await _read_voice_upload(request)
