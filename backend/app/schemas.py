@@ -76,9 +76,9 @@ class TaskStatus(ContractModel):
 
 
 class DeviceStatus(ContractModel):
-    # Phase 3 映射约定：
-    # real 模式下，device_status 应优先由 RT-Thread 底层状态经 NUC 归一化后提供，
-    # RK3588 继续复用该公开契约，不新增平行字段。
+    # Real 模式映射约定：
+    # device_status 由 RK3588 本机真实链路归一化后提供，
+    # 后端继续复用该公开契约，不新增 C 板平行字段。
     battery_percent: int | None = Field(default=100, ge=0, le=100, description="电量百分比")
     emergency_stop: bool = Field(default=False, description="急停状态")
     fault_code: str | None = Field(default=None, description="故障码")
@@ -86,8 +86,8 @@ class DeviceStatus(ContractModel):
 
 
 class EnvSensor(ContractModel):
-    # Phase 3 映射约定：
-    # 若真实环境传感器未就绪，允许 NUC 上送 null 值占位，并以 status 表示可用性。
+    # Real 模式映射约定：
+    # 若真实环境传感器未就绪，允许上送 null 值占位，并以 status 表示可用性。
     temperature_c: float | None = Field(default=25.0, description="温度，单位摄氏度")
     humidity_percent: float | None = Field(default=45.0, description="湿度百分比")
     status: SensorStatusValue = Field(default="mock", description="传感器状态")
@@ -392,9 +392,9 @@ class ModeSwitchResponse(ContractModel):
 
 
 class NucStateUpdateRequest(ContractModel):
-    # Phase 3 三节点映射约定：
-    # - robot_pose / nav_status / task_status 主要来自 NUC 高层状态
-    # - device_status / optional env_sensor 主要来自 RT-Thread，经 NUC 聚合后统一上送
+    # 兼容历史 internal/nuc 路由名称；当前语义是 Real 模式真实状态上送：
+    # - robot_pose / nav_status / task_status 来自导航与任务执行链路
+    # - device_status / optional env_sensor 来自 C 板/传感器链路归一化结果
     robot_pose: RobotPose
     nav_status: NavStatus
     task_status: TaskStatus
@@ -408,7 +408,7 @@ class NucStateUpdateResult(ContractModel):
     accepted: bool = Field(description="是否已被当前模式接收")
     system_mode: SystemMode
     state_updated: bool = Field(description="是否已刷新共享状态")
-    received_at: datetime = Field(description="NUC 状态接收时间")
+    received_at: datetime = Field(description="真实状态接收时间")
     detail: str = Field(description="状态接收说明")
 
 
@@ -492,20 +492,20 @@ class PerceptionDetectionStatusResponse(ContractModel):
 
 
 class NucMissionCommandRequest(ContractModel):
-    command: MissionCommandValue = Field(description="转发到 NUC 的命令名称")
+    command: MissionCommandValue = Field(description="转发到真实任务执行链路的命令名称")
     source: str = Field(default="web", description="命令来源")
     requested_by: str | None = Field(default=None, description="命令发起人")
     payload: dict[str, JsonScalar] = Field(default_factory=dict, description="命令参数")
 
 
 class NucMissionCommandResult(ContractModel):
-    accepted: bool = Field(description="NUC 是否已受理该命令")
-    command: MissionCommandValue = Field(description="NUC 已处理的命令名称")
+    accepted: bool = Field(description="真实任务执行链路是否已受理该命令")
+    command: MissionCommandValue = Field(description="真实任务执行链路已处理的命令名称")
     task_status: TaskStatus
     current_goal: str | None = Field(default=None, description="命令生效后的当前目标点")
     nav_state: NavStateValue | None = Field(default=None, description="命令生效后的导航状态")
-    received_at: datetime = Field(description="NUC 命令接收时间")
-    detail: str = Field(description="NUC 返回的命令处理说明")
+    received_at: datetime = Field(description="真实任务命令接收时间")
+    detail: str = Field(description="真实任务执行链路返回的命令处理说明")
 
 
 class NucMissionCommandResponse(ContractModel):

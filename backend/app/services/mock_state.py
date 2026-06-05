@@ -82,7 +82,7 @@ class MockStateService:
             received_at=self._timestamp(),
             detail=(
                 f"已切换到 {request.mode} 模式。"
-                "mock 模式仍由本地占位实现驱动；real 模式下任务与状态桥接将切换到 NUC。"
+                "Mock 模式由本地模拟数据生成器驱动；Real 模式等待 RK3588 本机导航、IMU、C 板与感知链路上送真实状态，任务命令进入真实执行链路。"
             ),
         )
 

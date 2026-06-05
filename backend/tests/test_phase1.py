@@ -98,7 +98,7 @@ class _FakeNucMissionServer:
                 current_goal = self.server.current_goal
                 task_status = self.server.task_status.copy()
                 nav_state = "idle"
-                detail = f"NUC 已受理 {command} 命令。"
+                detail = f"真实任务链路已受理 {command} 命令。"
 
                 if command == "go_to_waypoint":
                     current_goal = command_payload["waypoint_id"]
@@ -852,7 +852,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
                     AlertEvent(
                         alert_id="alert-real-001",
                         level="warning",
-                        message="NUC state injected for test.",
+                        message="Real state injected for test.",
                         source="nuc",
                         timestamp=datetime.now(timezone.utc),
                         acknowledged=False,
@@ -1042,12 +1042,12 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(response.success)
         self.assertFalse(response.data.accepted)
-        self.assertIn("NUC 命令接口", response.data.detail)
+        self.assertIn("真实任务命令接口", response.data.detail)
         self.assertEqual(len(logs), 1)
         self.assertFalse(logs[0].accepted)
         self.assertEqual(logs[0].command, "resume")
         self.assertFalse(state_store.get_latest_state().device_status.online)
-        self.assertEqual(state_store.get_latest_state().device_status.fault_code, "nuc-bridge-unreachable")
+        self.assertEqual(state_store.get_latest_state().device_status.fault_code, "real-command-link-unreachable")
 
     async def test_real_mode_timeout_marks_state_offline_and_recovery_restores_online(self) -> None:
         os.environ["REAL_STATE_STALE_AFTER_SECONDS"] = "0"
@@ -1097,7 +1097,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(timed_out_state)
         self.assertFalse(timed_out_state.device_status.online)
-        self.assertEqual(timed_out_state.device_status.fault_code, "nuc-state-timeout")
+        self.assertEqual(timed_out_state.device_status.fault_code, "real-state-timeout")
         self.assertEqual(timed_out_state.nav_status.state, "offline")
 
         await main_module.ingest_nuc_state(

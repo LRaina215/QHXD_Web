@@ -343,11 +343,11 @@ const onlineStatus = computed(() => {
     return '等待 Navi'
   }
 
-  if (state.value.device_status.fault_code === 'nuc-state-timeout') {
+  if (['real-state-timeout', 'nuc-state-timeout'].includes(state.value.device_status.fault_code ?? '')) {
     return 'Navi 状态超时'
   }
 
-  if (state.value.device_status.fault_code === 'nuc-bridge-unreachable') {
+  if (['real-command-link-unreachable', 'nuc-bridge-unreachable'].includes(state.value.device_status.fault_code ?? '')) {
     return 'Navi Link 离线'
   }
 
@@ -385,11 +385,11 @@ const transportStatusLabel = computed(() => {
     return '已切到 real，等待 Navi 首包'
   }
 
-  if (state.value.device_status.fault_code === 'nuc-state-timeout') {
+  if (['real-state-timeout', 'nuc-state-timeout'].includes(state.value.device_status.fault_code ?? '')) {
     return 'Navi 状态超时，等待恢复'
   }
 
-  if (state.value.device_status.fault_code === 'nuc-bridge-unreachable') {
+  if (['real-command-link-unreachable', 'nuc-bridge-unreachable'].includes(state.value.device_status.fault_code ?? '')) {
     return 'Navi 命令链路异常'
   }
 

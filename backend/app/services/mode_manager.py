@@ -7,7 +7,7 @@ from app.services.state_store import state_store
 
 
 class ModeManager:
-    """Coordinates mock/real mode switching and real-link health state."""
+    """Coordinates mock/real mode switching and real runtime health state."""
 
     def __init__(self) -> None:
         self._last_real_update_at: datetime | None = None
@@ -29,7 +29,7 @@ class ModeManager:
             self._last_real_update_at = None
             self._real_link_state = "mock"
             latest_state = state_store.publish_mock_state(mock_state) or base_state
-            self._save_mode_alert("info", "已切换到 mock 模式，本地占位状态已恢复。")
+            self._save_mode_alert("info", "已切换到 Mock 模式，本地模拟状态生成器已恢复。")
             return latest_state
 
         self._last_real_update_at = None
@@ -42,7 +42,7 @@ class ModeManager:
             fault_code="waiting-for-real-state",
         )
         latest_state = state_store.publish_real_state(waiting_state) or base_state
-        self._save_mode_alert("warning", "已切换到 real 模式，等待 NUC 实时状态上送。")
+        self._save_mode_alert("warning", "已切换到 Real 模式，等待 RK3588 实时链路上送导航、IMU、C 板与感知状态。")
         return latest_state
 
     def record_real_state(self, state: RobotState) -> RobotState:
@@ -51,7 +51,7 @@ class ModeManager:
         self._real_link_state = "online"
 
         if previous_state in {"waiting", "timeout", "bridge_error"}:
-            self._save_mode_alert("info", "NUC 实时状态链路已恢复。")
+            self._save_mode_alert("info", "灵巡实时状态链路已恢复。")
 
         return state
 
@@ -66,14 +66,14 @@ class ModeManager:
             nav_state="offline",
             sensor_status="offline",
             online=False,
-            fault_code="nuc-bridge-unreachable",
+            fault_code="real-command-link-unreachable",
         )
         published_state = state_store.publish_real_state(updated_state)
         if published_state is None:
             return None
 
         persistence.save_state_snapshot(published_state)
-        self._save_mode_alert("error", f"NUC bridge 异常：{detail}")
+        self._save_mode_alert("error", f"Real 命令链路异常：{detail}")
         return published_state
 
     def poll_real_health(self) -> RobotState | None:
@@ -95,14 +95,14 @@ class ModeManager:
             nav_state="offline",
             sensor_status="offline",
             online=False,
-            fault_code="nuc-state-timeout",
+            fault_code="real-state-timeout",
         )
         published_state = state_store.publish_real_state(updated_state)
         if published_state is None:
             return None
 
         persistence.save_state_snapshot(published_state)
-        self._save_mode_alert("warning", "NUC 实时状态超时，已标记为离线。")
+        self._save_mode_alert("warning", "Real 实时状态超时，已标记为离线。")
         return published_state
 
     def promote_real_command_feedback(self, state: RobotState) -> RobotState:
@@ -128,7 +128,7 @@ class ModeManager:
             return state
 
         if previous_state in {"timeout", "bridge_error"}:
-            self._save_mode_alert("info", "NUC 任务桥链路已恢复。")
+            self._save_mode_alert("info", "Real 命令链路已恢复。")
         persistence.save_state_snapshot(published_state)
         return published_state
 
@@ -172,6 +172,8 @@ class ModeManager:
         if current_fault_code in {
             None,
             "waiting-for-real-state",
+            "real-state-timeout",
+            "real-command-link-unreachable",
             "nuc-state-timeout",
             "nuc-bridge-unreachable",
         }:

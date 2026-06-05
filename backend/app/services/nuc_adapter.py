@@ -24,7 +24,7 @@ from app.services.state_store import state_store
 
 
 class NucAdapter:
-    """Phase 2 adapter for NUC real-state ingest and mission forwarding."""
+    """Compatibility adapter for real-state ingest and mission forwarding."""
 
     def ingest_imu_update(self, request: NucImuUpdateRequest) -> tuple[NucImuUpdateResult, ImuEnvelope | None]:
         current_mode = state_store.get_system_mode()
@@ -37,7 +37,7 @@ class NucAdapter:
                     system_mode=current_mode,
                     imu_updated=False,
                     received_at=received_at,
-                    detail="当前系统处于 mock 模式，已忽略 NUC IMU 输入。",
+                    detail="当前系统处于 Mock 模式，已忽略真实 IMU 输入。",
                 ),
                 None,
             )
@@ -55,7 +55,7 @@ class NucAdapter:
                 system_mode=current_mode,
                 imu_updated=latest_imu is not None,
                 received_at=received_at,
-                detail="已接收 NUC IMU 数据并刷新最新样本。",
+                detail="已接收真实 IMU 数据并刷新最新样本。",
             ),
             latest_imu,
         )
@@ -71,14 +71,14 @@ class NucAdapter:
                     system_mode=current_mode,
                     state_updated=False,
                     received_at=received_at,
-                    detail="当前系统处于 mock 模式，已忽略 NUC 实时状态输入。",
+                    detail="当前系统处于 Mock 模式，已忽略真实状态输入。",
                 ),
                 None,
             )
 
-        # Phase 3 继续保持 RK3588 公开契约稳定：
-        # NUC 已归一化后的 device_status / env_sensor 直接进入共享状态，
-        # RK3588 不在这里新增 RT-Thread 平行字段或做二次拆分。
+        # 保持 RK3588 公开契约稳定：
+        # 外部上送方已归一化后的 device_status / env_sensor 直接进入共享状态，
+        # 后端不在这里新增 C 板平行字段或做二次拆分。
         next_state = RobotState(
             robot_pose=request.robot_pose,
             nav_status=request.nav_status,
@@ -101,7 +101,7 @@ class NucAdapter:
                 system_mode=current_mode,
                 state_updated=latest_state is not None,
                 received_at=received_at,
-                detail="已接收 NUC 实时状态并写入共享状态存储。",
+                detail="已接收真实状态并写入共享状态存储。",
             ),
             latest_state,
         )
@@ -123,7 +123,7 @@ class NucAdapter:
                     command=self._public_command_name(command),
                     task_status=state_store.get_current_task(),
                     received_at=received_at,
-                    detail="当前系统未处于 real 模式，未向 NUC 转发命令。",
+                    detail="当前系统未处于 Real 模式，未转发真实任务命令。",
                 ),
                 None,
             )
@@ -143,7 +143,7 @@ class NucAdapter:
                 response_text = response.read().decode("utf-8")
         except error.HTTPError as exc:
             response_text = exc.read().decode("utf-8", errors="ignore")
-            error_detail = f"NUC 命令接口返回 HTTP {exc.code}：{response_text or '无响应正文'}"
+            error_detail = f"真实任务命令接口返回 HTTP {exc.code}：{response_text or '无响应正文'}"
             return (
                 MissionActionResult(
                     accepted=False,
@@ -155,7 +155,7 @@ class NucAdapter:
                 mode_manager.mark_real_bridge_error(error_detail),
             )
         except error.URLError as exc:
-            error_detail = f"无法连接 NUC 命令接口：{exc.reason}"
+            error_detail = f"无法连接真实任务命令接口：{exc.reason}"
             return (
                 MissionActionResult(
                     accepted=False,
@@ -167,7 +167,7 @@ class NucAdapter:
                 mode_manager.mark_real_bridge_error(error_detail),
             )
         except OSError as exc:
-            error_detail = f"NUC 命令转发失败：{exc}"
+            error_detail = f"真实任务命令转发失败：{exc}"
             return (
                 MissionActionResult(
                     accepted=False,
@@ -182,7 +182,7 @@ class NucAdapter:
         try:
             parsed = NucMissionCommandResponse.model_validate(json.loads(response_text))
         except Exception as exc:
-            error_detail = f"NUC 命令响应解析失败：{exc}"
+            error_detail = f"真实任务命令响应解析失败：{exc}"
             return (
                 MissionActionResult(
                     accepted=False,

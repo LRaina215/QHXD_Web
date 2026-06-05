@@ -16,7 +16,7 @@ from app.services.state_store import state_store
 
 
 class MissionGateway:
-    """Routes mission commands to mock flow or NUC bridge based on current mode."""
+    """Routes mission commands to mock simulation or the real task execution link."""
 
     def go_to_waypoint(self, request: GoToWaypointRequest) -> tuple[MissionActionResult, RobotState | None]:
         return self._dispatch(

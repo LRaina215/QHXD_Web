@@ -2,7 +2,7 @@ from app.schemas import ImuEnvelope
 
 
 class ImuStore:
-    """Stores the latest IMU sample received from NUC."""
+    """Stores the latest IMU sample received from the real runtime link."""
 
     def __init__(self) -> None:
         self._latest_imu: ImuEnvelope | None = None
