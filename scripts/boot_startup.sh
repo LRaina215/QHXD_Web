@@ -11,24 +11,24 @@ echo "========================================"
 echo "QHXD Boot Startup - $(date)"
 echo "========================================"
 
-# Step 1: Restore ALSA state and init ES8388 playback
+# Step 1: Audio init - restore then force
 echo "[1/5] Initializing audio..."
 alsactl restore >/dev/null 2>&1 || true
+# Force ES8388 playback path (Output 1/2 often reset to 0 by alsactl restore)
 amixer -c 2 sset Speaker on >/dev/null 2>&1 || true
 amixer -c 2 sset Headphone on >/dev/null 2>&1 || true
 amixer -c 2 sset PCM 95% >/dev/null 2>&1 || true
-amixer -c 2 sset "Output 1" 90% >/dev/null 2>&1 || true
-amixer -c 2 sset "Output 2" 90% >/dev/null 2>&1 || true
+amixer -c 2 sset 'Output 1' 90% >/dev/null 2>&1 || true
+amixer -c 2 sset 'Output 2' 90% >/dev/null 2>&1 || true
 echo "Audio initialized."
 
-# Step 2: Wait for backend to be healthy
+# Step 2: Wait for backend
 echo "[2/5] Waiting for backend..."
 for i in $(seq 1 30); do
     if curl -s --noproxy "*" "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null 2>&1; then
         echo "Backend is healthy."
         break
     fi
-    echo "  Waiting... (${i}/30)"
     sleep 2
 done
 
@@ -43,17 +43,18 @@ echo "Real mode switch sent."
 echo "[4/5] Starting C board communication..."
 "${SCRIPT_DIR}/start_cboard_comm.sh" || echo "C board communication start failed (no C board connected?)"
 
-# Step 5: Start YOLO camera (if USB camera present)
+# Step 5: Start YOLO camera
 echo "[5/5] Starting YOLO camera service..."
 if lsusb 2>/dev/null | grep -qi "Hikrobot"; then
-    echo "Hik camera detected, starting Hik YOLO..."
     "${SCRIPT_DIR}/start_yolo_hik_camera.sh" || echo "Hik YOLO start failed."
 elif ls /dev/video* 2>/dev/null | grep -q .; then
-    echo "USB camera detected, starting USB YOLO..."
     "${SCRIPT_DIR}/start_yolo_camera.sh" || echo "USB YOLO start failed."
 else
     echo "No camera detected, skipping YOLO."
 fi
+
+# Final: re-save ALSA state so next boot starts with correct values
+sudo alsactl store 2>/dev/null || true
 
 echo "========================================"
 echo "QHXD Boot Startup Complete - $(date)"
