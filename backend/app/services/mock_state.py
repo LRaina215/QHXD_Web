@@ -2,6 +2,11 @@ import math
 from datetime import datetime, timezone
 
 from app.schemas import (
+    EulerDegSample,
+    ImuEnvelope,
+    ImuSample,
+    QuaternionSample,
+    Vector3Sample,
     AlertEvent,
     DeviceStatus,
     EnvSensor,
@@ -21,6 +26,7 @@ from app.schemas import (
     TaskStatus,
 )
 from app.services.persistence import persistence
+from app.services.imu_store import imu_store
 
 
 class MockStateService:
@@ -49,6 +55,7 @@ class MockStateService:
     def tick(self) -> RobotState:
         self._sequence += 1
         self._advance_task()
+        self._tick_mock_imu()
         self._current_state = self._build_state()
         persistence.save_state_snapshot(self._current_state)
 
@@ -269,5 +276,36 @@ class MockStateService:
         self._current_state = self._build_state()
         persistence.save_state_snapshot(self._current_state)
 
+
+
+    def _tick_mock_imu(self) -> None:
+        now = datetime.now(timezone.utc)
+        t = self._sequence * 0.1
+        yaw_deg = 15.0 * math.sin(t * 0.3)
+        imu = ImuSample(
+            frame_id="imu_link",
+            timestamp=now,
+            orientation=QuaternionSample(w=1.0),
+            euler_deg=EulerDegSample(
+                yaw=round(yaw_deg + (hash(str(self._sequence)) % 100 - 50) * 0.02, 4),
+                pitch=round((hash(str(self._sequence + 1)) % 100 - 50) * 0.01, 4),
+                roll=round((hash(str(self._sequence + 2)) % 100 - 50) * 0.005, 4),
+            ),
+            angular_velocity=Vector3Sample(
+                x=round((hash(str(self._sequence + 3)) % 100 - 50) * 0.002, 4),
+                y=round((hash(str(self._sequence + 4)) % 100 - 50) * 0.002, 4),
+                z=round(math.cos(t * 0.3) * 0.05 + (hash(str(self._sequence + 5)) % 100 - 50) * 0.001, 4),
+            ),
+            linear_acceleration=Vector3Sample(
+                x=round((hash(str(self._sequence + 6)) % 100 - 50) * 0.01, 4),
+                y=round((hash(str(self._sequence + 7)) % 100 - 50) * 0.01, 4),
+                z=round(9.81 + (hash(str(self._sequence + 8)) % 100 - 50) * 0.02, 4),
+            ),
+        )
+        imu_store.store(ImuEnvelope(
+            source="rk3588-mock-imu",
+            updated_at=now,
+            imu=imu,
+        ))
 
 mock_state_service = MockStateService()

@@ -506,7 +506,8 @@ async def onboard_record_command(request: Request):
     payload["source"] = payload.get("source") or "web-onboard-mic"
     payload["requested_by"] = payload.get("requested_by") or "operator"
     payload["keep_audio"] = bool(payload.get("keep_audio", True))
-    use_smart = request.url.path.endswith("/onboard_smart_command") or _parse_bool(payload.pop("smart", False), False)
+    smart_flag = payload.pop("smart", None)
+    use_smart = request.url.path.endswith("/onboard_smart_command") or _parse_bool(smart_flag, False)
 
     try:
         upstream_response = await _forward_json_to_rk(

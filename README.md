@@ -1045,3 +1045,112 @@ docs/PHASE6_PROTOCOL_REVIEW.md
 ```
 
 历史 `DO_PHASE*.md` / `DONE*.md` 文件保留为开发过程记录。新成员优先阅读本 README，再按模块进入对应 README。
+
+## 调试经验 (2026-06-05 嵌赛联调)
+
+以下记录了小程序、Cloud Gateway、RK3588 后端三方联调中遇到的典型问题与解决方案。
+
+### 1. 车载麦克风识别报错 422
+
+**现象**：Web 前端点击"车载麦克风识别"总是返回 HTTP 422，浏览器麦克风正常。
+
+**根因**：Cloud Gateway `onboard_record_command` 中 Python `or` 短路求值 bug：
+
+```python
+# 修复前
+use_smart = request.url.path.endswith("/onboard_smart_command") or _parse_bool(payload.pop("smart", False), False)
+# URL 路径以 /onboard_smart_command 结尾时，or 左侧为 True，
+# 右侧 payload.pop("smart") 永不执行，"smart" 键残留在 payload 中
+```
+
+修复后分开 pop 和判断：
+
+```python
+smart_flag = payload.pop("smart", None)
+use_smart = request.url.path.endswith("/onboard_smart_command") or _parse_bool(smart_flag, False)
+```
+
+**影响文件**：`cloud_gateway/cloud_gateway.py`（云服务器 `/opt/lingxun-cloud-gateway/cloud_gateway.py`）
+
+### 2. Mock 模式缺少 IMU 数据源
+
+**现象**：小程序在 Mock 模式下 IMU 始终显示"暂无 IMU 数据"。
+
+**根因**：`mock_state.py` 只生成机器人状态（电池、导航、任务），不生成 IMU 数据。IMU 唯一数据源是 C 板 → ROS 2 → `imu_bridge` → `/api/internal/nuc/imu` 的 Real 链路。
+
+**修复**：在 `mock_state.py` 的 `tick()` 中添加 `_tick_mock_imu()` 方法，每秒生成带随机噪声的模拟 IMU 数据（偏航角 ±15° 波动、角速度/加速度小幅噪声），写入 `imu_store`。
+
+**影响文件**：`backend/app/services/mock_state.py`
+
+### 3. 小程序无法直连公网域名
+
+**现象**：微信开发者工具中所有 `wx.request` 报 `net::ERR_CONNECTION_CLOSED`，但云服务器本机 curl 正常。
+
+**根因**：`api.lingxunrobot.cn` 未完成 ICP 备案，用户本地网络（国内运营商）在 TCP 层阻断对该域名的访问。云服务器自身、GPT ATLAS 等走不同网络路径不受影响。
+
+**变通方案**：SSH 本地端口转发绕过网络限制：
+
+```bash
+# REST/WebSocket 隧道（HTTP → Cloud Gateway）
+ssh -f -N -L 18443:127.0.0.1:9000 \
+  -i ~/.ssh/UBUNTU.pem ubuntu@106.53.169.127
+
+# 开发时将小程序 config.js ENV 设为 local
+```
+
+**长期方案**：完成 ICP 备案，域名合法化后改回 `ENV: prod`。
+
+### 4. 小程序图片无法显示（wx-image 强制 HTTPS）
+
+**现象**：隧道打通后 REST/IMU 数据已正常，但 `<image>` 组件报"不再支持 HTTP 协议，请升级到 HTTPS"。
+
+**根因**：微信小程序 `<image>` 组件底层走 `wx.downloadFile`，在较新基础库上强制要求 HTTPS。通过 SSH 本地转发到云网关的 HTTP 端口不能满足此要求。
+
+**修复**：不再使用 `<image src="https://...">` 外部 URL，改为 `wx.request` 以 HTTP 下载图片 → `wx.arrayBufferToBase64()` 转 base64 → `<image src="data:image/jpeg;base64,...">` 内联显示。每 3 秒刷新一次（`?t=` 缓存控制，与 YOLO 相机 ~5fps 帧率匹配）。
+
+```javascript
+// 关键代码模式
+wx.request({
+  url: imageUrl,
+  responseType: arraybuffer,
+  success(res) {
+    const base64 = wx.arrayBufferToBase64(res.data);
+    this.setData({ imageDataUri: `data:image/jpeg;base64,${base64}` });
+  }
+});
+```
+
+### 5. 图片频繁闪烁
+
+**现象**：图片每次刷新时出现白色闪烁（先白后图）。
+
+**根因**：`Date.now()` 作为图片 URL 的 `?t=` 参数每秒变化，`<image>` 组件每次看到新的 `src` 就卸载旧图重新加载，加载间隙为白色。
+
+**尝试过的方案**：
+- URL 缓存参数从每秒改为每 3 秒 → 降低频率，未根除
+- 双图交替（两张 `image` 叠加，一张可见一张隐藏，交替切换 `src` 和 z-index）→ 仍然闪烁
+
+**最终方案**：base64 内联方案天然避免此问题。`data:` URI 变更时浏览器直接解码渲染，不存在"正在请求外部资源"的空白期。
+
+### 6. 设置页模式切换体验问题
+
+**问题**：用户点击 Mock/Real 切换按钮后无即时反馈，网络失败时 UI 不回退。
+
+**修复**：
+- 乐观更新：点击时立即移动 toggle 位置 + 更新模式标签，后台发 API
+- 失败回滚：API 返回错误时自动恢复 toggle 到原位
+- Token 缺失时在模式卡片内直接显示红色提示条
+- 模式切换请求独立超时 15s（默认 8s 不够）
+
+**影响文件**：`pages/settings/settings.js`, `pages/settings/settings.wxml`, `pages/settings/settings.wxss`, `utils/commandClient.js`
+
+### 小程序开发环境速查
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| `config.js ENV` | `local` (开发) / `prod` (备案后) | local 走 SSH 隧道 |
+| 隧道 REST | `localhost:18443 → cloud:9000` | HTTP，用于状态/IMU/命令 |
+| 图片加载 | `wx.request` → base64 | 绕过 wx-image HTTPS 限制 |
+| 合法域名校验 | 勾选"不校验" | 开发期必须 |
+| ICP 备案状态 | 未完成 | 备案后所有隧道方案可移除 |
+
