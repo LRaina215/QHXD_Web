@@ -1,7 +1,7 @@
+import base64
 import hashlib
 import os
 import subprocess
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +44,12 @@ def _cleanup_old_audio() -> None:
             pass
 
 
+# Default style prompt for MiMO TTS — describes how the robot should speak
+_MIMO_TTS_SYSTEM_PROMPT = (
+    "用亲切友好的语气播报，语速略快（约1.25倍正常语速），吐字清晰，像一位得体的助手在和用户对话。"
+)
+
+
 class TTSService:
     def __init__(self) -> None:
         self._latest: TTSStatus | None = None
@@ -81,13 +87,13 @@ class TTSService:
         return status
 
     # ------------------------------------------------------------------
-    # online / local real TTS
+    # MiMO TTS (OpenAI-compatible chat completions)
     # ------------------------------------------------------------------
 
     def _speak_online(self, text: str) -> TTSStatus:
         now = datetime.now(timezone.utc)
         backend = self._backend()
-        audio_bytes, error_reason = self._call_tts_api(text)
+        audio_bytes, error_reason = self._call_mimo_tts(text)
 
         if audio_bytes is None:
             status = TTSStatus(
@@ -106,7 +112,7 @@ class TTSService:
         tts_dir.mkdir(parents=True, exist_ok=True)
         request_id = uuid.uuid4().hex[:12]
         timestamp = now.strftime("%Y%m%d_%H%M%S")
-        suffix = self._audio_suffix()
+        suffix = self._mimo_audio_format()
         filename = f"tts_{timestamp}_{request_id}.{suffix}"
         audio_path = tts_dir / filename
 
@@ -131,62 +137,60 @@ class TTSService:
 
         return status
 
-    def _call_tts_api(self, text: str) -> tuple[bytes | None, str | None]:
-        api_url = os.getenv("TTS_ONLINE_API_URL", "").strip()
-        api_key = os.getenv("TTS_ONLINE_API_KEY", "").strip()
-        model = os.getenv("TTS_ONLINE_MODEL", "").strip()
-        voice = os.getenv("TTS_ONLINE_VOICE", "zh-CN-XiaoxiaoNeural").strip()
+    def _call_mimo_tts(self, text: str) -> tuple[bytes | None, str | None]:
+        api_key = os.getenv("MIMO_API_KEY", "").strip()
+        base_url = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1").strip().rstrip("/")
+        model = os.getenv("MIMO_TTS_MODEL", "mimo-v2.5-tts").strip()
+        voice = os.getenv("MIMO_TTS_VOICE", "茉莉").strip()
+        audio_format = self._mimo_audio_format()
 
-        if not api_url:
-            return None, "未配置 TTS_ONLINE_API_URL，无法调用在线 TTS。"
+        if not api_key:
+            return None, "未配置 MIMO_API_KEY，无法调用 MiMO TTS。"
 
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        url = f"{base_url}/chat/completions"
 
-        payload: dict = {"text": text, "voice": voice}
-        if model:
-            payload["model"] = model
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": _MIMO_TTS_SYSTEM_PROMPT},
+                {"role": "assistant", "content": text},
+            ],
+            "audio": {
+                "format": audio_format,
+                "voice": voice,
+            },
+        }
 
         try:
             with httpx.Client(timeout=self._api_timeout(), trust_env=False) as client:
-                response = client.post(api_url, json=payload, headers=headers)
+                response = client.post(
+                    url,
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "api-key": api_key,
+                    },
+                )
         except httpx.TimeoutException:
-            return None, f"TTS API 超时（{self._api_timeout()}s）"
+            return None, f"MiMO TTS API 超时（{self._api_timeout()}s）"
         except Exception as exc:
-            return None, f"TTS API 请求异常：{type(exc).__name__}: {exc}"
+            return None, f"MiMO TTS API 请求异常：{type(exc).__name__}: {exc}"
 
         if not response.is_success:
             detail = (response.text or f"HTTP {response.status_code}")[:300]
             return None, detail
 
-        content_type = response.headers.get("content-type", "")
-        if "audio" in content_type or len(response.content) > 100:
-            audio_bytes = response.content
-            if self._is_wav(audio_bytes) or self._is_mp3(audio_bytes) or len(audio_bytes) > 100:
-                return audio_bytes, None
-            return None, f"TTS 响应不是有效音频格式：{content_type[:80]}"
-
         try:
             data = response.json()
-            audio_url_in_resp = data.get("audio_url") or data.get("url") or data.get("data", {}).get("audio_url", "")
-            if audio_url_in_resp:
-                return self._download_audio(audio_url_in_resp)
-            raw = (response.text or "")[:300]
-            return None, raw
-        except Exception:
-            raw = (response.text or "")[:300]
-            return None, raw
-
-    def _download_audio(self, url: str) -> tuple[bytes | None, str | None]:
-        try:
-            with httpx.Client(timeout=self._api_timeout(), trust_env=False) as client:
-                resp = client.get(url)
-                if resp.is_success:
-                    return resp.content, None
-                return None, f"下载 TTS 音频失败：HTTP {resp.status_code}"
-        except Exception as exc:
-            return None, f"下载 TTS 音频异常：{type(exc).__name__}: {exc}"
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            audio_data = message.get("audio", {}).get("data", "")
+            if not audio_data:
+                return None, "MiMO TTS 响应中未找到音频数据。"
+            audio_bytes = base64.b64decode(audio_data)
+            return audio_bytes, None
+        except (base64.binascii.Error, Exception) as exc:
+            return None, f"MiMO TTS 响应解析失败：{type(exc).__name__}: {exc}"
 
     # ------------------------------------------------------------------
     # local speaker playback
@@ -218,8 +222,8 @@ class TTSService:
         return os.getenv("TTS_BACKEND", "mock").strip().lower() or "mock"
 
     @staticmethod
-    def _audio_suffix() -> str:
-        return os.getenv("TTS_AUDIO_FORMAT", "wav").strip().lower() or "wav"
+    def _mimo_audio_format() -> str:
+        return os.getenv("MIMO_TTS_FORMAT", "wav").strip().lower() or "wav"
 
     @staticmethod
     def _api_timeout() -> float:
@@ -227,14 +231,6 @@ class TTSService:
             return float(os.getenv("TTS_API_TIMEOUT", "15"))
         except ValueError:
             return 15.0
-
-    @staticmethod
-    def _is_wav(data: bytes) -> bool:
-        return len(data) >= 4 and data[:4] == b"RIFF"
-
-    @staticmethod
-    def _is_mp3(data: bytes) -> bool:
-        return len(data) >= 2 and (data[:2] == b"\xff\xfb" or data[:2] == b"\xff\xf3" or data[:2] == b"\xff\xf2")
 
 
 tts_service = TTSService()

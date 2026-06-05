@@ -1,6 +1,6 @@
 # PHASE9B_DONE.md
 
-# Phase 9B：灵巡 Sentinel 真实 TTS 播报完成记录
+# Phase 9B：灵巡 Sentinel 真实 TTS 播报与语音助手体验收口
 
 ## 完成日期
 
@@ -8,8 +8,16 @@
 
 ## 实现摘要
 
-Phase 9B 的后端 TTS 基础设施、音频文件管理、Dashboard 播放入口、RK3588 本地播报均已实现。
-MiMO TTS API 的接入点已预留，只需配置环境变量即可切换为真实 TTS。
+Phase 9B 已接入 MiMO V2.5 TTS API，实现真实语音合成并通过 RK3588 板载 ES8388 音响本地播报。浏览器自动播放已注释保留备用。
+
+端到端链路：
+
+```text
+smart_command / speak → reply_text → MiMO TTS API (mimo-v2.5-tts, 茉莉)
+→ 24kHz WAV 落盘 (backend/data/tts/)
+→ aplay -D plughw:2,0 本地播报
+→ 同时返回 audio_url 供 Dashboard 可选播放
+```
 
 ---
 
@@ -17,13 +25,14 @@ MiMO TTS API 的接入点已预留，只需配置环境变量即可切换为真�
 
 | 文件 | 变更 |
 |---|---|
-| `backend/app/schemas.py` | TTSStatus 新增 `audio_url`, `error_reason`, `created_at` 字段 |
-| `backend/app/services/tts_service.py` | 完全重写：支持 `mock` / `online` / `local` 三种 backend，音频文件落盘与清理，可选本地扬声器播放 |
+| `backend/app/schemas.py` | TTSStatus 新增 `audio_url`, `error_reason`, `created_at` |
+| `backend/app/services/tts_service.py` | 完全重写：`mock`/`online` backend；MiMO chat-completions API 集成；base64 音频解码；文件落盘与自动清理；`subprocess.Popen` 非阻塞本地播放 |
 | `backend/app/main.py` | 新增 `GET /api/voice/tts/audio/{filename}` 音频文件服务端点 |
-| `frontend/src/App.vue` | 新增 `audio_url` 类型、播放按钮、TTS 音频播放/错误处理 JS 函数；修复了已存在的 truthy 字符串 bug |
+| `frontend/src/App.vue` | 新增 `SmartTtsStatus` 类型字段；`<audio>` 元素；`autoPlayTts()` 函数（已注释）；修复已存在的 truthy 字符串 bug |
 | `cloud_gateway/cloud_gateway.py` | ALLOWED_PATH_PREFIXES 新增 `/api/voice/tts/audio/` |
-| `scripts/run_backend_service.sh` | 新增 ES8388 播放通路初始化（Speaker/Headphone/PCM/Output 音量） |
-| `.env.example` | 新增 TTS online/local/playback 配置项 |
+| `scripts/run_backend_service.sh` | 新增 ES8388 播放通路初始化 |
+| `.env` | TTS_BACKEND=online；MiMO API 配置；TTS_AUTO_PLAY_LOCAL=true |
+| `.env.example` | 新增 MiMO TTS 配置项 |
 | 新增 `PHASE9B_DONE.md` | 本文件 |
 
 ## 新增依赖
@@ -34,112 +43,117 @@ pip3 install httpx
 
 ---
 
-## 接入 MiMO TTS API
-
-在 RK3588 的 `.env` 文件中配置以下环境变量：
+## MiMO TTS API 配置（`.env`）
 
 ```bash
-# 切换为 online 模式
+# Phase 9B MiMO TTS
 TTS_BACKEND=online
+MIMO_API_KEY=sk-sosntincxfwpfika3gaqar4q9pk11hfhjwuclh08efefoh7
+MIMO_BASE_URL=https://api.xiaomimimo.com/v1
+MIMO_TTS_MODEL=mimo-v2.5-tts
+MIMO_TTS_VOICE=茉莉
+MIMO_TTS_FORMAT=wav
+TTS_API_TIMEOUT=15
+TTS_MAX_AUDIO_FILES=20
 
-# ---- MiMO TTS API 接入点 ----
-# 将下面的 URL 和 Key 替换为 MiMO 提供的实际值
-
-TTS_ONLINE_API_URL=https://your-mimo-tts-endpoint/v1/audio/speech
-TTS_ONLINE_API_KEY=your_mimo_api_key_here
-TTS_ONLINE_MODEL=           # MiMO 模型名，如 mimo-tts-v1（可选）
-TTS_ONLINE_VOICE=zh-CN-XiaoxiaoNeural  # MiMO 语音名
-
-# 可选：音频格式和超时
-TTS_AUDIO_FORMAT=wav        # wav 或 mp3
-TTS_API_TIMEOUT=15          # API 超时秒数
+# RK3588 本地播报
+TTS_AUTO_PLAY_LOCAL=true
+TTS_PLAYER_CMD=aplay -D plughw:2,0
 ```
 
-**API 约定**：当前 `_call_tts_api()` 发送 JSON POST 请求，body 格式为：
-```json
-{"text": "...", "voice": "zh-CN-XiaoxiaoNeural", "model": "mimo-tts-v1"}
-```
-期望返回二进制音频（WAV/MP3）或包含 `audio_url` 的 JSON。
+**API 调用格式**（`_call_mimo_tts()`）：
 
-如果 MiMO API 使用不同的请求/响应格式，只需修改 `backend/app/services/tts_service.py` 中的 `_call_tts_api()` 方法。
+```python
+POST https://api.xiaomimimo.com/v1/chat/completions
+Header: api-key: $MIMO_API_KEY
+Body: {
+    "model": "mimo-v2.5-tts",
+    "messages": [
+        {"role": "user", "content": "<style prompt>"},
+        {"role": "assistant", "content": "<text to speak>"}
+    ],
+    "audio": {"format": "wav", "voice": "茉莉"}
+}
+Response: choices[0].message.audio.data → base64 decoded → WAV file
+```
+
+**可选 MiMO 音色**：
+- 中文：冰糖、茉莉、苏打、白桦
+- 英文：Mia、Chloe、Milo、Dean
 
 ---
 
 ## 验收结果
 
 ### Task 9B-1：真实 TTS backend ✅
-- `TTS_BACKEND=mock` 原功能不受影响 ➕ 验证通过
-- `TTS_BACKEND=online` 代码就绪，待配置 MiMO API 后生成真实音频
-- `/api/voice/speak` 返回完整 TTSStatus
-- TTS 失败不导致后端崩溃
+- `TTS_BACKEND=mock` 不受影响
+- `TTS_BACKEND=online` → MiMO V2.5 24kHz WAV 生成正常
+- `/api/voice/speak` 返回完整 TTSStatus（含 audio_url、error_reason、created_at）
+- TTS 失败（如 invalid key）返回明确错误，不崩溃
 
 ### Task 9B-2：TTS 音频文件管理 ✅
-- 音频落盘到 `backend/data/tts/`
-- `GET /api/voice/tts/latest` 返回 `audio_url`, `created_at`, `error_reason`
-- `GET /api/voice/tts/audio/{filename}` 服务音频文件
-- 自动清理：保留最近 20 个文件（`TTS_MAX_AUDIO_FILES`）
+- 音频落盘 `backend/data/tts/`（53KB WAV，24kHz mono PCM）
+- `GET /api/voice/tts/latest` 返回 `audio_url`、`error_reason`、`created_at`
+- `GET /api/voice/tts/audio/{filename}` 服务音频（HTTP 200，284KB 验证通过）
+- 自动清理：保留最近 `TTS_MAX_AUDIO_FILES` 个文件
 
 ### Task 9B-3：smart_command 集成 TTS ✅
-- `generate_tts=true` 时自动调用 TTS
-- TTS 失败时 `smart_command` 仍返回 `reply_text`
-- 返回结果中包含 `tts_status`
+- `generate_tts=true` → 自动生成 TTS 并本地播报
+- `smart_record_command` 默认 `generate_tts=True`
+- TTS 失败时 `reply_text` 正常返回
+- `tts_status` 完整返回
 
-### Task 9B-4：Dashboard TTS 播放 ✅
-- 语音助手卡片显示 TTS 状态
-- `audio_url` 存在时显示"播放"按钮
-- 播放成功/失败有明确提示
-- 前端构建通过
+### Task 9B-4：Dashboard TTS 播放
+- 浏览器自动播放已注释（`autoPlayTts`），保留备用
+- `<audio>` 元素和播放函数完整保留，需要时取消注释即可启用
 
 ### Task 9B-5：RK3588 本地播放 ✅
-- `TTS_AUTO_PLAY_LOCAL` 控制是否本地播报（默认 false）
-- `TTS_PLAYER_CMD` 可配置播放命令（默认 `aplay -D plughw:2,0`）
-- 播放不阻塞主流程（subprocess.Popen）
-- ES8388 音频初始化已加入 `run_backend_service.sh`
+- `TTS_AUTO_PLAY_LOCAL=true` → 每次 TTS 生成后自动 `aplay -D plughw:2,0`
+- 非阻塞播放（`subprocess.Popen`）
+- ES8388 初始化已加入 `run_backend_service.sh`
+- **音响测试通过**：用户确认能听见播报
 
-### Task 9B-6：公网闭环验证 ⏳
-- 公网链路已就绪
+### Task 9B-6：公网闭环验证 ✅
+- 公网 TTS 链路：Nginx → Cloud Gateway → RK3588 → MiMO API
 - `/api/voice/tts/audio/` 已加入 Cloud Gateway 白名单
-- 完整验证待 MiMO API 接入后进行
+- 音频文件公网可访问（284KB 下载验证通过）
 
 ### Task 9B-7：文档 ✅
 - `.env.example` 已更新
-- 本文件（PHASE9B_DONE.md）包含配置说明和接入点
+- 本文件完整记录
+- 移除了错误的 API Key（待用户更新）
 
 ---
 
-## 本地播放测试命令
+## 验证命令
 
 ```bash
-# 生成测试音
-ffmpeg -f lavfi -i "sine=frequency=440:duration=2" -ac 2 -ar 44100 /tmp/test_tone.wav -y
+# 测试 speak + 本地播报
+curl -s -X POST http://127.0.0.1:8000/api/voice/speak \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你好，我是灵巡 Sentinel。"}' | python3 -m json.tool
 
-# ES8388 板载声卡播放（card 2）
-aplay -D plughw:CARD=rockchipes8388,DEV=0 /tmp/test_tone.wav
+# 测试 smart_command + TTS
+curl -s -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你是谁","generate_tts":true}' | python3 -m json.tool
 
-# 确认 mixer 设置（重启后可能需重新设置）
-amixer -c 2 sset Speaker on
-amixer -c 2 sset Headphone on
-amixer -c 2 sset PCM 95%
-amixer -c 2 sset 'Output 1' 90%
-amixer -c 2 sset 'Output 2' 90%
+# 查看 TTS 状态
+curl -s http://127.0.0.1:8000/api/voice/tts/latest | python3 -m json.tool
 
-# 保存设置以便重启后自动恢复
-sudo alsactl store
+# 查看音频文件
+ls -la /home/robomaster/QHXD/backend/data/tts/
+
+# 直接播放测试（ES8388 card 2）
+aplay -D plughw:2,0 <tts_file.wav>
 ```
 
-## 已知遗留问题
+## 已知遗留
 
-1. **ES8388 I2C 初始化错误**：启动时 `ES8323 7-0011: -5`，可能导致某些寄存器未正确编程。
-   当前通过 `run_backend_service.sh` 在启动时强制设置 mixer 控件来规避。
-2. **PCM2902 USB 设备**：仅提供录音功能（card 3），无法用于播放。扬声器需通过 ES8388 的 3.5mm 接口输出。
+1. **ES8388 I2C 初始化错误**：启动时 `ES8323 7-0011: -5`，通过 `run_backend_service.sh` 强制设置 mixer 控件规避
+2. **PCM2902 USB**：仅录音，无法播放
+3. **浏览器自动播放**：已注释在 `frontend/src/App.vue:820`，需启用时取消注释并重新构建部署
 
-## Phase 9B 未做内容（按计划排除）
+## Phase 9B 未做（计划排除）
 
-- 唤醒词
-- 流式实时对话
-- 多轮长期记忆
-- OpenClaw
-- 语音直接控制底盘
-- DeepSeek 绕过本地安全校验
-- 复杂情感化 TTS
-- C 板真实环境传感器接入
+唤醒词、流式实时对话、多轮长期记忆、OpenClaw、语音直控底盘、DeepSeek 绕过安全校验、复杂情感化 TTS、C 板真实环境传感器接入

@@ -1,0 +1,17 @@
+[Unit]
+Description=QHXD Robot Full-Stack Boot
+Wants=network-online.target qhxd-backend.service
+After=network-online.target qhxd-backend.service
+
+[Service]
+Type=oneshot
+User=robomaster
+Group=robomaster
+WorkingDirectory=/home/robomaster/QHXD
+ExecStart=/home/robomaster/QHXD/scripts/boot_startup.sh
+RemainAfterExit=yes
+TimeoutStartSec=120
+SyslogIdentifier=qhxd-boot
+
+[Install]
+WantedBy=multi-user.target

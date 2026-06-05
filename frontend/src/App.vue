@@ -816,7 +816,8 @@ function closeVoiceConfirmDialog() {
 
 async function handleSmartCommandResult(payload: SmartCommandResponse, source: 'text' | 'record') {
   smartCommandResult.value = payload.data
-  actionMessage.value = "payload.data.reply_text || payload.data.error_reason || '智能助手已处理'"
+  actionMessage.value = payload.data.reply_text || payload.data.error_reason || '智能助手已处理'
+  // autoPlayTts(payload.data.tts_status?.audio_url)  // Phase9B: 禁用浏览器播放，改为RK3588本地播报
 
   if (payload.data.mission_candidate?.pending_command_id) {
     const candidate = payload.data.mission_candidate
@@ -1147,7 +1148,7 @@ async function sendTextCommand() {
     const payload = (await response.json()) as SmartCommandResponse
     await handleSmartCommandResult(payload, 'text')
   } catch (error) {
-    actionMessage.value = "error instanceof Error ? error.message : '文本命令发送失败'"
+    actionMessage.value = error instanceof Error ? error.message : '文本命令发送失败'
   } finally {
     isSendingTextCommand.value = false
   }
@@ -1493,14 +1494,15 @@ function formatDetectionObject(object: { class_name: string; confidence: number;
   return `${object.class_name} ${object.confidence.toFixed(2)}${age}`
 }
 
-async function playTtsAudio(url: string) {
+function autoPlayTts(url: string | null | undefined) {
   const player = ttsAudioPlayer.value
-  if (!player) return
+  if (!player || !url) return
   player.src = url
-  player.play().catch(() => {
-    actionMessage.value = "语音播放失败"
+  player.play().then(() => {
+    actionMessage.value = "正在播报语音回复..."
+  }).catch(() => {
+    actionMessage.value = "语音自动播放被浏览器阻止，点击页面任意位置后重试"
   })
-  actionMessage.value = "正在播放语音回复..."
 }
 
 function onTtsAudioError() {
@@ -2063,4 +2065,5 @@ function saveApiToken() {
       @close="closeVoiceConfirmDialog"
     />
   </main>
+  <audio ref="ttsAudioPlayer" style="display:none" @error="onTtsAudioError" @ended="onTtsAudioEnded"></audio>
 </template>

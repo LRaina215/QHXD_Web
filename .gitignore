@@ -32,3 +32,7 @@ log/
 .env.*
 !.env.example
 !backend/.env.example
+
+# Phase 9B TTS generated audio files
+backend/data/tts/*
+!backend/data/tts/.gitkeep
