@@ -11,10 +11,9 @@ echo "========================================"
 echo "QHXD Boot Startup - $(date)"
 echo "========================================"
 
-# Step 1: Audio init - restore then force
+# Step 1: Audio init
 echo "[1/5] Initializing audio..."
 alsactl restore >/dev/null 2>&1 || true
-# Force ES8388 playback path (Output 1/2 often reset to 0 by alsactl restore)
 amixer -c 2 sset Speaker on >/dev/null 2>&1 || true
 amixer -c 2 sset Headphone on >/dev/null 2>&1 || true
 amixer -c 2 sset PCM 95% >/dev/null 2>&1 || true
@@ -43,17 +42,37 @@ echo "Real mode switch sent."
 echo "[4/5] Starting C board communication..."
 "${SCRIPT_DIR}/start_cboard_comm.sh" || echo "C board communication start failed (no C board connected?)"
 
-# Step 5: Start YOLO camera
+# Step 5: Start YOLO camera with retry logic
 echo "[5/5] Starting YOLO camera service..."
-if lsusb 2>/dev/null | grep -qi "Hikrobot"; then
-    "${SCRIPT_DIR}/start_yolo_hik_camera.sh" || echo "Hik YOLO start failed."
-elif ls /dev/video* 2>/dev/null | grep -q .; then
-    "${SCRIPT_DIR}/start_yolo_camera.sh" || echo "USB YOLO start failed."
+CAMERA_STARTED=false
+
+for attempt in 1 2 3; do
+    echo "  Camera attempt ${attempt}/3..."
+    
+    if lsusb 2>/dev/null | grep -qi "Hikrobot"; then
+        echo "  Hik camera detected."
+        "${SCRIPT_DIR}/start_yolo_hik_camera.sh" && CAMERA_STARTED=true && break
+        echo "  Hik YOLO start failed, retrying..."
+        sleep 3
+    elif ls /dev/video* 2>/dev/null | grep -q .; then
+        echo "  USB camera detected."
+        "${SCRIPT_DIR}/start_yolo_camera.sh" && CAMERA_STARTED=true && break
+        echo "  USB YOLO start failed, retrying..."
+        sleep 3
+    else
+        echo "  No camera detected on attempt ${attempt}."
+        sleep 5
+    fi
+done
+
+if [ "${CAMERA_STARTED}" = true ]; then
+    echo "  YOLO camera started successfully."
 else
-    echo "No camera detected, skipping YOLO."
+    echo "  WARNING: Could not start YOLO camera after 3 attempts."
+    echo "  Run: cd ~/QHXD && ./scripts/start_yolo_hik_camera.sh"
 fi
 
-# Final: re-save ALSA state so next boot starts with correct values
+# Final: save ALSA state
 sudo alsactl store 2>/dev/null || true
 
 echo "========================================"

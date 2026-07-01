@@ -34,7 +34,12 @@
       "AcquisitionFrameRateEnable": true
     },
     "float": {
-      "AcquisitionFrameRate": 5.0
+      "AcquisitionFrameRate": 5.0,
+      "ExposureTime": 40000.0,
+      "Gain": 24.0
+    },
+    "enum": {
+      "ExposureAuto": 0
     }
   },
   "read_fail_limit": 20

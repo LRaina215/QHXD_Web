@@ -10,6 +10,29 @@ QHXD 是琼海芯动车载机器人项目的 RK3588 中台工程。当前仓库�
 
 项目原则：语音、LLM、YOLO 只通过已有任务/状态接口接入；视觉结果不直接控制底盘；公网控制默认关闭并需要 token 与安全开关。
 
+## 当前部署架构
+
+公网前端与完整业务后端不在同一台机器上：
+
+```text
+浏览器
+  |-- https://lingxunrobot.cn/        -> 云服务器 Nginx -> 静态前端
+  |-- https://lingxunrobot.cn/api/*   -> 云服务器 Cloud Gateway :9000
+  `-- wss://lingxunrobot.cn/ws/*      -> 云服务器 Cloud Gateway :9000
+                                                   |
+                                                   | Tailscale
+                                                   v
+                                          RK3588 QHXD backend :8000
+                                                   |
+                     FunASR / DeepSeek / YOLO / 相机 / 麦克风 / ROS 2 / C 板
+```
+
+| 部署位置 | 运行内容 | 是否完整 QHXD 后端 |
+| --- | --- | --- |
+| 云服务器 | Nginx、公网静态前端、`lingxun-cloud-gateway` (`127.0.0.1:9000`) | 否，只做认证、限流、日志和转发 |
+| RK3588 | FastAPI 完整后端 (`0.0.0.0:8000`)、语音、LLM、YOLO、导航与硬件接入 | 是 |
+| RK3588 本地前端 | Vite dev server (`0.0.0.0:5173`) | 只用于本地开发调试，公网运行不需要 |
+
 ## 快捷启动
 
 以下命令默认在 RK3588 项目根目录执行：
@@ -18,38 +41,64 @@ QHXD 是琼海芯动车载机器人项目的 RK3588 中台工程。当前仓库�
 cd /home/robomaster/QHXD
 ```
 
-### 公网运行最小启动
+### 当前生产启动方式（推荐）
 
-公网访问依赖两端：
+当前 RK3588 已启用两个 systemd 服务：
 
-- 云服务器：Nginx + 静态前端 + `lingxun-cloud-gateway`。
-- RK3588：完整 QHXD backend。
+- `qhxd-backend.service`：启动完整 QHXD FastAPI 后端，异常退出后自动重启。
+- `qhxd-boot.service`：等待后端就绪、切换 `real` 模式、启动 `standard_robot_pp_ros2` 与 IMU bridge，并按 Hik 优先、USB 备用的顺序自动启动 YOLO 相机。
 
-RK3588 侧推荐安装 backend 开机自启：
+因此正常重启 RK3588 后不需要再手动运行 `start_all.sh` 或 `start_public_robot.sh`。直接检查：
 
 ```bash
-# 首次执行：安装并启用 qhxd-backend.service
-./scripts/install_backend_service.sh
+./scripts/status_public_robot.sh
+systemctl is-active qhxd-backend qhxd-boot
+systemctl is-enabled qhxd-backend qhxd-boot
+```
 
-# 平时启动公网所需的机器人本体最小运行环境
+生产环境常用命令：
+
+```bash
+# 重启完整后端
+sudo systemctl restart qhxd-backend
+
+# 重新执行硬件、导航与相机的开机编排
+sudo systemctl restart qhxd-boot
+
+# 查看状态与日志
+sudo systemctl status qhxd-backend qhxd-boot
+sudo journalctl -u qhxd-backend -f
+sudo journalctl -u qhxd-boot -f
+```
+
+新机器首次部署时，先安装 backend service，再安装 full-stack boot service：
+
+```bash
+./scripts/install_backend_service.sh
+sudo install -m 0644 systemd/qhxd-boot.service /etc/systemd/system/qhxd-boot.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now qhxd-boot.service
+```
+
+`qhxd-boot.service` 遇到未接 C 板或相机时会记录警告并继续启动；公网页面和 RK 后端仍可正常使用。
+
+### 手动恢复与按需启动
+
+`start_public_robot.sh` 保留为手动恢复入口。它默认只确保 backend 可用，不启动本地前端、YOLO 或 C 板通信：
+
+```bash
+# 只确保 RK backend 运行
 ./scripts/start_public_robot.sh
 
-# 接入 C 板真实 IMU / 里程计时启动 backend + C 板通信 + IMU bridge
+# 手动启动 backend + C 板通信
 PUBLIC_ROBOT_START_CBOARD=true ./scripts/start_public_robot.sh
 
-# 检查 RK backend、Tailscale、公网 gateway 与可选本地服务
-./scripts/status_public_robot.sh
+# 手动启动 backend + Hik YOLO
+PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=hik ./scripts/start_public_robot.sh
+
+# 手动启动 backend + USB YOLO
+PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=usb ./scripts/start_public_robot.sh
 ```
-
-常用 systemd 命令：
-
-```bash
-sudo systemctl status qhxd-backend
-sudo systemctl restart qhxd-backend
-sudo journalctl -u qhxd-backend -f
-```
-
-`qhxd-backend.service` 只负责 RK3588 后端。公网前端由云服务器静态托管；YOLO、Hik、导航桥接、C 板通信依赖现场硬件，不默认开机自启。C 板接入现场可通过 `PUBLIC_ROBOT_START_CBOARD=true` 显式启用。
 
 ### 本地调试启动
 
@@ -73,10 +122,10 @@ RK 后端：http://127.0.0.1:8000 或 http://<RK3588_IP>:8000
 # 启动 Hikrobot / MVS YOLO 摄像头检测服务
 ./scripts/start_yolo_hik_camera.sh
 
-# 一键启动 Hik Web 服务：后端 + 前端 + Hik YOLO
+# 本地一键 Hik 调试：后端 + Vite 前端 + Hik YOLO
 ./scripts/start_hik_web.sh
 
-# 一键启动本地调试三项：后端 + 前端 + USB YOLO
+# 本地一键 USB 调试：后端 + Vite 前端 + USB YOLO
 ./scripts/start_all.sh
 
 # 查看脚本托管的本地服务状态
@@ -86,7 +135,23 @@ RK 后端：http://127.0.0.1:8000 或 http://<RK3588_IP>:8000
 ./scripts/stop_all.sh
 ```
 
-注意：`start_backend.sh` 是 pid 文件模式，适合手动调试；生产/公网最小运行优先使用 `qhxd-backend.service`。不要长期同时运行两套 backend。
+注意：
+
+- 公网前端由云服务器托管，不需要 RK 上的 `start_frontend.sh`。
+- `start_backend.sh` 是 pid 文件模式，只适合手动调试；生产环境使用 `qhxd-backend.service`。
+- `status_all.sh` 主要查看 pid 文件托管的本地调试进程；当前生产架构请使用 `status_public_robot.sh`。
+- `stop_all.sh` 只停止脚本托管的调试进程，不代替 `systemctl stop qhxd-backend qhxd-boot`。
+
+启动入口用途速查：
+
+| 入口 | 用途 | 当前是否推荐 |
+| --- | --- | --- |
+| `qhxd-backend.service` + `qhxd-boot.service` | RK 生产环境开机自启 | 是 |
+| `scripts/status_public_robot.sh` | 统一检查 RK backend、Tailscale、公网 gateway、YOLO 与 ROS 2 | 是 |
+| `scripts/start_public_robot.sh` | systemd 异常时的手动恢复或按需启动 | 是，仅手动场景 |
+| `scripts/start_frontend.sh` | RK 本地 Vite 开发页面 | 仅前端调试 |
+| `scripts/start_all.sh` | backend + 本地 Vite + USB YOLO | 仅 USB 本地联调 |
+| `scripts/start_hik_web.sh` | backend + 本地 Vite + Hik YOLO | 仅 Hik 本地联调 |
 
 ### 相机快捷入口
 
@@ -919,8 +984,11 @@ curl http://127.0.0.1:8000/api/voice/tts/latest
 公网 gateway：
 
 ```bash
-curl http://127.0.0.1:9000/health
+# 任意能访问公网的机器
 curl https://api.lingxunrobot.cn/health
+
+# 仅在云服务器本机执行
+curl http://127.0.0.1:9000/health
 ```
 
 ROS 2：
@@ -933,20 +1001,17 @@ ros2 topic list | sort
 
 ## 常见问题
 
-### RK3588 重启后后端是否要手动开？
+### RK3588 重启后是否要手动开后端和硬件链路？
 
-如果已经执行过：
-
-```bash
-./scripts/install_backend_service.sh
-```
-
-则不需要。`qhxd-backend.service` 会开机自启。用以下命令确认：
+当前这台 RK3588 不需要。`qhxd-backend.service` 负责完整后端，`qhxd-boot.service` 负责 real 模式、C 板/IMU bridge 和相机 YOLO 编排。用以下命令确认：
 
 ```bash
-systemctl is-active qhxd-backend
-systemctl is-enabled qhxd-backend
+systemctl is-active qhxd-backend qhxd-boot
+systemctl is-enabled qhxd-backend qhxd-boot
+./scripts/status_public_robot.sh
 ```
+
+本地 Vite 前端不属于公网生产必需服务，RK 重启后不运行 `start_frontend.sh` 也不影响 `https://lingxunrobot.cn`。
 
 ### 公网 token 填什么？
 
@@ -1046,9 +1111,9 @@ docs/PHASE6_PROTOCOL_REVIEW.md
 
 历史 `DO_PHASE*.md` / `DONE*.md` 文件保留为开发过程记录。新成员优先阅读本 README，再按模块进入对应 README。
 
-## 调试经验 (2026-06-05 嵌赛联调)
+## 历史调试经验 (2026-06-05 嵌赛联调)
 
-以下记录了小程序、Cloud Gateway、RK3588 后端三方联调中遇到的典型问题与解决方案。
+以下记录了小程序、Cloud Gateway、RK3588 后端三方联调中遇到的典型问题与解决方案。其中备案未完成时的 SSH 隧道方案仅作历史参考，不是当前生产架构。
 
 ### 1. 车载麦克风识别报错 422
 
@@ -1082,13 +1147,13 @@ use_smart = request.url.path.endswith("/onboard_smart_command") or _parse_bool(s
 
 **影响文件**：`backend/app/services/mock_state.py`
 
-### 3. 小程序无法直连公网域名
+### 3. 备案前小程序无法直连公网域名（已解决）
 
 **现象**：微信开发者工具中所有 `wx.request` 报 `net::ERR_CONNECTION_CLOSED`，但云服务器本机 curl 正常。
 
 **根因**：`api.lingxunrobot.cn` 未完成 ICP 备案，用户本地网络（国内运营商）在 TCP 层阻断对该域名的访问。云服务器自身、GPT ATLAS 等走不同网络路径不受影响。
 
-**变通方案**：SSH 本地端口转发绕过网络限制：
+**当时的临时方案**：SSH 本地端口转发绕过网络限制：
 
 ```bash
 # REST/WebSocket 隧道（HTTP → Cloud Gateway）
@@ -1098,7 +1163,14 @@ ssh -f -N -L 18443:127.0.0.1:9000 \
 # 开发时将小程序 config.js ENV 设为 local
 ```
 
-**长期方案**：完成 ICP 备案，域名合法化后改回 `ENV: prod`。
+**当前状态**：网站已完成 ICP 备案与公安联网备案，生产环境应使用 `ENV: prod`，直接访问：
+
+```text
+REST: https://api.lingxunrobot.cn
+WebSocket: wss://api.lingxunrobot.cn/ws/state 与 /ws/imu
+```
+
+SSH 隧道只作域名或网络故障时的临时排障方案。
 
 ### 4. 小程序图片无法显示（wx-image 强制 HTTPS）
 
@@ -1148,9 +1220,8 @@ wx.request({
 
 | 配置项 | 值 | 说明 |
 |--------|-----|------|
-| `config.js ENV` | `local` (开发) / `prod` (备案后) | local 走 SSH 隧道 |
-| 隧道 REST | `localhost:18443 → cloud:9000` | HTTP，用于状态/IMU/命令 |
+| `config.js ENV` | `prod` | 当前生产环境直连 HTTPS / WSS |
+| 隧道 REST | `localhost:18443 → cloud:9000` | 仅故障排查时临时使用 |
 | 图片加载 | `wx.request` → base64 | 绕过 wx-image HTTPS 限制 |
-| 合法域名校验 | 勾选"不校验" | 开发期必须 |
-| ICP 备案状态 | 未完成 | 备案后所有隧道方案可移除 |
-
+| 合法域名校验 | 使用已配置的 `api.lingxunrobot.cn` | 真机/发布环境不依赖“不校验”选项 |
+| ICP 备案状态 | 已完成 | 公网域名为当前正式入口 |
