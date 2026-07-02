@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from detection_status_builder import OBSTACLE_CLASSES, build_detection_status
+from h264_stream_publisher import H264StreamPublisher, StreamPublisherConfig
 from infer_image import OUTPUT_LAYOUTS, RknnYoloRunner, draw_detections_on_array
 
 SOURCE = "rk3588-rknn-yolo26"
@@ -56,6 +58,14 @@ CONFIG_FIELDS = {
     "person_event_interval",
     "obstacle_event_interval",
     "blockage_event_interval",
+    "stream_enabled",
+    "stream_url",
+    "stream_fps",
+    "stream_width",
+    "stream_height",
+    "stream_bitrate",
+    "stream_queue_size",
+    "stream_reconnect_interval",
 }
 DEFAULT_OPTIONS: dict[str, Any] = {
     "model": None,
@@ -90,6 +100,14 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "person_event_interval": EVENT_THROTTLE_SECONDS["person_detected"],
     "obstacle_event_interval": EVENT_THROTTLE_SECONDS["obstacle_detected"],
     "blockage_event_interval": EVENT_THROTTLE_SECONDS["possible_blockage"],
+    "stream_enabled": False,
+    "stream_url": "",
+    "stream_fps": 10.0,
+    "stream_width": 1280,
+    "stream_height": 720,
+    "stream_bitrate": 1_200_000,
+    "stream_queue_size": 2,
+    "stream_reconnect_interval": 3.0,
 }
 
 
@@ -247,6 +265,81 @@ class FfmpegCameraSource(CameraSource):
         pass
 
 
+class LatestFrameCapture:
+    """Read one camera continuously and expose only its newest complete frame."""
+
+    def __init__(
+        self,
+        camera: CameraSource,
+        *,
+        fps: float,
+        read_fail_limit: int,
+        stream_publisher: H264StreamPublisher | None,
+    ) -> None:
+        self.camera = camera
+        self.color_order = camera.color_order
+        self.fps = max(0.1, float(fps))
+        self.read_fail_limit = max(1, int(read_fail_limit))
+        self.stream_publisher = stream_publisher
+        self._condition = threading.Condition()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="camera-latest-frame", daemon=True)
+        self._sequence = 0
+        self._latest_frame: Any = None
+        self._failed = False
+        self._thread.start()
+
+    @property
+    def failed(self) -> bool:
+        with self._condition:
+            return self._failed
+
+    def wait_for_frame(self, after_sequence: int, timeout: float) -> tuple[int, Any] | None:
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._condition:
+            while self._sequence <= after_sequence and not self._failed and not self._stop.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._condition.wait(remaining)
+            if self._sequence <= after_sequence:
+                return None
+            return self._sequence, self._latest_frame
+
+    def close(self, timeout: float = 2.0) -> None:
+        self._stop.set()
+        with self._condition:
+            self._condition.notify_all()
+        self._thread.join(timeout=max(0.0, timeout))
+        self.camera.release()
+
+    def _run(self) -> None:
+        frame_interval = 1.0 / self.fps
+        read_failures = 0
+        while not self._stop.is_set():
+            loop_started = time.monotonic()
+            ok, frame = self.camera.read()
+            if not ok or frame is None:
+                read_failures += 1
+                print(f"Camera frame read failed ({read_failures}/{self.read_fail_limit}).", file=sys.stderr)
+                if read_failures >= self.read_fail_limit:
+                    with self._condition:
+                        self._failed = True
+                        self._condition.notify_all()
+                    return
+                _sleep_until_next(loop_started, frame_interval)
+                continue
+
+            read_failures = 0
+            if self.stream_publisher is not None:
+                self.stream_publisher.submit(frame, color_order=self.color_order)
+            with self._condition:
+                self._sequence += 1
+                self._latest_frame = frame
+                self._condition.notify_all()
+            _sleep_until_next(loop_started, frame_interval)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run continuous RKNN YOLO detection from a USB camera.")
     parser.add_argument("--config", default=None, help="Optional JSON config file. CLI values override config values.")
@@ -281,6 +374,14 @@ def main() -> int:
     parser.add_argument("--person-event-interval", type=float, default=None, help="Minimum seconds between person_detected events.")
     parser.add_argument("--obstacle-event-interval", type=float, default=None, help="Minimum seconds between obstacle_detected events.")
     parser.add_argument("--blockage-event-interval", type=float, default=None, help="Minimum seconds between possible_blockage events.")
+    parser.add_argument("--stream-enabled", action="store_true", default=None, help="Publish camera frames as hardware-encoded H.264.")
+    parser.add_argument("--stream-url", default=None, help="RTMP/RTMPS or file URL. QHXD_VIDEO_STREAM_URL is used when omitted.")
+    parser.add_argument("--stream-fps", type=float, default=None, help="Nominal H.264 stream FPS.")
+    parser.add_argument("--stream-width", type=int, default=None, help="Encoded video width.")
+    parser.add_argument("--stream-height", type=int, default=None, help="Encoded video height.")
+    parser.add_argument("--stream-bitrate", type=int, default=None, help="H.264 target bitrate in bits per second.")
+    parser.add_argument("--stream-queue-size", type=int, choices=[1, 2], default=None, help="Bounded stream queue size.")
+    parser.add_argument("--stream-reconnect-interval", type=float, default=None, help="Seconds before rebuilding a failed stream pipeline.")
     raw_args = parser.parse_args()
 
     try:
@@ -325,6 +426,10 @@ def _merge_config(raw_args: argparse.Namespace) -> argparse.Namespace:
             continue
         values[key] = value
 
+    stream_enabled_env = os.getenv("QHXD_VIDEO_STREAM_ENABLED")
+    if stream_enabled_env is not None:
+        values["stream_enabled"] = stream_enabled_env.strip().lower() in {"1", "true", "yes", "on"}
+
     if not values.get("model"):
         raise RuntimeError("缺少 model，请通过 --model 或配置文件提供")
     if not values.get("labels"):
@@ -363,6 +468,29 @@ def _merge_config(raw_args: argparse.Namespace) -> argparse.Namespace:
     values["person_event_interval"] = float(values["person_event_interval"])
     values["obstacle_event_interval"] = float(values["obstacle_event_interval"])
     values["blockage_event_interval"] = float(values["blockage_event_interval"])
+    values["stream_enabled"] = bool(values["stream_enabled"])
+    values["stream_url"] = str(values["stream_url"] or os.getenv("QHXD_VIDEO_STREAM_URL", "")).strip()
+    values["stream_fps"] = float(values["stream_fps"])
+    values["stream_width"] = int(values["stream_width"])
+    values["stream_height"] = int(values["stream_height"])
+    values["stream_bitrate"] = int(values["stream_bitrate"])
+    values["stream_queue_size"] = int(values["stream_queue_size"])
+    values["stream_reconnect_interval"] = float(values["stream_reconnect_interval"])
+    if values["stream_enabled"]:
+        if not values["stream_url"]:
+            raise RuntimeError("stream_enabled=true requires stream_url or QHXD_VIDEO_STREAM_URL")
+        try:
+            StreamPublisherConfig(
+                url=values["stream_url"],
+                fps=values["stream_fps"],
+                width=values["stream_width"],
+                height=values["stream_height"],
+                bitrate=values["stream_bitrate"],
+                queue_size=values["stream_queue_size"],
+                reconnect_interval=values["stream_reconnect_interval"],
+            ).validate()
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
     return argparse.Namespace(**values)
 
 
@@ -378,7 +506,9 @@ def _normalize_hold_classes(value: Any) -> list[str]:
 
 def run_service(args: argparse.Namespace) -> int:
     camera: CameraSource | None = None
+    capture: LatestFrameCapture | None = None
     runner: RknnYoloRunner | None = None
+    stream_publisher: H264StreamPublisher | None = None
     final_status: dict[str, Any] | None = None
     final_status_submitted = False
 
@@ -386,6 +516,19 @@ def run_service(args: argparse.Namespace) -> int:
         camera = _open_camera_or_report(args)
         if camera is None:
             return 2
+
+        if args.stream_enabled:
+            stream_publisher = H264StreamPublisher(
+                StreamPublisherConfig(
+                    url=args.stream_url,
+                    fps=args.stream_fps,
+                    width=args.stream_width,
+                    height=args.stream_height,
+                    bitrate=args.stream_bitrate,
+                    queue_size=args.stream_queue_size,
+                    reconnect_interval=args.stream_reconnect_interval,
+                )
+            )
 
         runner = RknnYoloRunner(
             args.model,
@@ -397,6 +540,17 @@ def run_service(args: argparse.Namespace) -> int:
             source=SOURCE,
         ).load()
 
+        capture_backend = camera.__class__.__name__
+        capture_fps = max(args.fps, args.stream_fps if stream_publisher is not None else 0.0)
+        active_stream_fps = args.stream_fps if stream_publisher is not None else 0.0
+        capture = LatestFrameCapture(
+            camera,
+            fps=capture_fps,
+            read_fail_limit=args.read_fail_limit,
+            stream_publisher=stream_publisher,
+        )
+        camera = None
+
         throttler = EventThrottler(_event_intervals_from_args(args))
         hold_cache = RecentDetectionHold(args.hold_seconds, set(args.hold_classes))
         frame_interval = 1.0 / max(args.fps, 0.1)
@@ -404,41 +558,47 @@ def run_service(args: argparse.Namespace) -> int:
         last_submit_at = 0.0
         frame_count = 0
         blockage_frames = 0
-        read_failures = 0
+        last_capture_sequence = 0
 
         print(
-            f"Camera detection service started: camera={args.camera}, backend={camera.__class__.__name__}, "
-            f"fps={args.fps}, submit={args.submit and not args.dry_run}, dry_run={args.dry_run}",
+            f"Camera detection service started: camera={args.camera}, backend={capture_backend}, "
+            f"capture_fps={capture_fps:g}, detection_fps={args.fps:g}, "
+            f"stream_fps={active_stream_fps:g}, "
+            f"submit={args.submit and not args.dry_run}, dry_run={args.dry_run}",
             file=sys.stderr,
         )
 
         while True:
             loop_started = time.monotonic()
-            ok, frame = camera.read()
-            if not ok or frame is None:
-                read_failures += 1
-                print(f"Camera frame read failed ({read_failures}/{args.read_fail_limit}).", file=sys.stderr)
-                if read_failures >= max(1, args.read_fail_limit):
-                    status = _service_status(args, False, "camera_read_failed", "warning", "摄像头连续读取失败，检测服务离线")
-                    _emit_status(status, dry_run=args.dry_run)
-                    _maybe_submit(args, status, force=True)
-                    if args.camera_retry_interval > 0 and args.max_frames <= 0:
-                        camera.release()
-                        camera = _open_camera_or_report(args)
-                        if camera is None:
-                            final_status = status
-                            final_status_submitted = args.submit and not args.dry_run
-                            return 3
-                        read_failures = 0
-                        _sleep_until_next(loop_started, frame_interval)
-                        continue
-                    final_status = status
-                    final_status_submitted = args.submit and not args.dry_run
-                    return 3
-                _sleep_until_next(loop_started, frame_interval)
-                continue
+            captured = capture.wait_for_frame(last_capture_sequence, max(1.0, frame_interval * 2.0))
+            if captured is None:
+                if not capture.failed:
+                    continue
+                status = _service_status(args, False, "camera_read_failed", "warning", "摄像头连续读取失败，检测服务离线")
+                _emit_status(status, dry_run=args.dry_run)
+                _maybe_submit(args, status, force=True)
+                if args.camera_retry_interval > 0 and args.max_frames <= 0:
+                    capture.close()
+                    capture = None
+                    camera = _open_camera_or_report(args)
+                    if camera is None:
+                        final_status = status
+                        final_status_submitted = args.submit and not args.dry_run
+                        return 3
+                    capture = LatestFrameCapture(
+                        camera,
+                        fps=capture_fps,
+                        read_fail_limit=args.read_fail_limit,
+                        stream_publisher=stream_publisher,
+                    )
+                    camera = None
+                    last_capture_sequence = 0
+                    continue
+                final_status = status
+                final_status_submitted = args.submit and not args.dry_run
+                return 3
 
-            read_failures = 0
+            last_capture_sequence, frame = captured
             frame_count += 1
             frame_seq = frame_count
             timestamp = _utc_now()
@@ -446,7 +606,7 @@ def run_service(args: argparse.Namespace) -> int:
             current_objects: list[dict[str, Any]] = []
             stats = None
             try:
-                current_objects, stats = runner.infer_frame_with_stats(frame, color_order=camera.color_order)
+                current_objects, stats = runner.infer_frame_with_stats(frame, color_order=capture.color_order)
                 if _has_current_event_obstacle(current_objects, args, width, height):
                     blockage_frames += 1
                 else:
@@ -470,13 +630,13 @@ def run_service(args: argparse.Namespace) -> int:
 
             if args.save_latest:
                 try:
-                    draw_detections_on_array(frame, Path(args.save_latest), status.get("objects", []), color_order=camera.color_order)
+                    draw_detections_on_array(frame, Path(args.save_latest), status.get("objects", []), color_order=capture.color_order)
                 except Exception as exc:
                     print(f"Save latest detection image failed: {exc}", file=sys.stderr)
 
             if args.save_debug_frames and frame_seq % args.debug_every_n == 0:
                 try:
-                    _save_debug_frame_set(args, frame_seq, frame, camera.color_order, current_objects, status, stats)
+                    _save_debug_frame_set(args, frame_seq, frame, capture.color_order, current_objects, status, stats)
                 except Exception as exc:
                     print(f"Save debug frame set failed: {exc}", file=sys.stderr)
 
@@ -500,10 +660,21 @@ def run_service(args: argparse.Namespace) -> int:
     finally:
         if final_status is not None and args.submit and not args.dry_run and not final_status_submitted:
             _submit_status(args.backend_url, final_status)
+        if capture is not None:
+            capture.close()
+        elif camera is not None:
+            camera.release()
         if runner is not None:
             runner.release()
-        if camera is not None:
-            camera.release()
+        if stream_publisher is not None:
+            stream_publisher.close()
+            print(
+                "H.264 stream publisher stopped: "
+                f"submitted={stream_publisher.stats.submitted}, pushed={stream_publisher.stats.pushed}, "
+                f"dropped={stream_publisher.stats.dropped}, reconnects={stream_publisher.stats.reconnects}, "
+                f"last_error={stream_publisher.stats.last_error or 'none'}",
+                file=sys.stderr,
+            )
         print("Camera and RKNN runtime released.", file=sys.stderr)
 
 

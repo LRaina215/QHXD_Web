@@ -61,6 +61,18 @@ status_service yolo_camera
 status_service standard_robot_pp_ros2
 status_service ros2_imu_bridge
 
+if [[ "${QHXD_VIDEO_STREAM_ENABLED:-false}" =~ ^(1|true|yes|on)$ ]]; then
+  echo "H.264 cloud publisher: enabled"
+  publisher_log="$(log_file yolo_camera)"
+  if [[ -f "${publisher_log}" ]] && grep -q "H.264 stream publisher connected" "${publisher_log}"; then
+    echo "H.264 cloud publisher: connected"
+  else
+    echo "H.264 cloud publisher: waiting/reconnecting"
+  fi
+else
+  echo "H.264 cloud publisher: disabled"
+fi
+
 if command -v ros2 >/dev/null 2>&1; then
   echo
   echo "ROS 2 topics:"

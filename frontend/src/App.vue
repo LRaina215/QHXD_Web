@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import NavMapPlaceholder from './components/NavMapPlaceholder.vue'
 import NavigationAssistPanel from './components/NavigationAssistPanel.vue'
 import VoiceConfirmDialog from './components/VoiceConfirmDialog.vue'
+import CloudVideoPlayer from './components/CloudVideoPlayer.vue'
 import {
   ENABLE_LOCAL_RECORD_COMMAND,
   apiUrl,
@@ -284,11 +285,27 @@ const isRecordingVoice = ref(false)
 const isBrowserVoiceRecording = ref(false)
 const isOnboardVoiceRecording = ref(false)
 const ttsAudioPlayer = ref<HTMLAudioElement | null>(null)
+const eventsDetails = ref<HTMLDetailsElement | null>(null)
+const runtimeDetails = ref<HTMLDetailsElement | null>(null)
 const isConfirmingVoiceCommand = ref(false)
 const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
 const imuWsConnected = ref(false)
 const shouldReconnect = ref(true)
+let mobileLayoutQuery: MediaQueryList | null = null
+
+function syncResponsiveDisclosures(isMobile: boolean) {
+  if (eventsDetails.value) {
+    eventsDetails.value.open = !isMobile
+  }
+  if (runtimeDetails.value) {
+    runtimeDetails.value.open = !isMobile
+  }
+}
+
+function handleMobileLayoutChange(event: MediaQueryListEvent) {
+  syncResponsiveDisclosures(event.matches)
+}
 const latestFrameUrl = ref('')
 const latestFrameAvailable = ref(false)
 const currentClockLabel = ref('--')
@@ -914,6 +931,9 @@ async function handleVoiceConfirm(confirmed: boolean) {
 }
 
 onMounted(async () => {
+  mobileLayoutQuery = window.matchMedia('(max-width: 820px)')
+  syncResponsiveDisclosures(mobileLayoutQuery.matches)
+  mobileLayoutQuery.addEventListener('change', handleMobileLayoutChange)
   updateClock()
   clockTimer = window.setInterval(updateClock, 1000)
   await Promise.all([loadState(), loadAlerts(), loadImu()])
@@ -934,6 +954,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   shouldReconnect.value = false
+
+  mobileLayoutQuery?.removeEventListener('change', handleMobileLayoutChange)
 
   if (socket) {
     socket.close()
@@ -1691,12 +1713,14 @@ function saveApiToken() {
     <section class="operations-grid">
       <div class="operations-primary">
         <NavMapPlaceholder
+          class="mobile-nav-map"
           :robot-pose="state?.robot_pose ?? null"
           :goal="navGoal"
           :nav-state="state?.nav_status.state ?? null"
         />
 
         <NavigationAssistPanel
+          class="mobile-nav-assist"
           :task-status="state?.task_status ?? null"
           :nav-status="state?.nav_status ?? null"
           :robot-pose="state?.robot_pose ?? null"
@@ -1713,7 +1737,7 @@ function saveApiToken() {
           :confirmation-state="navigationAssistConfirmationState"
         />
 
-        <article class="panel mission-panel">
+        <article class="panel mission-panel mobile-mission-panel">
           <div class="section-header compact-header">
             <div>
               <p class="section-kicker">Mission Control</p>
@@ -1764,7 +1788,11 @@ function saveApiToken() {
           </div>
         </article>
 
-      <article class="panel events-panel">
+      <details ref="eventsDetails" class="panel events-panel mobile-collapsible mobile-events-panel">
+        <summary class="mobile-disclosure-summary">
+          <span><small>Events</small>最近事件</span>
+          <strong>{{ dashboardEvents.length }}</strong>
+        </summary>
         <div class="section-header compact-header">
           <div>
             <p class="section-kicker">Events</p>
@@ -1782,11 +1810,11 @@ function saveApiToken() {
           </li>
           <li v-if="dashboardEvents.length === 0" class="empty-state">暂无事件</li>
         </ul>
-      </article>
+      </details>
       </div>
 
       <div class="operations-secondary">
-        <article class="panel voice-panel command-palette-panel">
+        <article class="panel voice-panel command-palette-panel mobile-command-panel">
           <div class="section-header compact-header">
             <div>
               <p class="section-kicker">Command Palette</p>
@@ -1894,7 +1922,7 @@ function saveApiToken() {
             <p v-if="voiceRecordError" class="inline-status error-status">{{ voiceRecordError }}</p>
           </div>
 
-          <section class="command-result-card" aria-label="最近命令解析结果">
+          <section class="command-result-card mobile-legacy-result" aria-label="最近命令解析结果">
             <div class="command-result-main">
               <span>最近识别</span>
               <strong>{{ voiceRecordResult?.recognized_text || voiceResult?.recognized_text || textCommand || '--' }}</strong>
@@ -1906,7 +1934,7 @@ function saveApiToken() {
             </div>
           </section>
 
-          <div class="command-meta-grid">
+          <div class="command-meta-grid mobile-legacy-result">
             <div>
               <span>intent</span>
               <strong>{{ voiceRecordResult?.intent ?? voiceResult?.intent ?? '--' }}</strong>
@@ -1937,7 +1965,7 @@ function saveApiToken() {
           </details>
         </article>
 
-        <article class="panel perception-panel perception-monitor-panel">
+        <article class="panel perception-panel perception-monitor-panel mobile-perception-panel">
           <div class="section-header compact-header">
             <div>
               <p class="section-kicker">Perception Monitor</p>
@@ -1946,15 +1974,12 @@ function saveApiToken() {
             <span class="status-badge" :class="toneClass(detectionTone)">{{ detectionStatusLabel }}</span>
           </div>
 
-          <div class="latest-frame-box monitor-frame">
-            <img
-              v-if="latestFrameAvailable && latestFrameUrl"
-              :src="latestFrameUrl"
-              alt="最新识别画面"
-              @error="handleLatestFrameError"
-              @load="handleLatestFrameLoad"
+          <div class="latest-frame-box monitor-frame cloud-stream-frame">
+            <CloudVideoPlayer
+              :api-token="apiTokenSaved ? apiTokenInput.trim() : ''"
+              :fallback-url="latestFrameUrl"
+              :fallback-available="latestFrameAvailable"
             />
-            <div v-else class="latest-frame-placeholder">暂无识别画面</div>
           </div>
 
           <div class="monitor-meta-strip">
@@ -2011,7 +2036,11 @@ function saveApiToken() {
           </div>
         </article>
 
-      <article class="panel observability-panel">
+      <details ref="runtimeDetails" class="panel observability-panel mobile-collapsible mobile-runtime-panel">
+        <summary class="mobile-disclosure-summary">
+          <span><small>Runtime</small>链路与环境</span>
+          <strong>{{ imuConnectionLabel }}</strong>
+        </summary>
         <div class="section-header compact-header">
           <div>
             <p class="section-kicker">Runtime</p>
@@ -2049,7 +2078,7 @@ function saveApiToken() {
             <strong>{{ state?.device_status.fault_code ?? '--' }}</strong>
           </div>
         </div>
-      </article>
+      </details>
       </div>
     </section>
 

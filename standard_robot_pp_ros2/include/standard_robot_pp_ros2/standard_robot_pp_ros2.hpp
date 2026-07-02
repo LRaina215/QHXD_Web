@@ -156,6 +156,7 @@ private:
   void publishGameStatus(ReceiveGameStatusData & data);
   void publishRobotMotion(ReceiveRobotMotionData & data);
   void publishOdomFromTwist(const geometry_msgs::msg::Twist & twist_msg);
+  void publishOdomFromCBoard(const geometry_msgs::msg::Twist & twist_msg);
   void publishGroundRobotPosition(ReceiveGroundRobotPosition & data);
   void publishRfidStatus(ReceiveRfidStatus & data);
   void publishRobotStatus(ReceiveRobotStatus & data);

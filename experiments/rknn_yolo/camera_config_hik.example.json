@@ -29,12 +29,20 @@
   "hik_serial": "",
   "hik_timeout_ms": 2000,
   "camera_retry_interval": 3.0,
+  "stream_enabled": false,
+  "stream_url": "",
+  "stream_fps": 10.0,
+  "stream_width": 1280,
+  "stream_height": 720,
+  "stream_bitrate": 1200000,
+  "stream_queue_size": 2,
+  "stream_reconnect_interval": 3.0,
   "hik_params": {
     "bool": {
       "AcquisitionFrameRateEnable": true
     },
     "float": {
-      "AcquisitionFrameRate": 5.0,
+      "AcquisitionFrameRate": 10.0,
       "ExposureTime": 40000.0,
       "Gain": 24.0
     },

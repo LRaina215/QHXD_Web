@@ -82,7 +82,7 @@ start_service() {
     return 0
   fi
   echo "starting ${name}..."
-  "$@" >"$(log_file "${name}")" 2>&1 &
+  nohup "$@" </dev/null >"$(log_file "${name}")" 2>&1 &
   echo "$!" >"${file}"
   sleep 1
   if is_running "${file}"; then

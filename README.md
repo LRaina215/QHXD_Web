@@ -4,7 +4,7 @@ QHXD 是琼海芯动车载机器人项目的 RK3588 中台工程。当前仓库�
 
 - RK3588 本体后端：状态聚合、任务入口、语音/LLM、视觉状态、Dashboard API。
 - Web Dashboard：本地调试与公网部署共用的机器人状态中枢页面。
-- RKNN YOLO26 感知链路：USB / Hik 相机采集、单图推理、连续检测、MJPEG 最新帧。
+- RKNN YOLO26 感知链路：USB / Hik 相机采集、单图推理、连续检测、独立 H.264 公网视频与 MJPEG 兜底。
 - ROS 2 导航通信：当前正式链路为 `standard_robot_pp_ros2`，对接 C 板与 `/cmd_vel`、`/odom`。
 - 云端 Cloud Gateway：公网 API / WebSocket / 前端静态资源反代到 RK3588。
 
@@ -26,6 +26,15 @@ QHXD 是琼海芯动车载机器人项目的 RK3588 中台工程。当前仓库�
                                                    |
                      FunASR / DeepSeek / YOLO / 相机 / 麦克风 / ROS 2 / C 板
 ```
+
+实时视频不经过 FastAPI JSON/WebSocket 链路：
+
+```text
+Hik/USB 相机 -> RK3588 MPP H.264 -> RTMP/Tailscale -> 云 MediaMTX
+-> WebRTC/WHEP（首选）-> HLS（回退）-> MJPEG latest frame（最终兜底）
+```
+
+当前 `MV-CS020-10UC` 是 USB 工业相机，通过 MVS SDK 输出原始帧，并非可直接提供 RTSP 的网络相机；因此由 RK3588 MPP 硬件编码 H.264。未来换成带 RTSP/H.264 输出的 Hik 网络相机时，可以改为码流直通 MediaMTX，前端与云端接口无需改变。
 
 | 部署位置 | 运行内容 | 是否完整 QHXD 后端 |
 | --- | --- | --- |
@@ -81,6 +90,7 @@ sudo systemctl enable --now qhxd-boot.service
 ```
 
 `qhxd-boot.service` 遇到未接 C 板或相机时会记录警告并继续启动；公网页面和 RK 后端仍可正常使用。
+开机相机选择按 Hik（USB VID `2bdf`）优先、`/dev/qhxd-usb-camera` 备用；硬件编解码节点 `/dev/video-dec0`、`/dev/video-enc0` 不会被误判为 USB 相机。
 
 ### 手动恢复与按需启动
 
@@ -139,6 +149,7 @@ RK 后端：http://127.0.0.1:8000 或 http://<RK3588_IP>:8000
 
 - 公网前端由云服务器托管，不需要 RK 上的 `start_frontend.sh`。
 - `start_backend.sh` 是 pid 文件模式，只适合手动调试；生产环境使用 `qhxd-backend.service`。
+- pid 文件模式通过 `nohup` 托管进程，SSH 会话退出不会停止相机、前端或桥接进程。
 - `status_all.sh` 主要查看 pid 文件托管的本地调试进程；当前生产架构请使用 `status_public_robot.sh`。
 - `stop_all.sh` 只停止脚本托管的调试进程，不代替 `systemctl stop qhxd-backend qhxd-boot`。
 
@@ -294,6 +305,9 @@ Web 前端：https://lingxunrobot.cn
 
 外部 API：https://api.lingxunrobot.cn
 外部 WS：wss://api.lingxunrobot.cn/ws/state 与 /ws/imu
+
+同域视频会话：POST https://lingxunrobot.cn/api/video/session
+WebRTC/HLS：由前端使用会话 Cookie 自动访问 /video/*，无需手工拼接地址
 ```
 
 两类公网入口最终都反代到云服务器本机：
@@ -333,9 +347,8 @@ MJPEG 最新帧：http://127.0.0.1:8000/api/perception/frame_stream
         v
 云服务器 Nginx
         |
-        | 127.0.0.1:9000
-        v
-Cloud Gateway
+        +-- 127.0.0.1:9000 -> Cloud Gateway -> API / WS / 视频会话认证
+        `-- 127.0.0.1:8889/8888 -> MediaMTX -> WebRTC / HLS
         |
         | Tailscale / HTTP
         v
@@ -346,6 +359,9 @@ RK3588 QHXD backend
         +-- RKNN YOLO26 / USB 或 Hik 相机
         +-- ROS 2 standard_robot_pp_ros2 / C 板
         +-- Dashboard state_store / WebSocket
+
+相机 -> 最新帧生产器 -> YOLO 5 FPS
+                   `-> MPP H.264 10 FPS -> RTMP/Tailscale -> MediaMTX
 ```
 
 运行模式：
@@ -373,6 +389,7 @@ rtt_nav_bridge/           旧 Phase6 桥接包，保留作参考与历史兼容
 pb_rm_interfaces/         ROS 2 自定义消息依赖
 scripts/                  本地启动、状态、清理、udev 绑定脚本
 systemd/                  RK3588 systemd 服务模板
+streaming/                MediaMTX、Nginx 与独立 H.264 视频链路配置
 docs/                     协议、桥接与阶段文档
 audio_test/               语音命令测试样本
 ```
@@ -758,7 +775,7 @@ Hik：experiments/rknn_yolo/camera_config_hik.example.json
 }
 ```
 
-`fps` 是 YOLO 服务取帧、推理、保存 latest、提交 `detection_status` 的频率，不是前端显示刷新率，也不是 Hik 相机硬件采集帧率。
+`fps` 是 YOLO 消费最新帧、推理、保存 latest、提交 `detection_status` 的频率。开启独立视频后，相机生产线程按 `max(fps, stream_fps)` 采集；YOLO 与视频发布各取最新完整帧，不累积旧帧。
 
 Hik 硬件采集帧率在 `hik_params` 中：
 
@@ -769,13 +786,45 @@ Hik 硬件采集帧率在 `hik_params` 中：
       "AcquisitionFrameRateEnable": true
     },
     "float": {
-      "AcquisitionFrameRate": 5.0
+      "AcquisitionFrameRate": 10.0
     }
   }
 }
 ```
 
-前端显示使用后端 MJPEG：
+`AcquisitionFrameRate` 应不低于 `stream_fps`；当前两者均为 10 FPS，YOLO 的 `fps` 仍保持 5。
+
+公网前端视频使用 WebRTC 优先、HLS 回退、MJPEG 最终兜底：
+
+```env
+# RK 根目录 .env；URL 必须加引号，避免 & 被 shell 解释
+QHXD_VIDEO_STREAM_ENABLED=true
+QHXD_VIDEO_STREAM_URL='rtmp://<云端Tailscale-IP>:1935/robot/front?user=<publisher>&pass=<secret>'
+```
+
+Hik 配置中的视频参数：
+
+```json
+{
+  "fps": 5,
+  "stream_enabled": true,
+  "stream_url": "",
+  "stream_fps": 10,
+  "stream_width": 1280,
+  "stream_height": 720,
+  "stream_bitrate": 1200000,
+  "stream_queue_size": 2,
+  "stream_reconnect_interval": 3
+}
+```
+
+- `fps`：YOLO 推理频率，当前推荐 5 FPS。
+- `stream_fps`：相机帧发布到公网视频链路的目标频率，当前推荐 10 FPS。
+- `stream_queue_size`：只允许 1 或 2；拥塞时丢弃旧帧，防止延迟和内存持续增长。
+- 编码使用 RK3588 `mpph264enc`，不是 CPU 软件编码。
+- 公网浏览器保存有效 Token 后，前端调用 `/api/video/session` 获取短期 HttpOnly 会话 Cookie，然后连接 WHEP。
+
+旧 MJPEG 环境变量只控制最终兜底链路：
 
 ```env
 VITE_USE_MJPEG_STREAM=true
@@ -784,7 +833,7 @@ VITE_LATEST_FRAME_INTERVAL_MS=2000
 PERCEPTION_LATEST_FRAME_MAX_AGE_SECONDS=10
 ```
 
-`PERCEPTION_MJPEG_INTERVAL_MS=200` 表示后端 MJPEG 流最多每 200ms 检查一次 latest 图片；如果 YOLO 服务没有产生新图，前端不会凭空刷新。
+`PERCEPTION_MJPEG_INTERVAL_MS=200` 只表示兜底 MJPEG 最多每 200ms 检查一次 latest 图片，不再决定正常公网视频帧率。
 
 ## ROS 2 导航通信
 
@@ -911,6 +960,9 @@ PERCEPTION_MJPEG_INTERVAL_MS=200
 VITE_LATEST_FRAME_INTERVAL_MS=2000
 VITE_DETECTION_EVENT_HOLD_MS=15000
 VITE_DETECTION_EVENT_MAX_ITEMS=12
+
+QHXD_VIDEO_STREAM_ENABLED=true
+QHXD_VIDEO_STREAM_URL='rtmp://<云端Tailscale-IP>:1935/robot/front?user=<publisher>&pass=<secret>'
 ```
 
 前端环境：
@@ -951,6 +1003,20 @@ cd /home/robomaster/QHXD/experiments/rknn_yolo
 python3 camera_detect_service.py --config camera_config.json --dry-run --max-frames 2
 python3 camera_detect_service.py --config camera_config_hik.example.json --dry-run --max-frames 2
 ```
+
+独立公网视频链路：
+
+```bash
+# RK：确认相机、YOLO 和 MPP 发布器
+./scripts/status_public_robot.sh
+grep 'H.264 stream publisher connected' logs/yolo_camera.log
+
+# 云端：确认 MediaMTX 与 cloud gateway
+sudo systemctl status lingxun-mediamtx lingxun-cloud-gateway
+curl http://127.0.0.1:9997/v3/paths/list
+```
+
+MediaMTX 应显示 `robot/front` 为 `ready=true`、视频轨为 H264。浏览器连接成功后，`readers` 中应出现 `webRTCSession`。腾讯云安全组必须放行 `8189/TCP` 和 `8189/UDP`；RTMP 上行使用 Tailscale 地址，不要求将 1935 暴露给公网。
 
 语音文件：
 

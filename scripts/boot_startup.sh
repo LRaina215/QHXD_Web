@@ -49,13 +49,13 @@ CAMERA_STARTED=false
 for attempt in 1 2 3; do
     echo "  Camera attempt ${attempt}/3..."
     
-    if lsusb 2>/dev/null | grep -qi "Hikrobot"; then
+    if lsusb 2>/dev/null | grep -Eqi "Hikrobot|(^|[[:space:]])2bdf:"; then
         echo "  Hik camera detected."
         "${SCRIPT_DIR}/start_yolo_hik_camera.sh" && CAMERA_STARTED=true && break
         echo "  Hik YOLO start failed, retrying..."
         sleep 3
-    elif ls /dev/video* 2>/dev/null | grep -q .; then
-        echo "  USB camera detected."
+    elif [[ -e /dev/qhxd-usb-camera ]]; then
+        echo "  USB camera detected at /dev/qhxd-usb-camera."
         "${SCRIPT_DIR}/start_yolo_camera.sh" && CAMERA_STARTED=true && break
         echo "  USB YOLO start failed, retrying..."
         sleep 3

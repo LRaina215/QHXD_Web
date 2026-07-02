@@ -251,17 +251,38 @@ const parserLabel = computed(() => {
 }
 
 @media (max-width: 560px) {
+  .voice-confirm-backdrop {
+    place-items: end center;
+    padding: 12px 8px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .voice-confirm-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+    padding: 17px 15px calc(15px + env(safe-area-inset-bottom));
+    border-left-width: 1px;
+    border-top: 7px solid #f3ad44;
+  }
+
   .voice-confirm-grid {
     grid-template-columns: 1fr;
   }
 
   .voice-confirm-actions {
+    position: sticky;
+    bottom: 0;
     flex-direction: column-reverse;
+    margin: 18px -15px -15px;
+    padding: 12px 15px calc(12px + env(safe-area-inset-bottom));
+    border-top: 1px solid #e0d4c4;
+    background: rgba(255, 250, 240, 0.96);
+    backdrop-filter: blur(10px);
   }
 
   .cancel-button,
   .confirm-button {
     width: 100%;
+    min-height: 48px;
   }
 }
 </style>

@@ -1,7 +1,10 @@
 import asyncio
 import contextlib
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import time
@@ -21,6 +24,12 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 SERVICE_NAME = "lingxun-cloud-gateway"
 RK_BACKEND_BASE_URL = os.getenv("RK_BACKEND_BASE_URL", "http://100.113.173.115:8000").rstrip("/")
 PUBLIC_API_TOKEN = os.getenv("PUBLIC_API_TOKEN", "")
+MEDIA_PUBLISH_USER = os.getenv("MEDIA_PUBLISH_USER", "robot-publisher")
+MEDIA_PUBLISH_PASSWORD = os.getenv("MEDIA_PUBLISH_PASSWORD", "")
+MEDIA_STREAM_PATH = os.getenv("MEDIA_STREAM_PATH", "robot/front").strip("/")
+VIDEO_SESSION_SECRET = os.getenv("VIDEO_SESSION_SECRET", PUBLIC_API_TOKEN)
+VIDEO_SESSION_TTL_SECONDS = int(os.getenv("VIDEO_SESSION_TTL_SECONDS", "600"))
+VIDEO_SESSION_COOKIE = "qhxd_video_session"
 PUBLIC_CONTROL_ENABLED = os.getenv("PUBLIC_CONTROL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 PUBLIC_RATE_LIMIT_PER_MINUTE = int(os.getenv("PUBLIC_RATE_LIMIT_PER_MINUTE", "60"))
 PUBLIC_AUDIO_MAX_MB = float(os.getenv("PUBLIC_AUDIO_MAX_MB", "20"))
@@ -166,6 +175,47 @@ def _auth_ok(request: Request) -> bool:
         return False
     auth = request.headers.get("authorization", "")
     return auth == f"Bearer {PUBLIC_API_TOKEN}"
+
+
+def _media_auth_allowed(payload: dict, requester_ip: str) -> bool:
+    if requester_ip not in {"127.0.0.1", "::1"}:
+        return False
+    if str(payload.get("path", "")).strip("/") != MEDIA_STREAM_PATH:
+        return False
+    action = str(payload.get("action", ""))
+    if action == "publish":
+        return bool(MEDIA_PUBLISH_PASSWORD) and secrets.compare_digest(
+            str(payload.get("user", "")), MEDIA_PUBLISH_USER
+        ) and secrets.compare_digest(str(payload.get("password", "")), MEDIA_PUBLISH_PASSWORD)
+    if action in {"read", "playback"}:
+        token = str(payload.get("token", ""))
+        password = str(payload.get("password", ""))
+        return bool(PUBLIC_API_TOKEN) and (
+            secrets.compare_digest(token, PUBLIC_API_TOKEN)
+            or secrets.compare_digest(password, PUBLIC_API_TOKEN)
+        )
+    return False
+
+
+def _video_session_value(now: int | None = None) -> str:
+    expires_at = int(now if now is not None else time.time()) + max(30, VIDEO_SESSION_TTL_SECONDS)
+    signature = hmac.new(VIDEO_SESSION_SECRET.encode("utf-8"), str(expires_at).encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{expires_at}.{signature}"
+
+
+def _video_session_valid(value: str, now: int | None = None) -> bool:
+    if not VIDEO_SESSION_SECRET or not value:
+        return False
+    try:
+        expires_raw, signature = value.split(".", 1)
+        expires_at = int(expires_raw)
+    except (TypeError, ValueError):
+        return False
+    current_time = int(now if now is not None else time.time())
+    if expires_at <= current_time or expires_at > current_time + max(30, VIDEO_SESSION_TTL_SECONDS) + 5:
+        return False
+    expected = hmac.new(VIDEO_SESSION_SECRET.encode("utf-8"), expires_raw.encode("ascii"), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
 
 
 def _check_rate_limit(request: Request) -> bool:
@@ -356,6 +406,55 @@ async def health() -> dict:
         "rk_online": state is not None,
         "public_control_enabled": PUBLIC_CONTROL_ENABLED,
     }
+
+
+@app.post("/internal/media-auth", include_in_schema=False)
+async def media_auth(request: Request) -> Response:
+    try:
+        payload = await request.json()
+    except Exception:
+        return Response(status_code=400)
+    if not isinstance(payload, dict):
+        return Response(status_code=400)
+    if _media_auth_allowed(payload, _client_ip(request)):
+        return Response(status_code=204)
+    return Response(status_code=401)
+
+
+@app.post("/api/video/session")
+async def create_video_session(request: Request) -> JSONResponse:
+    request_id = str(uuid.uuid4())
+    if not _check_rate_limit(request):
+        return _reject(429, "rate_limited", request, request_id)
+    if not _auth_ok(request):
+        return _reject(401, "unauthorized", request, request_id)
+    response = JSONResponse(
+        content={
+            "success": True,
+            "data": {
+                "webrtc_url": f"/video/webrtc/{MEDIA_STREAM_PATH}/whep",
+                "hls_url": f"/video/hls/{MEDIA_STREAM_PATH}/index.m3u8",
+                "expires_in": max(30, VIDEO_SESSION_TTL_SECONDS),
+            },
+        }
+    )
+    response.set_cookie(
+        VIDEO_SESSION_COOKIE,
+        _video_session_value(),
+        max_age=max(30, VIDEO_SESSION_TTL_SECONDS),
+        path="/video/",
+        secure=True,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
+
+
+@app.get("/internal/video-session-check", include_in_schema=False)
+async def check_video_session(request: Request) -> Response:
+    if _video_session_valid(request.cookies.get(VIDEO_SESSION_COOKIE, "")):
+        return Response(status_code=204)
+    return Response(status_code=401)
 
 
 @app.post("/api/voice/browser_audio_command")

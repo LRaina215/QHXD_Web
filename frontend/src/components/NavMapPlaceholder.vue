@@ -293,4 +293,52 @@ const goalDistanceLabel = computed(() => {
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
+
+@media (max-width: 820px) {
+  .nav-map-canvas {
+    min-height: 260px;
+    aspect-ratio: 4 / 3;
+  }
+
+  .map-caption {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    padding: 11px 12px;
+  }
+
+  .map-caption span {
+    font-size: 0.78rem;
+  }
+
+  .nav-map-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .nav-map-metrics div {
+    padding: 10px;
+  }
+
+  .nav-map-metrics span {
+    margin-bottom: 4px;
+    font-size: 0.76rem;
+  }
+
+  .nav-map-metrics strong {
+    font-size: 0.88rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .nav-map-canvas {
+    min-height: 238px;
+  }
+
+  .robot-marker {
+    width: 40px;
+    height: 40px;
+  }
+}
 </style>
