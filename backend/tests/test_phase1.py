@@ -227,6 +227,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self._original_llm_enable = os.environ.get("LLM_ENABLE")
         self._original_deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
         self._original_deepseek_model = os.environ.get("DEEPSEEK_MODEL")
+        self._original_deepseek_display_model = os.environ.get("DEEPSEEK_DISPLAY_MODEL")
         self._original_llm_threshold = os.environ.get("LLM_CONFIDENCE_THRESHOLD")
         self._original_voice_pending_ttl = os.environ.get("VOICE_PENDING_TTL_SECONDS")
 
@@ -234,6 +235,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
             "LLM_ENABLE",
             "DEEPSEEK_API_KEY",
             "DEEPSEEK_MODEL",
+            "DEEPSEEK_DISPLAY_MODEL",
             "LLM_CONFIDENCE_THRESHOLD",
             "VOICE_PENDING_TTL_SECONDS",
         ]:
@@ -261,6 +263,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self._restore_env("LLM_ENABLE", self._original_llm_enable)
         self._restore_env("DEEPSEEK_API_KEY", self._original_deepseek_key)
         self._restore_env("DEEPSEEK_MODEL", self._original_deepseek_model)
+        self._restore_env("DEEPSEEK_DISPLAY_MODEL", self._original_deepseek_display_model)
         self._restore_env("LLM_CONFIDENCE_THRESHOLD", self._original_llm_threshold)
         self._restore_env("VOICE_PENDING_TTL_SECONDS", self._original_voice_pending_ttl)
         main_module.voice_entry_service._pending.clear()
@@ -361,6 +364,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         os.environ["LLM_ENABLE"] = "true"
         os.environ["DEEPSEEK_API_KEY"] = "test-placeholder-key"
         os.environ["DEEPSEEK_MODEL"] = "deepseek-v4-flash"
+        os.environ["DEEPSEEK_DISPLAY_MODEL"] = "DeepSeek V4 Flash"
         original_chat_json = llm_intent_parser_module.llm_client.chat_json
 
         def fake_chat_json(**kwargs):
@@ -534,6 +538,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         os.environ["LLM_ENABLE"] = "true"
         os.environ["DEEPSEEK_API_KEY"] = "test-placeholder-key"
         os.environ["DEEPSEEK_MODEL"] = "deepseek-v4-flash"
+        os.environ["DEEPSEEK_DISPLAY_MODEL"] = "DeepSeek V4 Flash"
         original_chat_json = llm_intent_parser_module.llm_client.chat_json
 
         model_reply = await main_module.smart_command(
@@ -542,7 +547,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(model_reply.data.intent, "query_assistant_model")
         self.assertEqual(model_reply.data.data_source, "llm_config")
         self.assertIn("DeepSeek", model_reply.data.reply_text)
-        self.assertIn("deepseek-v4-flash", model_reply.data.reply_text)
+        self.assertIn("DeepSeek V4 Flash", model_reply.data.reply_text)
         self.assertIsNone(model_reply.data.mission_candidate)
 
         def fake_chat_json(**kwargs):

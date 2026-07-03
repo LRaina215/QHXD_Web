@@ -24,7 +24,8 @@ class DataService:
 
     def assistant_model_reply(self) -> str:
         backend = os.getenv("LLM_BACKEND", "deepseek").strip() or "deepseek"
-        model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip() or "deepseek-v4-flash"
+        request_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
+        model = os.getenv("DEEPSEEK_DISPLAY_MODEL", request_model).strip() or request_model
         if backend == "deepseek":
             return f"当前智能语音助手的大模型后端是 DeepSeek，模型配置为 {model}。机器人运动控制仍由本地安全校验和确认流程接管。"
         return f"当前智能语音助手的大模型后端配置为 {backend}，模型配置为 {model}。机器人运动控制仍由本地安全校验和确认流程接管。"

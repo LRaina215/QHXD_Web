@@ -5,6 +5,7 @@ import math
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib import error, request
 
 import rclpy
@@ -90,8 +91,10 @@ class Ros2ImuBridge(Node):
         self.source = args.source
         self.min_interval = 1.0 / args.rate_hz
         self.timeout_s = args.timeout_s
+        self.heartbeat_file = Path(args.heartbeat_file)
         self._last_post_at = 0.0
         self._last_message_at = 0.0
+        self._last_heartbeat_at = 0.0
         self._accepted_count = 0
         self._error_count = 0
         self._last_log_at = 0.0
@@ -104,6 +107,13 @@ class Ros2ImuBridge(Node):
     def _on_imu(self, msg: Imu) -> None:
         now = time.monotonic()
         self._last_message_at = now
+        if now - self._last_heartbeat_at >= 1.0:
+            try:
+                self.heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
+                self.heartbeat_file.touch()
+                self._last_heartbeat_at = now
+            except OSError as exc:
+                self.get_logger().warning(f"failed to update IMU heartbeat: {exc}")
         if now - self._last_post_at < self.min_interval:
             return
         self._last_post_at = now
@@ -153,6 +163,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", default="rk3588_cboard_ros2")
     parser.add_argument("--rate-hz", type=float, default=20.0)
     parser.add_argument("--timeout-s", type=float, default=1.0)
+    parser.add_argument("--heartbeat-file", default=".runtime/ros2_imu_bridge.heartbeat")
     args = parser.parse_args()
     if args.rate_hz <= 0:
         parser.error("--rate-hz must be positive")

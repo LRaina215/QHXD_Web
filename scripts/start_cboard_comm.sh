@@ -11,6 +11,7 @@ ROS2_IMU_TOPIC="${ROS2_IMU_TOPIC:-/serial/imu}"
 ROS2_IMU_BRIDGE_RATE_HZ="${ROS2_IMU_BRIDGE_RATE_HZ:-20}"
 ROS2_IMU_BRIDGE_SOURCE="${ROS2_IMU_BRIDGE_SOURCE:-rk3588_cboard_ros2}"
 ROS2_IMU_BRIDGE_BACKEND_URL="${ROS2_IMU_BRIDGE_BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"
+ROS2_IMU_HEARTBEAT_FILE="${ROS2_IMU_HEARTBEAT_FILE:-${RUNTIME_DIR}/ros2_imu_bridge.heartbeat}"
 
 echo "starting C board communication..."
 
@@ -42,9 +43,14 @@ if [[ "${standard_robot_already_running}" != "true" ]]; then
 fi
 
 start_service ros2_imu_bridge \
-  bash -lc "source '${ROS_SETUP}' && cd '${PROJECT_ROOT}' && exec python3 scripts/ros2_imu_bridge.py --topic '${ROS2_IMU_TOPIC}' --backend-url '${ROS2_IMU_BRIDGE_BACKEND_URL}' --source '${ROS2_IMU_BRIDGE_SOURCE}' --rate-hz '${ROS2_IMU_BRIDGE_RATE_HZ}'"
+  bash -lc "source '${ROS_SETUP}' && cd '${PROJECT_ROOT}' && exec python3 scripts/ros2_imu_bridge.py --topic '${ROS2_IMU_TOPIC}' --backend-url '${ROS2_IMU_BRIDGE_BACKEND_URL}' --source '${ROS2_IMU_BRIDGE_SOURCE}' --rate-hz '${ROS2_IMU_BRIDGE_RATE_HZ}' --heartbeat-file '${ROS2_IMU_HEARTBEAT_FILE}'"
+
+if [[ "${CBOARD_WATCHDOG_INTERNAL_RESTART:-false}" != "true" && "${CBOARD_WATCHDOG_ENABLED:-false}" == "true" ]]; then
+  start_service cboard_watchdog "${SCRIPT_DIR}/run_cboard_watchdog.sh"
+fi
 
 echo "C board communication started."
 echo "logs:"
 echo "  standard_robot_pp_ros2: $(log_file standard_robot_pp_ros2)"
 echo "  ros2_imu_bridge:       $(log_file ros2_imu_bridge)"
+echo "  cboard_watchdog:       $(log_file cboard_watchdog)"

@@ -70,9 +70,9 @@ class DeepSeekClient:
     def config(self, force_enable: bool | None = None) -> LLMClientConfig:
         _load_env_file_once()
         try:
-            timeout = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "5"))
+            timeout = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "45"))
         except ValueError:
-            timeout = 5.0
+            timeout = 45.0
         try:
             max_tokens = int(os.getenv("DEEPSEEK_MAX_TOKENS", "512"))
         except ValueError:
@@ -86,7 +86,7 @@ class DeepSeekClient:
             backend=backend,
             api_key=os.getenv("DEEPSEEK_API_KEY"),
             base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
-            model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+            model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
             timeout_seconds=timeout,
             max_tokens=max_tokens,
             temperature=temperature,
@@ -187,7 +187,8 @@ class DeepSeekClient:
             content = raw["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
             return LLMClientResponse(success=False, error="deepseek-invalid-response", model=config.model, raw_response=raw)
-        return LLMClientResponse(success=True, content=str(content), model=config.model, raw_response=raw if config.debug_raw else None)
+        response_model = str(raw.get("model") or config.model)
+        return LLMClientResponse(success=True, content=str(content), model=response_model, raw_response=raw if config.debug_raw else None)
 
 
 llm_client = DeepSeekClient()

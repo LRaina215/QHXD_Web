@@ -20,7 +20,11 @@ else
   echo "systemd backend: not installed"
 fi
 
-status_service backend
+if is_running "$(pid_file backend)"; then
+  echo "PID debug backend: running pid=$(cat "$(pid_file backend)") log=$(log_file backend)"
+else
+  echo "PID debug backend: not running (normal when systemd backend is active)"
+fi
 echo
 
 if command -v curl >/dev/null 2>&1; then
@@ -60,6 +64,7 @@ status_service frontend
 status_service yolo_camera
 status_service standard_robot_pp_ros2
 status_service ros2_imu_bridge
+status_service cboard_watchdog
 
 if [[ "${QHXD_VIDEO_STREAM_ENABLED:-false}" =~ ^(1|true|yes|on)$ ]]; then
   echo "H.264 cloud publisher: enabled"

@@ -302,6 +302,13 @@ def _cleanup_kept_audio() -> None:
             stale.unlink()
 
 
+def _browser_audio_paths(request_id: str, filename: str | None) -> tuple[Path, Path]:
+    input_suffix = Path(filename or "browser_audio.webm").suffix or ".webm"
+    input_path = GATEWAY_AUDIO_TMP_DIR / f"{request_id}.input{input_suffix}"
+    wav_path = GATEWAY_AUDIO_TMP_DIR / f"{request_id}.wav"
+    return input_path, wav_path
+
+
 async def _forward_wav_to_rk(
     wav_path: Path,
     *,
@@ -487,9 +494,7 @@ async def browser_audio_command(
 
     keep = _parse_bool(keep_audio, False)
     GATEWAY_AUDIO_TMP_DIR.mkdir(parents=True, exist_ok=True)
-    input_suffix = Path(file.filename or "browser_audio.webm").suffix or ".webm"
-    input_path = GATEWAY_AUDIO_TMP_DIR / f"{request_id}{input_suffix}"
-    wav_path = GATEWAY_AUDIO_TMP_DIR / f"{request_id}.wav"
+    input_path, wav_path = _browser_audio_paths(request_id, file.filename)
     input_path.write_bytes(raw_audio)
 
     try:
@@ -542,9 +547,8 @@ async def browser_audio_command(
 
         if keep:
             GATEWAY_AUDIO_KEEP_DIR.mkdir(parents=True, exist_ok=True)
-            kept_base = GATEWAY_AUDIO_KEEP_DIR / request_id
-            shutil.copy2(input_path, kept_base.with_suffix(input_suffix))
-            shutil.copy2(wav_path, kept_base.with_suffix(".wav"))
+            shutil.copy2(input_path, GATEWAY_AUDIO_KEEP_DIR / input_path.name)
+            shutil.copy2(wav_path, GATEWAY_AUDIO_KEEP_DIR / wav_path.name)
             _cleanup_kept_audio()
 
         _operation_log(

@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
+if [[ "${CBOARD_WATCHDOG_INTERNAL_RESTART:-false}" != "true" ]]; then
+  stop_service cboard_watchdog
+fi
+
 stop_matching_processes() {
   local pattern="$1"
   local label="$2"

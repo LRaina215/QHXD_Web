@@ -1,415 +1,382 @@
 # QHXD 琼海芯动车载机器人中台
 
-QHXD 是琼海芯动车载机器人项目的 RK3588 中台工程。当前仓库同时包含：
+QHXD 是琼海芯动车载机器人的 RK3588 中台工程。当前已打通公网 Dashboard、云端中继、语音/LLM/TTS、Hik/USB 相机、RKNN YOLO26、实时视频与 ROS 2 导航通信入口。
 
-- RK3588 本体后端：状态聚合、任务入口、语音/LLM、视觉状态、Dashboard API。
-- Web Dashboard：本地调试与公网部署共用的机器人状态中枢页面。
-- RKNN YOLO26 感知链路：USB / Hik 相机采集、单图推理、连续检测、独立 H.264 公网视频与 MJPEG 兜底。
-- ROS 2 导航通信：当前正式链路为 `standard_robot_pp_ros2`，对接 C 板与 `/cmd_vel`、`/odom`。
-- 云端 Cloud Gateway：公网 API / WebSocket / 前端静态资源反代到 RK3588。
+安全原则：视觉和 LLM 不直接控制底盘；移动类指令必须二次确认；公网写接口需要 Token，mission 控制还受 `PUBLIC_CONTROL_ENABLED` 开关限制。
 
-项目原则：语音、LLM、YOLO 只通过已有任务/状态接口接入；视觉结果不直接控制底盘；公网控制默认关闭并需要 token 与安全开关。
+## 快捷启动
 
-## 当前部署架构
+以下命令默认在 RK3588 执行：
 
-公网前端与完整业务后端不在同一台机器上：
+```bash
+cd /home/robomaster/QHXD
+```
+
+### 生产环境：开机自启
+
+RK3588 已启用：
+
+- `qhxd-backend.service`：完整 FastAPI 后端，异常退出自动重启。
+- `qhxd-boot.service`：切换 `real` 模式，启动导航/C 板桥接，并按 Hik 优先、USB 备用选择相机。
+
+正常重启后无需手动运行 `start_all.sh`：
+
+```bash
+./scripts/status_public_robot.sh
+systemctl is-enabled qhxd-backend qhxd-boot
+systemctl is-active qhxd-backend qhxd-boot
+```
+
+常用管理命令：
+
+```bash
+sudo systemctl restart qhxd-backend
+sudo systemctl restart qhxd-boot
+sudo systemctl status qhxd-backend qhxd-boot
+sudo journalctl -u qhxd-backend -f
+sudo journalctl -u qhxd-boot -f
+```
+
+新 RK3588 首次部署：
+
+```bash
+./scripts/install_backend_service.sh
+./scripts/configure_robot_audio.sh
+sudo install -m 0644 systemd/qhxd-boot.service /etc/systemd/system/qhxd-boot.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now qhxd-boot.service
+```
+
+`qhxd-boot` 遇到未接 C 板或相机时会记录警告后继续，不会阻止后端、语音和公网页面启动。
+
+### 手动恢复
+
+```bash
+# 只确保 RK backend 可用
+./scripts/start_public_robot.sh
+
+# 按需附加 C 板通信
+PUBLIC_ROBOT_START_CBOARD=true ./scripts/start_public_robot.sh
+
+# 按需附加 Hik 或 USB YOLO
+PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=hik ./scripts/start_public_robot.sh
+PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=usb ./scripts/start_public_robot.sh
+```
+
+### 本地开发调试
+
+```bash
+./scripts/start_backend.sh
+./scripts/start_frontend.sh
+./scripts/start_yolo_camera.sh       # USB / UVC
+./scripts/start_yolo_hik_camera.sh   # Hik MVS
+
+./scripts/start_all.sh               # backend + Vite + USB YOLO
+./scripts/start_hik_web.sh           # backend + Vite + Hik YOLO
+./scripts/status_all.sh
+./scripts/stop_all.sh
+```
+
+- 公网前端在云服务器，不需要 RK 运行 `start_frontend.sh`。
+- `start_backend.sh` 和 `status_all.sh` 是 PID 文件调试模式；生产状态以 systemd 和 `status_public_robot.sh` 为准。
+- `stop_all.sh` 不会停止 `qhxd-backend` / `qhxd-boot`。
+
+### 相机与导航快捷入口
+
+```bash
+# USB 相机稳定设备名 /dev/qhxd-usb-camera
+./scripts/setup_usb_camera_alias.sh
+
+# 单独启动相机检测
+./scripts/start_yolo_camera.sh
+./scripts/start_yolo_hik_camera.sh
+
+# 当前正式 C 板通信包
+./scripts/start_cboard_comm.sh
+./scripts/stop_cboard_comm.sh
+```
+
+不要同时启动旧 `rtt_nav_bridge` 和 `standard_robot_pp_ros2`，否则可能抢占同一串口。
+
+## 部署架构
+
+公网前端与完整业务后端分离部署：
 
 ```text
 浏览器
-  |-- https://lingxunrobot.cn/        -> 云服务器 Nginx -> 静态前端
-  |-- https://lingxunrobot.cn/api/*   -> 云服务器 Cloud Gateway :9000
-  `-- wss://lingxunrobot.cn/ws/*      -> 云服务器 Cloud Gateway :9000
-                                                   |
-                                                   | Tailscale
-                                                   v
-                                          RK3588 QHXD backend :8000
-                                                   |
-                     FunASR / DeepSeek / YOLO / 相机 / 麦克风 / ROS 2 / C 板
+  |-- https://lingxunrobot.cn/       -> 云 Nginx -> 静态前端
+  |-- https://lingxunrobot.cn/api/*  -> 云 Cloud Gateway :9000
+  `-- wss://lingxunrobot.cn/ws/*     -> 云 Cloud Gateway :9000
+                                              |
+                                              | Tailscale
+                                              v
+                                     RK3588 backend :8000
+                                              |
+                 FunASR / DeepSeek / TTS / YOLO / 相机 / ROS 2 / C 板
 ```
-
-实时视频不经过 FastAPI JSON/WebSocket 链路：
 
 ```text
 Hik/USB 相机 -> RK3588 MPP H.264 -> RTMP/Tailscale -> 云 MediaMTX
 -> WebRTC/WHEP（首选）-> HLS（回退）-> MJPEG latest frame（最终兜底）
 ```
 
-当前 `MV-CS020-10UC` 是 USB 工业相机，通过 MVS SDK 输出原始帧，并非可直接提供 RTSP 的网络相机；因此由 RK3588 MPP 硬件编码 H.264。未来换成带 RTSP/H.264 输出的 Hik 网络相机时，可以改为码流直通 MediaMTX，前端与云端接口无需改变。
+| 位置 | 运行内容 |
+| --- | --- |
+| 云服务器 | Nginx、静态前端、Cloud Gateway、MediaMTX |
+| RK3588 | 完整 FastAPI 后端、FunASR、DeepSeek、TTS、YOLO、相机、ROS 2 与硬件接入 |
+| RK 本地 Vite | 只用于前端开发，不是公网生产依赖 |
 
-| 部署位置 | 运行内容 | 是否完整 QHXD 后端 |
-| --- | --- | --- |
-| 云服务器 | Nginx、公网静态前端、`lingxun-cloud-gateway` (`127.0.0.1:9000`) | 否，只做认证、限流、日志和转发 |
-| RK3588 | FastAPI 完整后端 (`0.0.0.0:8000`)、语音、LLM、YOLO、导航与硬件接入 | 是 |
-| RK3588 本地前端 | Vite dev server (`0.0.0.0:5173`) | 只用于本地开发调试，公网运行不需要 |
+当前 Hik `MV-CS020-10UC` 是通过 MVS SDK 输出原始帧的 USB 工业相机，由 RK3588 MPP 编码 H.264，不是可直接输出 RTSP 的网络相机。
 
-## 快捷启动
+## 访问入口
 
-以下命令默认在 RK3588 项目根目录执行：
-
-```bash
-cd /home/robomaster/QHXD
-```
-
-### 当前生产启动方式（推荐）
-
-当前 RK3588 已启用两个 systemd 服务：
-
-- `qhxd-backend.service`：启动完整 QHXD FastAPI 后端，异常退出后自动重启。
-- `qhxd-boot.service`：等待后端就绪、切换 `real` 模式、启动 `standard_robot_pp_ros2` 与 IMU bridge，并按 Hik 优先、USB 备用的顺序自动启动 YOLO 相机。
-
-因此正常重启 RK3588 后不需要再手动运行 `start_all.sh` 或 `start_public_robot.sh`。直接检查：
-
-```bash
-./scripts/status_public_robot.sh
-systemctl is-active qhxd-backend qhxd-boot
-systemctl is-enabled qhxd-backend qhxd-boot
-```
-
-生产环境常用命令：
-
-```bash
-# 重启完整后端
-sudo systemctl restart qhxd-backend
-
-# 重新执行硬件、导航与相机的开机编排
-sudo systemctl restart qhxd-boot
-
-# 查看状态与日志
-sudo systemctl status qhxd-backend qhxd-boot
-sudo journalctl -u qhxd-backend -f
-sudo journalctl -u qhxd-boot -f
-```
-
-新机器首次部署时，先安装 backend service，再安装 full-stack boot service：
-
-```bash
-./scripts/install_backend_service.sh
-sudo install -m 0644 systemd/qhxd-boot.service /etc/systemd/system/qhxd-boot.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now qhxd-boot.service
-```
-
-`qhxd-boot.service` 遇到未接 C 板或相机时会记录警告并继续启动；公网页面和 RK 后端仍可正常使用。
-开机相机选择按 Hik（USB VID `2bdf`）优先、`/dev/qhxd-usb-camera` 备用；硬件编解码节点 `/dev/video-dec0`、`/dev/video-enc0` 不会被误判为 USB 相机。
-
-### 手动恢复与按需启动
-
-`start_public_robot.sh` 保留为手动恢复入口。它默认只确保 backend 可用，不启动本地前端、YOLO 或 C 板通信：
-
-```bash
-# 只确保 RK backend 运行
-./scripts/start_public_robot.sh
-
-# 手动启动 backend + C 板通信
-PUBLIC_ROBOT_START_CBOARD=true ./scripts/start_public_robot.sh
-
-# 手动启动 backend + Hik YOLO
-PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=hik ./scripts/start_public_robot.sh
-
-# 手动启动 backend + USB YOLO
-PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=usb ./scripts/start_public_robot.sh
-```
-
-### 本地调试启动
-
-本地调试接口仍然保留：
+### 公网
 
 ```text
-RK 后端：http://127.0.0.1:8000 或 http://<RK3588_IP>:8000
-本地前端：http://<RK3588_IP>:5173
-```
-
-```bash
-# 启动后端
-./scripts/start_backend.sh
-
-# 启动前端 Vite dev server
-./scripts/start_frontend.sh
-
-# 启动 USB / UVC YOLO 摄像头检测服务
-./scripts/start_yolo_camera.sh
-
-# 启动 Hikrobot / MVS YOLO 摄像头检测服务
-./scripts/start_yolo_hik_camera.sh
-
-# 本地一键 Hik 调试：后端 + Vite 前端 + Hik YOLO
-./scripts/start_hik_web.sh
-
-# 本地一键 USB 调试：后端 + Vite 前端 + USB YOLO
-./scripts/start_all.sh
-
-# 查看脚本托管的本地服务状态
-./scripts/status_all.sh
-
-# 停止脚本托管的前端 / YOLO / 后端
-./scripts/stop_all.sh
-```
-
-注意：
-
-- 公网前端由云服务器托管，不需要 RK 上的 `start_frontend.sh`。
-- `start_backend.sh` 是 pid 文件模式，只适合手动调试；生产环境使用 `qhxd-backend.service`。
-- pid 文件模式通过 `nohup` 托管进程，SSH 会话退出不会停止相机、前端或桥接进程。
-- `status_all.sh` 主要查看 pid 文件托管的本地调试进程；当前生产架构请使用 `status_public_robot.sh`。
-- `stop_all.sh` 只停止脚本托管的调试进程，不代替 `systemctl stop qhxd-backend qhxd-boot`。
-
-启动入口用途速查：
-
-| 入口 | 用途 | 当前是否推荐 |
-| --- | --- | --- |
-| `qhxd-backend.service` + `qhxd-boot.service` | RK 生产环境开机自启 | 是 |
-| `scripts/status_public_robot.sh` | 统一检查 RK backend、Tailscale、公网 gateway、YOLO 与 ROS 2 | 是 |
-| `scripts/start_public_robot.sh` | systemd 异常时的手动恢复或按需启动 | 是，仅手动场景 |
-| `scripts/start_frontend.sh` | RK 本地 Vite 开发页面 | 仅前端调试 |
-| `scripts/start_all.sh` | backend + 本地 Vite + USB YOLO | 仅 USB 本地联调 |
-| `scripts/start_hik_web.sh` | backend + 本地 Vite + Hik YOLO | 仅 Hik 本地联调 |
-
-### 相机快捷入口
-
-首次部署或更换 USB 摄像头后，建议绑定稳定设备名：
-
-```bash
-./scripts/setup_usb_camera_alias.sh
-```
-
-默认 USB 配置使用 `/dev/qhxd-usb-camera`：
-
-```bash
-./scripts/start_yolo_camera.sh
-```
-
-Hik 相机使用 MVS SDK 配置：
-
-```bash
-./scripts/start_yolo_hik_camera.sh
-```
-
-USB 与 Hik 复用同一个 `yolo_camera` 服务名；切换前建议先停掉旧服务：
-
-```bash
-source scripts/common.sh
-stop_service yolo_camera
-```
-
-### 导航通信启动
-
-当前正式 C 板通信包是 `standard_robot_pp_ros2`，不要再把旧 `rtt_nav_bridge` 当作主链路启动，否则可能抢占串口。
-
-推荐使用脚本托管通信节点，避免手动 `ros2 launch` 后留下孤儿进程继续占用串口：
-
-```bash
-cd /home/robomaster/QHXD
-./scripts/start_cboard_comm.sh
-./scripts/status_public_robot.sh
-./scripts/stop_cboard_comm.sh
-```
-
-如果需要手动调试，也可以直接启动 ROS 2 launch：
-
-```bash
-cd /home/robomaster/QHXD
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py
-```
-
-串口默认配置：
-
-```text
-standard_robot_pp_ros2/config/standard_robot_pp_ros2.yaml
-device_name: /dev/ttyCBoard
-baud_rate: 115200
-publish_odom: true
-publish_odom_tf: true
-```
-
-快速验证：
-
-```bash
-ros2 topic list | sort | grep -E '^/(cmd_vel|odom|tf|serial/robot_motion|serial/imu)'
-ros2 topic echo /serial/imu --once
-ros2 topic echo /serial/robot_motion --once
-ros2 topic echo /odom --once
-ros2 topic hz /odom
-```
-
-### C 板 IMU 到前端状态流
-
-公网前端已经部署在云服务器，浏览器仍然只访问 `https://lingxunrobot.cn/api` 与 `wss://lingxunrobot.cn/ws`。C 板直接接入 RK3588 后，前端不直连 ROS 2；RK3588 本地 IMU bridge 将 ROS 2 话题写入现有后端契约：
-
-```text
-C 板 -> standard_robot_pp_ros2 -> /serial/imu
--> scripts/ros2_imu_bridge.py
--> POST /api/internal/nuc/imu
--> GET /api/imu/latest 与 WS /ws/imu
--> Cloud Gateway -> 公网前端
-```
-
-真实 IMU 接入前必须切到 `real` 模式，否则后端会按设计忽略 `/api/internal/nuc/imu` 输入：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/system/mode/switch \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"real"}'
-```
-
-启动完整现场链路：
-
-```bash
-cd /home/robomaster/QHXD
-PUBLIC_ROBOT_START_CBOARD=true ./scripts/start_public_robot.sh
-```
-
-IMU bridge 默认订阅 `/serial/imu`，以 20Hz 写入 `http://127.0.0.1:8000/api/internal/nuc/imu`，数据源标记为 `rk3588_cboard_ros2`。可通过环境变量覆盖：
-
-```bash
-ROS2_IMU_TOPIC=/serial/imu \
-ROS2_IMU_BRIDGE_RATE_HZ=20 \
-ROS2_IMU_BRIDGE_BACKEND_URL=http://127.0.0.1:8000 \
-ROS2_IMU_BRIDGE_SOURCE=rk3588_cboard_ros2 \
-./scripts/start_cboard_comm.sh
-```
-
-本地验收：
-
-```bash
-ros2 topic echo /serial/imu --once
-tail -f logs/ros2_imu_bridge.log
-curl --noproxy '*' -s http://127.0.0.1:8000/api/imu/latest
-```
-
-公网验收：
-
-```bash
-curl -s https://api.lingxunrobot.cn/health
-curl -s https://lingxunrobot.cn/api/imu/latest
-```
-
-注意：默认串口配置仍是 `/dev/ttyCBoard`。如果当前只检测到 `/dev/ttyACM0`，先运行：
-
-```bash
-cd /home/robomaster/QHXD/standard_robot_pp_ros2
-sudo ./script/create_udev_rules.sh
-```
-
-或者临时修改 `standard_robot_pp_ros2/config/standard_robot_pp_ros2.yaml` 与安装后的参数文件，将 `device_name` 改为实际串口。不要同时启动 `rtt_nav_bridge` 和 `standard_robot_pp_ros2`。
-
-## 当前入口
-
-### 公网入口
-
-```text
-Web 前端：https://lingxunrobot.cn
+Web：https://lingxunrobot.cn
 同域 API：https://lingxunrobot.cn/api
 同域 WS：wss://lingxunrobot.cn/ws/state 与 /ws/imu
-
 外部 API：https://api.lingxunrobot.cn
 外部 WS：wss://api.lingxunrobot.cn/ws/state 与 /ws/imu
-
-同域视频会话：POST https://lingxunrobot.cn/api/video/session
-WebRTC/HLS：由前端使用会话 Cookie 自动访问 /video/*，无需手工拼接地址
 ```
 
-两类公网入口最终都反代到云服务器本机：
+公网写操作的 Token 是云服务器 `/etc/lingxun-cloud-gateway.env` 中的 `PUBLIC_API_TOKEN`。不要把 Token 写入代码或提交到 Git。
+
+### RK3588 本地
 
 ```text
-http://127.0.0.1:9000
-```
-
-再由 Cloud Gateway 经 Tailscale 转发到 RK3588：
-
-```text
-http://100.113.173.115:8000
-```
-
-公网写接口需要页面顶部保存 token。token 是云服务器：
-
-```text
-/etc/lingxun-cloud-gateway.env
-PUBLIC_API_TOKEN=...
-```
-
-### 本地入口
-
-```text
-RK backend：http://127.0.0.1:8000
+Backend：http://127.0.0.1:8000 或 http://<RK-IP>:8000
 健康检查：http://127.0.0.1:8000/health
-Vite 前端：http://127.0.0.1:5173
-MJPEG 最新帧：http://127.0.0.1:8000/api/perception/frame_stream
+Vite 调试：http://<RK-IP>:5173
+MJPEG 兜底：http://127.0.0.1:8000/api/perception/frame_stream
 ```
 
-## 系统架构
+## 当前实现能力
 
-```text
-浏览器 / 小程序 / 外部客户端
-        |
-        | 公网 HTTPS / WSS
-        v
-云服务器 Nginx
-        |
-        +-- 127.0.0.1:9000 -> Cloud Gateway -> API / WS / 视频会话认证
-        `-- 127.0.0.1:8889/8888 -> MediaMTX -> WebRTC / HLS
-        |
-        | Tailscale / HTTP
-        v
-RK3588 QHXD backend
-        |
-        +-- FunASR / USB 麦克风 / 浏览器上传音频
-        +-- DeepSeek V4 语义解析 fallback
-        +-- RKNN YOLO26 / USB 或 Hik 相机
-        +-- ROS 2 standard_robot_pp_ros2 / C 板
-        +-- Dashboard state_store / WebSocket
-
-相机 -> 最新帧生产器 -> YOLO 5 FPS
-                   `-> MPP H.264 10 FPS -> RTMP/Tailscale -> MediaMTX
-```
-
-运行模式：
-
-- `mock`：后端按 mock 状态循环刷新，适合前端与接口调试。
-- `real`：等待真实导航、IMU、视觉、C 板等链路更新状态。
-
-模式切换接口：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/system/mode/switch \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"real"}'
-```
+- Dashboard：Mock/Real 切换、状态卡片、导航可视化、任务链路、任务控制、视觉事件、告警、语音/LLM 交互。
+- 语音：文本、浏览器麦克风、RK 车载麦克风三种入口统一进入智能助手。
+- ASR：FunASR SenseVoiceSmall + FSMN VAD，模型在进程内缓存，首次识别后复用。
+- LLM：DeepSeek 负责开放问答和复杂语义 fallback；本地规则、schema、白名单和确认流程负责安全。
+- TTS：MiMO V2.5 在线合成，可通过 ES8388 板载扬声器自动播放。
+- 感知：Hik MVS 优先、USB/UVC 备用，RKNN YOLO26 独立推理并提交 `detection_status`。
+- 视频：相机帧与 YOLO 异步，MPP H.264 上传至 MediaMTX，前端 WebRTC 优先。
+- 导航：`standard_robot_pp_ros2` 提供 `/cmd_vel`、`/serial/imu`、`/serial/robot_motion`、`/odom` 和 TF 链路。
+- 云端：Cloud Gateway 完成认证、限流、路由白名单、操作日志、API/WS 转发与视频会话。
 
 ## 目录说明
 
 ```text
 backend/                  RK3588 FastAPI 后端
 frontend/                 Vue 3 Dashboard
-cloud_gateway/            云服务器公网中继服务
-experiments/rknn_yolo/    RKNN YOLO26 推理与相机检测
-standard_robot_pp_ros2/   当前正式 C 板 / 导航 ROS 2 通信包
-rtt_nav_bridge/           旧 Phase6 桥接包，保留作参考与历史兼容
-pb_rm_interfaces/         ROS 2 自定义消息依赖
-scripts/                  本地启动、状态、清理、udev 绑定脚本
+cloud_gateway/            云端公网中继
+experiments/rknn_yolo/    RKNN YOLO26 与相机检测
+standard_robot_pp_ros2/   当前正式 C 板 / ROS 2 通信包
+rtt_nav_bridge/           旧桥接，仅保留参考
+scripts/                  启动、状态、清理、设备绑定
 systemd/                  RK3588 systemd 服务模板
-streaming/                MediaMTX、Nginx 与独立 H.264 视频链路配置
-docs/                     协议、桥接与阶段文档
-audio_test/               语音命令测试样本
+streaming/                MediaMTX、Nginx 与视频配置
+docs/                     协议和阶段文档
+audio_test/               语音验收样本
 ```
 
-运行时目录：
+`.runtime/`、`logs/`、`backend/data/voice_records/`、`backend/data/tts/` 和 YOLO `outputs/` 已通过 `.gitignore` 排除。
+
+## 语音、LLM 与 TTS
+
+### 统一智能助手
+
+机器人身份为“灵巡 Sentinel”，配置在：
 
 ```text
-.runtime/                         脚本 pid 文件
-logs/                             脚本日志
-backend/data/voice_records/       RK3588 本地录音文件
-experiments/rknn_yolo/outputs/    YOLO JSON、画框图、latest frame
+backend/app/config/robot_profile.json
 ```
 
-这些运行时文件已在 `.gitignore` 中忽略，避免上传录音、图片、日志和 ROS build 产物。
+Dashboard 的“发送文本命令”“网页麦克风”“车载麦克风”均进入 smart assistant，无需另外点击智能解析。
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你使用的模型是什么？","source":"curl","requested_by":"operator"}'
+```
+
+开放问答会返回 DeepSeek 的 `reply_text`，但 `open_chat` 永远不生成 mission。移动类指令只生成候选任务：
+
+```text
+intent=go_to_waypoint
+need_confirm=true
+mission_candidate.command=go_to_waypoint
+pending_command_id=...
+```
+
+使用 `/api/voice/confirm_command` 确认或取消。
+
+### 支持命令与点位
+
+配置：
+
+```text
+backend/app/config/voice_commands.json
+backend/app/config/waypoints.json
+```
+
+已支持去目标点、暂停、继续、返回起点、开始巡检、查询机器人/任务/视觉/天气与开放问答。未知命令不触发 mission。
+
+| ID | 名称与常用别名 |
+| --- | --- |
+| `wp_201` | 二零一实验室、201实验室、201 |
+| `wp_001` | 一号点、1号点、一号 |
+| `wp_002` | 二号点、2号点、202 |
+| `home` | 起点、装载点、返回点、home、家 |
+
+新增点位优先只修改 `waypoints.json`；不要让多个点位共享同一短别名。
+
+### 语音入口
+
+```bash
+# 文件识别（legacy 底层调试）
+curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
+  -F 'file=@audio_test/cmd_201.wav;type=audio/wav'
+
+# 文件识别 + 智能助手
+curl -X POST http://127.0.0.1:8000/api/voice/smart_audio_command \
+  -F 'file=@audio_test/cmd_201.wav;type=audio/wav'
+
+# RK 本机麦克风录音 + 智能助手
+curl -X POST http://127.0.0.1:8000/api/voice/smart_record_command \
+  -H 'Content-Type: application/json' \
+  -d '{"duration":3,"source":"rk-mic","requested_by":"operator"}'
+```
+
+公网不直接暴露 `/api/voice/record_command`，因为它会录服务器本机麦克风。
+
+```text
+浏览器麦克风 -> /api/voice/browser_smart_command
+-> 云 ffmpeg 转 16kHz mono WAV -> RK /api/voice/smart_audio_command
+
+车载麦克风 -> /api/robot/voice/onboard_smart_command
+-> RK /api/voice/smart_record_command
+```
+
+### FunASR / ALSA 配置
+
+```env
+ASR_BACKEND=funasr
+FUNASR_MODEL_PATH=/home/robomaster/.cache/modelscope/hub/models/iic/SenseVoiceSmall
+FUNASR_VAD_MODEL_PATH=/home/robomaster/.cache/modelscope/hub/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+FUNASR_DEVICE=cpu
+FUNASR_LANGUAGE=zh
+FUNASR_USE_ITN=true
+FUNASR_DISABLE_UPDATE=true
+
+AUDIO_DEVICE=plughw:CARD=Device,DEV=0
+AUDIO_RECORD_SECONDS=3
+AUDIO_CHANNELS=1
+AUDIO_SAMPLE_RATE=16000
+AUDIO_FORMAT=S16_LE
+```
+
+FunASR 模型在 backend 进程内惰加载和缓存：首次识别耗时更长，后续请求复用同一模型实例。
+
+运行 `./scripts/configure_robot_audio.sh` 会屏蔽用户 PulseAudio 自启，避免抢占 USB 麦克风和 ES8388 扬声器。
+
+### DeepSeek / TTS 配置
+
+```env
+LLM_BACKEND=deepseek
+LLM_ENABLE=true
+DEEPSEEK_API_KEY=...
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_DISPLAY_MODEL="DeepSeek V4 Flash"
+DEEPSEEK_TIMEOUT_SECONDS=45
+LLM_REQUIRE_CONFIRM_FOR_MOTION=true
+
+TTS_BACKEND=online
+MIMO_API_KEY=...
+MIMO_BASE_URL=https://api.xiaomimimo.com/v1
+MIMO_TTS_MODEL=mimo-v2.5-tts
+MIMO_TTS_VOICE=茉莉
+TTS_AUTO_PLAY_LOCAL=true
+TTS_PLAYER_CMD="aplay -D plughw:2,0"
+```
+
+`DEEPSEEK_MODEL=deepseek-chat` 是 API 请求别名；当前 API 响应的实际模型为 `deepseek-v4-flash`，页面展示名由 `DEEPSEEK_DISPLAY_MODEL` 控制。
+
+## YOLO、相机与实时视频
+
+已验证模型：
+
+```text
+models/yolo26n_fp32.rknn
+RGB / NHWC / float32 / 0.0~1.0 / 640x640
+output shape=(1, 300, 6)
+output layout=xyxy_score_class
+```
+
+配置文件：
+
+```text
+USB：experiments/rknn_yolo/camera_config.json
+Hik：experiments/rknn_yolo/camera_config_hik.example.json
+```
+
+关键参数：
+
+```json
+{
+  "fps": 5,
+  "stream_enabled": true,
+  "stream_fps": 10,
+  "stream_width": 1280,
+  "stream_height": 720,
+  "stream_bitrate": 1200000,
+  "stream_queue_size": 2,
+  "max_det": 20,
+  "output_layout": "xyxy_score_class"
+}
+```
+
+- `fps`：YOLO 取最新帧推理和提交状态的频率。
+- `stream_fps`：前端实时 H.264 视频的目标帧率。
+- `hik_params.float.AcquisitionFrameRate`：Hik 硬件采集帧率，应不低于 `stream_fps`。
+- `stream_queue_size`：拥塞时丢弃旧帧，避免延迟和内存增长。
+
+RK 根目录 `.env`：
+
+```env
+QHXD_VIDEO_STREAM_ENABLED=true
+QHXD_VIDEO_STREAM_URL='rtmp://<cloud-tailscale-ip>:1935/robot/front?user=<publisher>&pass=<secret>'
+```
+
+`PERCEPTION_MJPEG_INTERVAL_MS` 只控制最终 MJPEG 兜底的检查间隔，不决定 WebRTC/HLS 正常视频帧率。详细模型、labels 和调试参数见 `experiments/rknn_yolo/README.md`。
+
+## ROS 2 导航与 C 板
+
+当前正式包为 `standard_robot_pp_ros2`：
+
+- 打开 `/dev/ttyCBoard`（默认 115200）。
+- BCP 协议接收下位机数据。
+- 发布 `/serial/robot_motion`、`/serial/imu`、`/odom` 和可选 TF。
+- 订阅 `/cmd_vel` 并下发给 C 板。
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/robomaster/QHXD/install/setup.bash
+ros2 topic list | sort
+ros2 topic echo /serial/imu --once
+ros2 topic echo /serial/robot_motion --once
+ros2 topic echo /odom --once
+```
+
+注意：topic 存在只证明 publisher 已启动，不等于 C 板在持续上发。当前重启验收已确认节点和 topic 自启，但下位机 IMU/odom 持续数据仍作为独立实机待验项。
+
+`CBOARD_WATCHDOG_ENABLED=false` 默认关闭。只有在下位机本应持续上发时才建议打开，避免无数据时循环重启串口。
+
+详见 `standard_robot_pp_ros2/README.md`。
 
 ## 后端 API
 
-后端入口文件：`backend/app/main.py`。
-
-常用读取接口：
+常用读取：
 
 ```text
 GET /health
@@ -425,23 +392,22 @@ WS  /ws/state
 WS  /ws/imu
 ```
 
-语音 / LLM 接口：
+语音与智能助手：
 
 ```text
-POST /api/voice/text_command
-POST /api/voice/asr_text_mock
 POST /api/voice/smart_command
 POST /api/voice/smart_audio_command
 POST /api/voice/smart_record_command
 POST /api/voice/audio_command
-POST /api/voice/record_command
-POST /api/robot/voice/onboard_smart_command
+POST /api/voice/record_command                 # 仅 RK 本地
+POST /api/robot/voice/onboard_smart_command    # 公网车载麦克风
+POST /api/voice/browser_smart_command          # 云网关入口
 POST /api/voice/confirm_command
 POST /api/voice/speak
 GET  /api/voice/tts/latest
 ```
 
-任务接口：
+任务：
 
 ```text
 POST /api/mission/go_to_waypoint
@@ -451,7 +417,7 @@ POST /api/mission/resume
 POST /api/mission/return_home
 ```
 
-内部状态接入：
+内部状态：
 
 ```text
 POST /api/internal/perception/detection_status
@@ -459,700 +425,202 @@ POST /api/internal/nuc/state
 POST /api/internal/nuc/imu
 ```
 
-说明：`/api/internal/nuc/*` 是历史命名，前端显示已经逐步改为 Nav/Navi 概念；接口名暂不改，以保持兼容。
+`/api/internal/nuc/*` 是为保持兼容而保留的历史接口名，前端已使用 Nav/Navi 表述。
 
-## 语音与 LLM
+## Cloud Gateway
 
-### 灵巡 Sentinel 智能助手
-
-Phase 9A 后，机器人正式身份为：
-
-```text
-灵巡 Sentinel
-```
-
-统一身份档案：
-
-```text
-backend/app/config/robot_profile.json
-```
-
-修改机器人名称、能力列表、安全规则、自我介绍时，只改这个配置文件；后端查询回复会从该配置读取，不在多个业务文件中硬编码。
-
-Dashboard 的“发送文本命令”“网页麦克风识别”“车载麦克风识别”默认都进入智能助手链路，不需要再单独点击“智能助手解析”。Legacy 的 `/api/voice/text_command`、`audio_command`、`record_command` 保留用于兼容和底层调试。
-
-智能助手文本接口：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
-  -H "Content-Type: application/json" \
-  -d '{"text":"你是谁","source":"curl","requested_by":"operator","generate_tts":true}'
-```
-
-典型返回字段：
-
-```json
-{
-  "recognized_text": "你是谁",
-  "intent": "query_self_identity",
-  "data_source": "robot_profile",
-  "reply_text": "你好，我是灵巡 Sentinel...",
-  "need_confirm": false,
-  "mission_candidate": null,
-  "tts_status": {
-    "backend": "mock",
-    "status": "generated"
-  }
-}
-```
-
-查询类命令会直接返回自然语言回复，不触发 mission：
-
-```text
-你是谁
-你使用的模型是什么
-你能做什么
-你可以自己控制底盘吗
-当前机器人状态正常吗
-当前任务是什么
-你还有多少电
-急停了吗
-视觉检测到了什么
-现在天气怎么样
-当前环境适合巡检吗
-```
-
-开放问答会通过 DeepSeek fallback 返回 `open_chat` 的 `reply_text`，但不能触发机器人运动：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
-  -H "Content-Type: application/json" \
-  -d '{"text":"请用一句话解释你如何协助导航","use_llm":true}'
-```
-
-其中 `open_chat` 只能用于回答，不能包含 `mission_candidate`。涉及导航时，回复应说明运动控制仍由结构化任务、本地安全校验和用户确认流程接管。
-
-运动类命令只生成候选任务和待确认 ID：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
-  -H "Content-Type: application/json" \
-  -d '{"text":"帮我送到二零一实验室","source":"curl","requested_by":"operator"}'
-```
-
-返回中应包含：
-
-```text
-intent=go_to_waypoint
-need_confirm=true
-mission_candidate.command=go_to_waypoint
-mission_candidate.payload.waypoint_id=wp_201
-pending_command_id=...
-```
-
-确认执行仍使用原有接口：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/confirm_command \
-  -H "Content-Type: application/json" \
-  -d '{"pending_command_id":"<id>","confirmed":true,"requested_by":"operator"}'
-```
-
-取消：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/confirm_command \
-  -H "Content-Type: application/json" \
-  -d '{"pending_command_id":"<id>","confirmed":false,"requested_by":"operator"}'
-```
-
-智能助手交互日志：
-
-```text
-backend/data/smart_voice_logs.jsonl
-```
-
-日志字段包括 `request_id`、`recognized_text`、`intent`、`data_source`、`reply_text`、`need_confirm`、`mission_candidate`、`tts_status`、`error_reason`、`timestamp`。
-
-### 支持命令
-
-配置文件：
-
-```text
-backend/app/config/voice_commands.json
-backend/app/config/waypoints.json
-```
-
-当前支持：
-
-- 去某个目标点，例如“去二零一实验室”“去一号点”。
-- 暂停任务。
-- 继续任务。
-- 返回起点。
-- 开始巡检。
-- 查询状态 / 查询任务 / 查询视觉检测。
-- 未知命令：拒绝，不触发 mission。
-
-当前 waypoint：
-
-```text
-wp_201：二零一实验室，别名：二零一实验室 / 201实验室 / 二零一 / 201
-wp_001：一号点，别名：一号点 / 1号点 / 1 号点 / 一号
-wp_002：二号点，别名：二号点 / 2号点 / 2 号点 / 二号 / 202
-home：起点，别名：起点 / 装载点 / 返回点 / home / 家
-```
-
-注意：不要让多个 waypoint 共享同一个短别名，例如 `201` 或 `实验室`。歧义地点不会触发 mission。
-
-### 天气 / 环境查询
-
-传感器板正式接入前，环境查询先走 weather provider，不伪装成机器人本体传感器：
-
-```bash
-curl http://127.0.0.1:8000/api/external/weather/latest
-```
-
-返回字段包含：
-
-```text
-location, temperature_c, humidity_percent, weather, wind, source, updated_at
-```
-
-`source` 固定为 `weather_provider`。当前可用 `.env` 覆盖 mock 天气：
-
-```env
-WEATHER_LOCATION=海南海口
-WEATHER_TEMPERATURE_C=28.6
-WEATHER_HUMIDITY_PERCENT=82
-WEATHER_TEXT=多云
-WEATHER_WIND=东南风
-```
-
-### TTS 播报
-
-第一版 TTS 默认是 mock，占位接口稳定但不阻塞任务主流程：
-
-```env
-TTS_BACKEND=mock
-```
-
-手动播报：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/speak \
-  -H "Content-Type: application/json" \
-  -d '{"text":"我是灵巡 Sentinel。","source":"curl"}'
-```
-
-查询最近一次 TTS 状态：
-
-```bash
-curl http://127.0.0.1:8000/api/voice/tts/latest
-```
-
-### 本地文本命令
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/text_command \
-  -H "Content-Type: application/json" \
-  -d '{"text":"去一号点","source":"text-debug","requested_by":"operator"}'
-```
-
-移动类语义默认进入二次确认：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/confirm_command \
-  -H "Content-Type: application/json" \
-  -d '{"pending_command_id":"<id>","confirm":true,"source":"operator"}'
-```
-
-### 文件音频识别
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
-  -F "file=@audio_test/cmd_201.wav;type=audio/wav" \
-  -F "source=audio-test" \
-  -F "requested_by=operator"
-```
-
-### RK3588 车载麦克风录音
-
-本地接口：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/voice/smart_record_command \
-  -H "Content-Type: application/json" \
-  -d '{"duration":3,"source":"rk3588-record-command","requested_by":"operator"}'
-```
-
-公网不直接暴露 `/api/voice/record_command`，因为它会录云服务器本机而不是机器人本体。公网车载麦克风默认走智能助手：
-
-```text
-POST /api/robot/voice/onboard_smart_command
-```
-
-### 浏览器麦克风
-
-公网前端的“网页麦克风识别”使用浏览器 `MediaRecorder` 录音：
-
-```text
-浏览器 webm/ogg/wav
--> /api/voice/browser_smart_command
--> 云端 ffmpeg 转 16kHz mono wav
--> RK3588 /api/voice/smart_audio_command
--> ASR 结果进入 /api/voice/smart_command
-```
-
-### LLM 配置
-
-`.env` 示例：
-
-```env
-LLM_BACKEND=deepseek
-LLM_ENABLE=true
-DEEPSEEK_ENABLE=true
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-flash
-LLM_REQUIRE_CONFIRM_FOR_MOTION=true
-VOICE_PENDING_TTL_SECONDS=30
-```
-
-规则解析优先；LLM 只作为复杂自然语言 fallback。LLM 输出必须经过本地 schema 和安全校验；非法 waypoint、低置信度、非 JSON、API 失败都不会触发任务。
-
-## YOLO 感知与相机
-
-目录：
-
-```text
-experiments/rknn_yolo/
-```
-
-当前已验证 RKNN 模型配置：
-
-```text
-模型：models/yolo26n_fp32.rknn
-labels：models/labels.txt
-输入：RGB + NHWC + float32 / 255.0 + 640x640
-输出 shape：(1, 300, 6)
-推荐输出 layout：xyxy_score_class
-```
-
-单图验收：
-
-```bash
-cd /home/robomaster/QHXD/experiments/rknn_yolo
-
-python3 infer_image.py \
-  --model models/yolo26n_fp32.rknn \
-  --image samples/test.jpg \
-  --labels models/labels.txt \
-  --conf 0.25 \
-  --format detection_status \
-  --output-layout xyxy_score_class \
-  --max-det 20 \
-  --draw-output outputs/test_fixed_preprocess.jpg \
-  > outputs/detection_status_fixed_preprocess.json
-```
-
-连续检测配置：
-
-```text
-USB：experiments/rknn_yolo/camera_config.json
-Hik：experiments/rknn_yolo/camera_config_hik.example.json
-```
-
-配置重点：
-
-```json
-{
-  "fps": 5,
-  "submit": true,
-  "save_latest": "outputs/latest_hik_detection.jpg",
-  "max_det": 20,
-  "output_layout": "xyxy_score_class",
-  "camera_backend": "hik"
-}
-```
-
-`fps` 是 YOLO 消费最新帧、推理、保存 latest、提交 `detection_status` 的频率。开启独立视频后，相机生产线程按 `max(fps, stream_fps)` 采集；YOLO 与视频发布各取最新完整帧，不累积旧帧。
-
-Hik 硬件采集帧率在 `hik_params` 中：
-
-```json
-{
-  "hik_params": {
-    "bool": {
-      "AcquisitionFrameRateEnable": true
-    },
-    "float": {
-      "AcquisitionFrameRate": 10.0
-    }
-  }
-}
-```
-
-`AcquisitionFrameRate` 应不低于 `stream_fps`；当前两者均为 10 FPS，YOLO 的 `fps` 仍保持 5。
-
-公网前端视频使用 WebRTC 优先、HLS 回退、MJPEG 最终兜底：
-
-```env
-# RK 根目录 .env；URL 必须加引号，避免 & 被 shell 解释
-QHXD_VIDEO_STREAM_ENABLED=true
-QHXD_VIDEO_STREAM_URL='rtmp://<云端Tailscale-IP>:1935/robot/front?user=<publisher>&pass=<secret>'
-```
-
-Hik 配置中的视频参数：
-
-```json
-{
-  "fps": 5,
-  "stream_enabled": true,
-  "stream_url": "",
-  "stream_fps": 10,
-  "stream_width": 1280,
-  "stream_height": 720,
-  "stream_bitrate": 1200000,
-  "stream_queue_size": 2,
-  "stream_reconnect_interval": 3
-}
-```
-
-- `fps`：YOLO 推理频率，当前推荐 5 FPS。
-- `stream_fps`：相机帧发布到公网视频链路的目标频率，当前推荐 10 FPS。
-- `stream_queue_size`：只允许 1 或 2；拥塞时丢弃旧帧，防止延迟和内存持续增长。
-- 编码使用 RK3588 `mpph264enc`，不是 CPU 软件编码。
-- 公网浏览器保存有效 Token 后，前端调用 `/api/video/session` 获取短期 HttpOnly 会话 Cookie，然后连接 WHEP。
-
-旧 MJPEG 环境变量只控制最终兜底链路：
-
-```env
-VITE_USE_MJPEG_STREAM=true
-PERCEPTION_MJPEG_INTERVAL_MS=200
-VITE_LATEST_FRAME_INTERVAL_MS=2000
-PERCEPTION_LATEST_FRAME_MAX_AGE_SECONDS=10
-```
-
-`PERCEPTION_MJPEG_INTERVAL_MS=200` 只表示兜底 MJPEG 最多每 200ms 检查一次 latest 图片，不再决定正常公网视频帧率。
-
-## ROS 2 导航通信
-
-当前正式包：
-
-```text
-standard_robot_pp_ros2/
-```
-
-职责：
-
-- 打开 C 板 USB CDC 串口，默认 `/dev/ttyCBoard`。
-- 通过 BCP 协议接收下位机数据。
-- 发布 `/serial/robot_motion`、`/serial/imu`。
-- 将底盘速度积分为 `/odom`。
-- 可选发布 `odom -> base_link` TF。
-- 订阅 `/cmd_vel` 并下发给 C 板。
-
-编译：
-
-```bash
-cd /home/robomaster/QHXD
-source /opt/ros/humble/setup.bash
-colcon build --packages-select standard_robot_pp_ros2 --symlink-install
-source install/setup.bash
-```
-
-启动：
-
-```bash
-ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py
-```
-
-不要同时启动：
-
-```text
-rtt_nav_bridge
-standard_robot_pp_ros2
-```
-
-否则两个节点可能抢同一个 `/dev/ttyACM0` / `/dev/ttyCBoard`。
-
-如果 `/odom` topic 存在但没有数据，先确认 C 板是否真的持续上发：
-
-```bash
-ros2 topic echo /serial/robot_motion --once
-ros2 topic echo /odom --once
-lsof /dev/ttyACM0 2>/dev/null || true
-```
-
-更多导航说明见：
-
-```text
-standard_robot_pp_ros2/README.md
-```
-
-## 公网 Cloud Gateway
-
-云端目录：
+云端关键路径：
 
 ```text
 /opt/lingxun-cloud-gateway
 /etc/lingxun-cloud-gateway.env
-/etc/systemd/system/lingxun-cloud-gateway.service
 /var/www/lingxunrobot
+/etc/lingxun-mediamtx.yml
 ```
 
-环境变量：
+```bash
+sudo systemctl status nginx lingxun-cloud-gateway lingxun-mediamtx
+sudo systemctl restart lingxun-cloud-gateway
+sudo journalctl -u lingxun-cloud-gateway -f
+curl http://127.0.0.1:9000/health
+curl http://127.0.0.1:9997/v3/paths/list
+```
+
+网关环境主要参数：
 
 ```env
 RK_BACKEND_BASE_URL=http://100.113.173.115:8000
-PUBLIC_API_TOKEN=replace-with-secret-token
+PUBLIC_API_TOKEN=...
 PUBLIC_CONTROL_ENABLED=false
 PUBLIC_RATE_LIMIT_PER_MINUTE=60
 PUBLIC_AUDIO_MAX_MB=20
 PUBLIC_BROWSER_AUDIO_MAX_MB=5
 PUBLIC_BROWSER_AUDIO_MAX_SECONDS=10
-GATEWAY_OPERATION_LOG=/var/log/lingxun-cloud-gateway/operations.jsonl
 ```
 
-云服务器常用命令：
+- 读接口可按白名单公开转发。
+- 语音、模式切换和任务等写接口需 `Authorization: Bearer <PUBLIC_API_TOKEN>`。
+- mission 控制另需 `PUBLIC_CONTROL_ENABLED=true`。
+- `/api/voice/record_command` 永远不直接暴露到公网。
+
+## 重启后验收
+
+### 一键状态
 
 ```bash
-sudo systemctl status lingxun-cloud-gateway
-sudo systemctl restart lingxun-cloud-gateway
-sudo journalctl -u lingxun-cloud-gateway -f
-curl http://127.0.0.1:9000/health
-tail -f /var/log/lingxun-cloud-gateway/operations.jsonl
+cd /home/robomaster/QHXD
+./scripts/status_public_robot.sh
 ```
 
-公网 endpoint 策略：
+预期：RK backend、公网 gateway、公网 Web 正常；有相机时 YOLO 与 H.264 publisher 运行。`PID debug backend: not running` 在 systemd backend 为 active 时是正常状态。
 
-- 读接口：`/health`、`/api/state/latest`、`/api/alerts`、`/api/tasks/current`、`/api/imu/latest`、`/api/perception/*`、`/api/external/weather/latest`、`/api/voice/tts/latest`、`/ws/state`、`/ws/imu`。
-- 写接口：`/api/voice/text_command`、`/api/voice/audio_command`、`/api/voice/browser_audio_command`、`/api/voice/browser_smart_command`、`/api/voice/smart_command`、`/api/voice/smart_audio_command`、`/api/voice/smart_record_command`、`/api/robot/voice/onboard_smart_command`、`/api/voice/speak`、`/api/voice/confirm_command` 等都需要 `Authorization: Bearer <PUBLIC_API_TOKEN>`。
-- mission 控制：还需要 `PUBLIC_CONTROL_ENABLED=true`。
-- 禁止公网直连：`POST /api/voice/record_command`。
-
-已知公网域名排障：
-
-- 如果 HTTP 返回 `dnspod.qcloud.com/static/webblock.html` 或 HTTPS 握手提前 EOF，优先检查域名备案、DNSPod/云厂商 WebBlock、证书与安全策略。
-- 如果云服务器本机 `curl http://127.0.0.1:9000/health` 正常，且 RK `curl http://127.0.0.1:8000/health` 正常，问题通常不在 RK backend。
-
-## 环境变量总览
-
-根目录 `.env` 会被 `scripts/common.sh` 和后端相关服务读取。`.env` 不应提交。
-
-常用变量：
-
-```env
-BACKEND_PORT=8000
-BACKEND_HOST=0.0.0.0
-FRONTEND_PORT=5173
-
-LLM_ENABLE=true
-DEEPSEEK_API_KEY=...
-
-AUDIO_DEVICE=plughw:CARD=Device,DEV=0
-AUDIO_RECORD_SECONDS=3
-VOICE_MAX_UPLOAD_MB=20
-VOICE_MAX_AUDIO_SECONDS=10
-
-VITE_USE_MJPEG_STREAM=true
-PERCEPTION_MJPEG_INTERVAL_MS=200
-VITE_LATEST_FRAME_INTERVAL_MS=2000
-VITE_DETECTION_EVENT_HOLD_MS=15000
-VITE_DETECTION_EVENT_MAX_ITEMS=12
-
-QHXD_VIDEO_STREAM_ENABLED=true
-QHXD_VIDEO_STREAM_URL='rtmp://<云端Tailscale-IP>:1935/robot/front?user=<publisher>&pass=<secret>'
-```
-
-前端环境：
-
-```text
-frontend/.env.development
-frontend/.env.production
-```
-
-生产前端默认同域访问 `/api` 和 `/ws`；本地开发可通过 Vite proxy 访问 RK backend。
-
-## 构建与验证
-
-后端健康：
+### 后端与公网
 
 ```bash
 curl --noproxy '*' http://127.0.0.1:8000/health
+curl https://api.lingxunrobot.cn/health
+curl https://lingxunrobot.cn/api/state/latest
 ```
 
-前端构建：
+### 音频设备
 
 ```bash
-cd /home/robomaster/QHXD/frontend
-npm run build
+systemctl --user is-enabled pulseaudio.socket pulseaudio.service
+systemctl --user is-active pulseaudio.socket pulseaudio.service
+arecord -l
+aplay -l
+arecord -D 'plughw:CARD=Device,DEV=0' -f S16_LE -r 16000 -c 1 -d 2 /tmp/qhxd-mic.wav
+aplay -D plughw:2,0 /tmp/qhxd-mic.wav
 ```
 
-YOLO 单图：
+PulseAudio 应为 `masked` / `inactive`，录音应生成非空 WAV。
+
+### 语音与智能助手
 
 ```bash
-cd /home/robomaster/QHXD/experiments/rknn_yolo
-python3 infer_image.py --model models/yolo26n_fp32.rknn --image samples/test.jpg --labels models/labels.txt --format detections --output-layout xyxy_score_class --max-det 20
+curl -X POST http://127.0.0.1:8000/api/voice/smart_audio_command \
+  -F 'file=@/home/robomaster/QHXD/audio_test/cmd_201.wav;type=audio/wav'
+
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你使用的模型是什么？"}'
 ```
 
-YOLO 连续服务 dry-run：
+预期：音频识别为“去201实验室”并返回 `need_confirm=true`；模型查询返回 DeepSeek V4 Flash。
+
+### 视频
+
+RK：
 
 ```bash
-cd /home/robomaster/QHXD/experiments/rknn_yolo
-python3 camera_detect_service.py --config camera_config.json --dry-run --max-frames 2
-python3 camera_detect_service.py --config camera_config_hik.example.json --dry-run --max-frames 2
-```
-
-独立公网视频链路：
-
-```bash
-# RK：确认相机、YOLO 和 MPP 发布器
+grep -E 'camera|H.264|publisher' logs/yolo_camera.log | tail -30
 ./scripts/status_public_robot.sh
-grep 'H.264 stream publisher connected' logs/yolo_camera.log
+```
 
-# 云端：确认 MediaMTX 与 cloud gateway
-sudo systemctl status lingxun-mediamtx lingxun-cloud-gateway
+云：
+
+```bash
 curl http://127.0.0.1:9997/v3/paths/list
 ```
 
-MediaMTX 应显示 `robot/front` 为 `ready=true`、视频轨为 H264。浏览器连接成功后，`readers` 中应出现 `webRTCSession`。腾讯云安全组必须放行 `8189/TCP` 和 `8189/UDP`；RTMP 上行使用 Tailscale 地址，不要求将 1935 暴露给公网。
+`robot/front` 应为 `ready=true`。腾讯云安全组需放行 `8189/TCP` 和 `8189/UDP`。
 
-语音文件：
+### C 板独立待验
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/voice/audio_command \
-  -F "file=@/home/robomaster/QHXD/audio_test/cmd_201.wav;type=audio/wav"
+ros2 topic echo /serial/imu --once
+ros2 topic echo /serial/robot_motion --once
+ros2 topic echo /odom --once
 ```
 
-智能助手：
+如节点已运行但命令一直等待，说明当前没有收到下位机持续有效帧，不应阻塞其他功能验收。
+
+本次实际重启记录见 `REBOOT_ACCEPTANCE_DONE.md`。
+
+## 构建与测试
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
-  -H "Content-Type: application/json" \
-  -d '{"text":"你是谁","generate_tts":true}'
+# backend
+cd /home/robomaster/QHXD/backend
+python3 -m unittest -v tests/test_phase1.py
 
-curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
-  -H "Content-Type: application/json" \
-  -d '{"text":"帮我送到二零一实验室"}'
+# frontend
+cd /home/robomaster/QHXD/frontend
+npm run build
+
+# RKNN 单图
+cd /home/robomaster/QHXD/experiments/rknn_yolo
+python3 infer_image.py \
+  --model models/yolo26n_fp32.rknn \
+  --image samples/test.jpg \
+  --labels models/labels.txt \
+  --format detections \
+  --output-layout xyxy_score_class \
+  --max-det 20
 ```
 
-天气与 TTS：
+Cloud Gateway：
 
 ```bash
-curl http://127.0.0.1:8000/api/external/weather/latest
-curl -X POST http://127.0.0.1:8000/api/voice/speak \
-  -H "Content-Type: application/json" \
-  -d '{"text":"我是灵巡 Sentinel。"}'
-curl http://127.0.0.1:8000/api/voice/tts/latest
-```
-
-公网 gateway：
-
-```bash
-# 任意能访问公网的机器
-curl https://api.lingxunrobot.cn/health
-
-# 仅在云服务器本机执行
-curl http://127.0.0.1:9000/health
-```
-
-ROS 2：
-
-```bash
-source /opt/ros/humble/setup.bash
-source /home/robomaster/QHXD/install/setup.bash
-ros2 topic list | sort
+cd /opt/lingxun-cloud-gateway
+.venv/bin/python -m unittest -v test_media_auth.py
 ```
 
 ## 常见问题
 
-### RK3588 重启后是否要手动开后端和硬件链路？
+### 重启后需要手动开后端吗？
 
-当前这台 RK3588 不需要。`qhxd-backend.service` 负责完整后端，`qhxd-boot.service` 负责 real 模式、C 板/IMU bridge 和相机 YOLO 编排。用以下命令确认：
+不需要。先查 `systemctl is-active qhxd-backend qhxd-boot`。本地 Vite 不自启也不影响公网前端。
+
+### 语音报“车载麦克风识别失败”
 
 ```bash
-systemctl is-active qhxd-backend qhxd-boot
-systemctl is-enabled qhxd-backend qhxd-boot
-./scripts/status_public_robot.sh
+systemctl --user is-active pulseaudio.socket pulseaudio.service
+fuser -v /dev/snd/* 2>/dev/null || true
+arecord -D 'plughw:CARD=Device,DEV=0' -f S16_LE -r 16000 -c 1 -d 2 /tmp/test.wav
+journalctl -u qhxd-backend -n 100 --no-pager
 ```
 
-本地 Vite 前端不属于公网生产必需服务，RK 重启后不运行 `start_frontend.sh` 也不影响 `https://lingxunrobot.cn`。
+如 PulseAudio 为 active，重新运行 `./scripts/configure_robot_audio.sh`。
 
-### 公网 token 填什么？
+### 网页麦克风上传失败
 
-填云服务器 `/etc/lingxun-cloud-gateway.env` 中的 `PUBLIC_API_TOKEN`。页面顶部保存后，公网写接口会自动带：
+检查浏览器录音权限、Token、云端 `ffmpeg` 和网关日志：
+
+```bash
+ffmpeg -version
+sudo journalctl -u lingxun-cloud-gateway -n 100 --no-pager
+tail -n 50 /var/log/lingxun-cloud-gateway/operations.jsonl
+```
+
+### 前端视频不刷新
+
+先查 RK 的 YOLO/latest frame，再查云端 `robot/front`：
+
+```bash
+curl -i 'http://127.0.0.1:8000/api/perception/latest_frame?t=check'
+tail -f logs/yolo_camera.log
+curl http://127.0.0.1:9997/v3/paths/list
+```
+
+WebRTC 不可用时前端会回退 HLS/MJPEG；端口放行、Token 会话和 Hik USB3 线缆/供电均需检查。
+
+### `/odom` 有 topic 但无数据
+
+这表示 ROS 2 publisher 存在，不表示 C 板已上发有效运动帧。检查串口占用、`/serial/robot_motion` 和 `logs/standard_robot_pp_ros2.log`，并确保旧 `rtt_nav_bridge` 没有运行。
+
+## 文档索引
+
+当前模块文档：
 
 ```text
-Authorization: Bearer <token>
+experiments/rknn_yolo/README.md
+standard_robot_pp_ros2/README.md
+cloud_gateway/README.md
+REBOOT_ACCEPTANCE_DONE.md
 ```
 
-### 前端画面为什么不刷新？
-
-先看后端是否有新图：
-
-```bash
-curl --noproxy '*' -i 'http://127.0.0.1:8000/api/perception/latest_frame?t=check'
-```
-
-如果返回 `latest_frame_stale`，说明 YOLO 服务没有持续产出新图片。继续看：
-
-```bash
-tail -f logs/yolo_camera.log
-ls -lh experiments/rknn_yolo/outputs/latest_*_detection.jpg
-```
-
-### Hik 相机经常掉线怎么办？
-
-优先确认硬件链路：USB3 口、线缆、供电、MVS SDK 枚举。软件侧已有重连和 stale frame 保护，不会把旧图伪装成实时画面。
-
-```bash
-lsusb | grep -i Hik
-tail -f logs/yolo_camera.log
-```
-
-### C 板接上后 `/odom` 没数据？
-
-`ros2 topic list` 只能说明 publisher 存在，不代表真实数据已上发。先检查：
-
-```bash
-ros2 topic echo /serial/robot_motion --once
-ros2 topic echo /serial/imu --once
-ros2 topic echo /odom --once
-lsof /dev/ttyACM0 2>/dev/null || true
-```
-
-确认没有旧节点占串口，并优先使用脚本停止通信链路：
-
-```bash
-./scripts/stop_cboard_comm.sh
-ps -eo pid,ppid,cmd | grep -E 'standard_robot_pp_ros2_node|rtt_nav_bridge' | grep -v grep || true
-fuser -v /dev/ttyCBoard 2>/dev/null || true
-```
-
-如果 `logs/standard_robot_pp_ros2.log` 出现 `No valid BCP frame`，说明通信节点打开了串口但没有收到 C 板有效帧；如果 `logs/ros2_imu_bridge.log` 持续出现 `waiting for IMU messages`，说明 bridge 已运行但 `/serial/imu` 本身没有真实消息。
-
-### 语音识别失败？
-
-检查麦克风设备、FunASR 模型、录音文件：
-
-```bash
-arecord -l
-curl -X POST http://127.0.0.1:8000/api/voice/record_command \
-  -H "Content-Type: application/json" \
-  -d '{"duration":3}'
-```
-
-清理录音：
-
-```bash
-./scripts/cleanup_voice_records.sh
-DAYS=3 ./scripts/cleanup_voice_records.sh --delete
-```
-
-## 历史与交接文档
-
-阶段完成记录：
+阶段交付记录：
 
 ```text
 PHASE4_DONE.md
@@ -1161,133 +629,8 @@ PHASE6_DONE.md
 PHASE7_DONE.md
 PHASE8A_DONE.md
 PHASE8B_DONE.md
+PHASE9A_DONE.md
 HIK_CAMERA_SOURCE_STATUS.md
 ```
 
-模块细节：
-
-```text
-experiments/rknn_yolo/README.md
-standard_robot_pp_ros2/README.md
-cloud_gateway/README.md
-docs/PHASE6_RTT_NAV_BRIDGE.md
-docs/PHASE6_NAV_PROTOCOL_V1.md
-docs/PHASE6_PROTOCOL_REVIEW.md
-```
-
-历史 `DO_PHASE*.md` / `DONE*.md` 文件保留为开发过程记录。新成员优先阅读本 README，再按模块进入对应 README。
-
-## 历史调试经验 (2026-06-05 嵌赛联调)
-
-以下记录了小程序、Cloud Gateway、RK3588 后端三方联调中遇到的典型问题与解决方案。其中备案未完成时的 SSH 隧道方案仅作历史参考，不是当前生产架构。
-
-### 1. 车载麦克风识别报错 422
-
-**现象**：Web 前端点击"车载麦克风识别"总是返回 HTTP 422，浏览器麦克风正常。
-
-**根因**：Cloud Gateway `onboard_record_command` 中 Python `or` 短路求值 bug：
-
-```python
-# 修复前
-use_smart = request.url.path.endswith("/onboard_smart_command") or _parse_bool(payload.pop("smart", False), False)
-# URL 路径以 /onboard_smart_command 结尾时，or 左侧为 True，
-# 右侧 payload.pop("smart") 永不执行，"smart" 键残留在 payload 中
-```
-
-修复后分开 pop 和判断：
-
-```python
-smart_flag = payload.pop("smart", None)
-use_smart = request.url.path.endswith("/onboard_smart_command") or _parse_bool(smart_flag, False)
-```
-
-**影响文件**：`cloud_gateway/cloud_gateway.py`（云服务器 `/opt/lingxun-cloud-gateway/cloud_gateway.py`）
-
-### 2. Mock 模式缺少 IMU 数据源
-
-**现象**：小程序在 Mock 模式下 IMU 始终显示"暂无 IMU 数据"。
-
-**根因**：`mock_state.py` 只生成机器人状态（电池、导航、任务），不生成 IMU 数据。IMU 唯一数据源是 C 板 → ROS 2 → `imu_bridge` → `/api/internal/nuc/imu` 的 Real 链路。
-
-**修复**：在 `mock_state.py` 的 `tick()` 中添加 `_tick_mock_imu()` 方法，每秒生成带随机噪声的模拟 IMU 数据（偏航角 ±15° 波动、角速度/加速度小幅噪声），写入 `imu_store`。
-
-**影响文件**：`backend/app/services/mock_state.py`
-
-### 3. 备案前小程序无法直连公网域名（已解决）
-
-**现象**：微信开发者工具中所有 `wx.request` 报 `net::ERR_CONNECTION_CLOSED`，但云服务器本机 curl 正常。
-
-**根因**：`api.lingxunrobot.cn` 未完成 ICP 备案，用户本地网络（国内运营商）在 TCP 层阻断对该域名的访问。云服务器自身、GPT ATLAS 等走不同网络路径不受影响。
-
-**当时的临时方案**：SSH 本地端口转发绕过网络限制：
-
-```bash
-# REST/WebSocket 隧道（HTTP → Cloud Gateway）
-ssh -f -N -L 18443:127.0.0.1:9000 \
-  -i ~/.ssh/UBUNTU.pem ubuntu@106.53.169.127
-
-# 开发时将小程序 config.js ENV 设为 local
-```
-
-**当前状态**：网站已完成 ICP 备案与公安联网备案，生产环境应使用 `ENV: prod`，直接访问：
-
-```text
-REST: https://api.lingxunrobot.cn
-WebSocket: wss://api.lingxunrobot.cn/ws/state 与 /ws/imu
-```
-
-SSH 隧道只作域名或网络故障时的临时排障方案。
-
-### 4. 小程序图片无法显示（wx-image 强制 HTTPS）
-
-**现象**：隧道打通后 REST/IMU 数据已正常，但 `<image>` 组件报"不再支持 HTTP 协议，请升级到 HTTPS"。
-
-**根因**：微信小程序 `<image>` 组件底层走 `wx.downloadFile`，在较新基础库上强制要求 HTTPS。通过 SSH 本地转发到云网关的 HTTP 端口不能满足此要求。
-
-**修复**：不再使用 `<image src="https://...">` 外部 URL，改为 `wx.request` 以 HTTP 下载图片 → `wx.arrayBufferToBase64()` 转 base64 → `<image src="data:image/jpeg;base64,...">` 内联显示。每 3 秒刷新一次（`?t=` 缓存控制，与 YOLO 相机 ~5fps 帧率匹配）。
-
-```javascript
-// 关键代码模式
-wx.request({
-  url: imageUrl,
-  responseType: arraybuffer,
-  success(res) {
-    const base64 = wx.arrayBufferToBase64(res.data);
-    this.setData({ imageDataUri: `data:image/jpeg;base64,${base64}` });
-  }
-});
-```
-
-### 5. 图片频繁闪烁
-
-**现象**：图片每次刷新时出现白色闪烁（先白后图）。
-
-**根因**：`Date.now()` 作为图片 URL 的 `?t=` 参数每秒变化，`<image>` 组件每次看到新的 `src` 就卸载旧图重新加载，加载间隙为白色。
-
-**尝试过的方案**：
-- URL 缓存参数从每秒改为每 3 秒 → 降低频率，未根除
-- 双图交替（两张 `image` 叠加，一张可见一张隐藏，交替切换 `src` 和 z-index）→ 仍然闪烁
-
-**最终方案**：base64 内联方案天然避免此问题。`data:` URI 变更时浏览器直接解码渲染，不存在"正在请求外部资源"的空白期。
-
-### 6. 设置页模式切换体验问题
-
-**问题**：用户点击 Mock/Real 切换按钮后无即时反馈，网络失败时 UI 不回退。
-
-**修复**：
-- 乐观更新：点击时立即移动 toggle 位置 + 更新模式标签，后台发 API
-- 失败回滚：API 返回错误时自动恢复 toggle 到原位
-- Token 缺失时在模式卡片内直接显示红色提示条
-- 模式切换请求独立超时 15s（默认 8s 不够）
-
-**影响文件**：`pages/settings/settings.js`, `pages/settings/settings.wxml`, `pages/settings/settings.wxss`, `utils/commandClient.js`
-
-### 小程序开发环境速查
-
-| 配置项 | 值 | 说明 |
-|--------|-----|------|
-| `config.js ENV` | `prod` | 当前生产环境直连 HTTPS / WSS |
-| 隧道 REST | `localhost:18443 → cloud:9000` | 仅故障排查时临时使用 |
-| 图片加载 | `wx.request` → base64 | 绕过 wx-image HTTPS 限制 |
-| 合法域名校验 | 使用已配置的 `api.lingxunrobot.cn` | 真机/发布环境不依赖“不校验”选项 |
-| ICP 备案状态 | 已完成 | 公网域名为当前正式入口 |
+历史 `DO_PHASE*.md` / `DONE*.md` 保留为开发过程档案；新成员以本 README 和各模块 README 为准。

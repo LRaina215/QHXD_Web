@@ -3,10 +3,21 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from cloud_gateway import _media_auth_allowed, _video_session_valid, _video_session_value
+from cloud_gateway import (
+    _browser_audio_paths,
+    _media_auth_allowed,
+    _video_session_valid,
+    _video_session_value,
+)
 
 
 class MediaAuthTest(unittest.TestCase):
+    def test_wav_upload_uses_distinct_input_and_transcode_paths(self) -> None:
+        input_path, wav_path = _browser_audio_paths("request-id", "recording.wav")
+        self.assertNotEqual(input_path, wav_path)
+        self.assertEqual(input_path.name, "request-id.input.wav")
+        self.assertEqual(wav_path.name, "request-id.wav")
+
     def test_publish_requires_separate_credentials_and_loopback_caller(self) -> None:
         payload = {
             "action": "publish",

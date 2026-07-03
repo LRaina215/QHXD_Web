@@ -13,6 +13,10 @@ echo "========================================"
 
 # Step 1: Audio init
 echo "[1/5] Initializing audio..."
+# Direct ALSA is required by AUDIO_DEVICE/TTS_PLAYER_CMD. A desktop or SSH
+# user session must not let PulseAudio claim the USB mic or ES8388 speaker.
+systemctl --user stop pulseaudio.socket pulseaudio.service >/dev/null 2>&1 || true
+pulseaudio --kill >/dev/null 2>&1 || true
 alsactl restore >/dev/null 2>&1 || true
 amixer -c 2 sset Speaker on >/dev/null 2>&1 || true
 amixer -c 2 sset Headphone on >/dev/null 2>&1 || true
