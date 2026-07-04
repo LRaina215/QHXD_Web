@@ -1,3 +1,31 @@
+# 2026-07-04: PolarBear Point-LIO front-end deployment
+
+- Added `SMBU-PolarBear-Robotics-Team/point_lio` at pinned commit
+  `e85e79558cf746f6699888a54285fe48b3b0ac71` to `~/livox_ws/src/point_lio`.
+- Built `point_lio` successfully on RK3588 / Ubuntu 22.04 / ROS 2 Humble / ARM64.
+- Added `~/livox_ws/launch/msg_MID360_pointlio_launch.py`; it publishes
+  `/livox/lidar` as `livox_ros_driver2/msg/CustomMsg` without changing the
+  existing PointCloud2 launch file.
+- Added `~/livox_ws/config/point_lio_mid360_rk3588.yaml`; prior PCD, PCD saving,
+  path output, and registered cloud output are disabled for the first low-load
+  odometry validation.
+- Verified `/aft_mapped_to_init` at approximately 10 Hz and verified
+  `camera_init -> aft_mapped` TF.
+- A 30 second stationary sample contained 287 messages. Horizontal
+  end-to-start displacement was approximately 9 mm; observed x/y ranges were
+  approximately 2.2 cm.
+- Observed runtime footprint: Point-LIO about 26% of one CPU core / 85 MB RSS;
+  Livox driver about 53% of one core / 43 MB RSS.
+- Identified an RK image runtime conflict: `/opt/MVS/lib/aarch64` contains an
+  old `libusb`. Point-LIO must run after `unset LD_LIBRARY_PATH` and sourcing
+  ROS again, otherwise PCL reports `undefined symbol: libusb_set_option`.
+- Point-LIO is deployed as the future local odometry source only. The existing
+  2D slam_toolbox/Nav2/serial-control stack remains unchanged.
+- Remaining integration work: project Point-LIO 6DoF pose to planar
+  `odom -> base_link`, switch the 2D scan converter to a deskewed body-frame
+  PointCloud2 output, and disable C-board `publish_odom/publish_odom_tf` in LIO
+  navigation mode.
+
 # PHASE6_DONE.md
 
 ## 完成内容
@@ -137,3 +165,40 @@ ros2 topic echo /imu/data --once
 4. 手动低速发布 `/cmd_vel`，确认 `vx/vy/wz` 方向；
 5. 验证 `/cmd_vel` 超时、bridge 退出、通信线拔出、C 板急停时底盘停车；
 6. 再回到 slam_toolbox 和 Nav2 基础联调。
+
+## 2026-07-03：C 板 odom 与轻量 2D 建图追加交付
+
+### 通信与 odom
+
+- 实际导航通信统一使用 `standard_robot_pp_ros2`，不同时启动历史 `rtt_nav_bridge`。
+- C 板 BCP `0x11` payload 为 36 字节：`vx/vy/wz/x/y/yaw` 各为 little-endian `int32`，缩放 10000。
+- `/odom` 直接使用 C 板积分的 `x/y/yaw`，上位机不对速度再积分。
+- 修正了校验失败仅在 debug 模式拒绝的问题，并增加严格帧长、有限值、位置/速度范围和动态单帧跳变检查。
+- 增加 C 板坐标重置识别与刚体偏置，重置后保持 ROS `odom` 连续。
+- `standard_robot_pp_ros2` 编译成功；5 项 BCP/odom 单元测试通过。
+- 2026-07-04 实车确认 C 板上行符号为 `+x` 向后、`+y` 向右、`+yaw` 顺时针；新增上位机参数化六轴取反，转为 ROS REP-103。
+- 坐标转换与原有校验/跳变/重置连续性测试合计 6/6 通过。
+
+### RK3588 实机验收
+
+- C 板重新上电后 `/odom` 稳定约 37–40 Hz，`/serial/imu` 可用。
+- 120.006 秒静止监测收到 4646 帧，平均 38.715 Hz，0 非法帧，最大位置步长 0 m，最大单帧航向步长 0.0025 rad，结果 `PASS`。
+- 静止 120 秒内航向累计变化约 0.109 rad；这不是跳变，但需由激光匹配/定位约束长时漂移。
+
+### 轻量 2D 建图配置
+
+- 继续使用现有六终端启动流程，不封装后台一键启停脚本。
+- 保守参数直接写入 `~/livox_ws/config/mid360_to_scan.yaml` 和 `slam_toolbox_mid360.yaml`。
+- `~/livox_ws/rviz/sentinel_nav_mapping.rviz` 已配置 `/map`、`/scan`、`/odom`、TF、SLAM markers，并增加可选 `/livox/lidar` 点云显示。
+- 链路已打通：`/livox/lidar -> /scan -> slam_toolbox -> /map`。
+- TF 已打通：`map -> odom -> base_link -> livox_frame`。
+- `/livox/lidar` 和 `/scan` 实测约 10 Hz；120 个扫描桶的抽样帧中 97 个为有限测距。
+- 保守参数：3°、4 m、队列 1、SLAM 0.15 m 分辨率、扫描降频 5、禁用回环。
+- 单实例总内存约 130 MiB，`slam_toolbox` 约 4–5% 单核，未再出现 OOM。
+
+### 仍需现场验收
+
+- 低速前进、左移、左转，确认 ROS `+X/+Y/+yaw` 方向。
+- 测量并修正 `base_link -> livox_frame` 真实外参；当前 `z=0.25 m`、其他为 0 仅是临时值。
+- RViz 固定 `odom` 后慢速转动 30°–60°，确认静态墙体不随车体转动。
+- 已知 C 板 USB CDC 限制保持不变：停止上位机通信后，再启动前需重插或重新上电 C 板。

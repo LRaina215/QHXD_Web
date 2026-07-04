@@ -64,6 +64,16 @@ status_service frontend
 status_service yolo_camera
 status_service standard_robot_pp_ros2
 status_service ros2_imu_bridge
+bridge_pid_file="$(pid_file ros2_imu_bridge)"
+if is_running "${bridge_pid_file}"; then
+  bridge_pid="$(cat "${bridge_pid_file}")"
+  bridge_command="$(tr '\0' ' ' <"/proc/${bridge_pid}/cmdline" 2>/dev/null || true)"
+  if [[ "${bridge_command}" == *imu_backend_bridge_node* ]]; then
+    echo "ros2_imu_bridge implementation: cpp"
+  elif [[ "${bridge_command}" == *ros2_imu_bridge.py* ]]; then
+    echo "ros2_imu_bridge implementation: python"
+  fi
+fi
 status_service cboard_watchdog
 
 if [[ "${QHXD_VIDEO_STREAM_ENABLED:-false}" =~ ^(1|true|yes|on)$ ]]; then
@@ -81,5 +91,5 @@ fi
 if command -v ros2 >/dev/null 2>&1; then
   echo
   echo "ROS 2 topics:"
-  bash -lc "source /opt/ros/humble/setup.bash && source '${PROJECT_ROOT}/install/setup.bash' 2>/dev/null || true; ros2 topic list 2>/dev/null | sort | grep -E '^/(cmd_vel|odom|serial/imu|serial/robot_motion)$' || true"
+  bash -lc "source /opt/ros/humble/setup.bash && source '${PROJECT_ROOT}/install/setup.bash' 2>/dev/null || true; ros2 topic list 2>/dev/null | sort | grep -E '^/(cmd_vel|odom|serial/imu|serial/imu_backend|serial/robot_motion)$' || true"
 fi

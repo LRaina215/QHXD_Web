@@ -8,9 +8,11 @@ add_definitions(-Wall -Werror)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(ament_cmake_auto REQUIRED)
+find_package(CURL REQUIRED)
 ament_auto_find_build_dependencies()
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
+  src/bcp_safety.cpp
   src/crc8_crc16.cpp
   src/standard_robot_pp_ros2.cpp
 )
@@ -34,6 +36,18 @@ rclcpp_components_register_node(${PROJECT_NAME}
   EXECUTABLE standard_robot_pp_ros2_node
 )
 
+add_executable(imu_backend_bridge_node
+  src/imu_backend_bridge.cpp
+)
+ament_target_dependencies(imu_backend_bridge_node
+  rclcpp
+  sensor_msgs
+)
+target_link_libraries(imu_backend_bridge_node CURL::libcurl)
+install(TARGETS imu_backend_bridge_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 if(BUILD_TESTING)
   set(ament_cmake_clang_format_CONFIG_FILE "${CMAKE_SOURCE_DIR}/.clang-format")
   find_package(ament_lint_auto REQUIRED)
@@ -42,6 +56,10 @@ if(BUILD_TESTING)
     ament_cmake_flake8
   )
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_bcp_safety test/test_bcp_safety.cpp)
+  target_link_libraries(test_bcp_safety ${PROJECT_NAME})
 endif()
 
 ament_auto_package(

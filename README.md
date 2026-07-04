@@ -357,15 +357,48 @@ QHXD_VIDEO_STREAM_URL='rtmp://<cloud-tailscale-ip>:1935/robot/front?user=<publis
 - 打开 `/dev/ttyCBoard`（默认 115200）。
 - BCP 协议接收下位机数据。
 - 发布 `/serial/robot_motion`、`/serial/imu`、`/odom` 和可选 TF。
+- 保留全速 `/serial/imu` 给导航，同时发布最多 20Hz 的 `/serial/imu_backend` 给 Dashboard 后端。
 - 订阅 `/cmd_vel` 并下发给 C 板。
+
+`/odom` 的位姿不是上位机速度积分结果，而是直接使用 C 板 `0x11`
+帧中的 `x/y/yaw`。上位机会严格检查帧长、校验、有限值、合理范围与单帧跳变，
+异常帧不会发布到 ROS。
+
+实车确认 C 板上行为 `+x` 向后、`+y` 向右、`+yaw` 顺时针。
+`standard_robot_pp_ros2` 默认在发布前对 `x/y/yaw` 和 `vx/vy/wz` 全部取反，
+统一为 ROS `+x` 向前、`+y` 向左、`+yaw` 逆时针。
 
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/robomaster/QHXD/install/setup.bash
 ros2 topic list | sort
 ros2 topic echo /serial/imu --once
+ros2 topic hz /serial/imu_backend
 ros2 topic echo /serial/robot_motion --once
 ros2 topic echo /odom --once
+```
+
+IMU 后端桥接默认使用 C++ `rclcpp + libcurl`，将 `/serial/imu_backend` 写入现有 `/api/internal/nuc/imu`，不改前后端接口。空闲或 20Hz 输入下实测约 2% CPU；旧 Python bridge 保留作为回退。
+
+```bash
+# 立即切换，不重启 C 板串口节点
+./scripts/switch_imu_bridge.sh cpp
+./scripts/switch_imu_bridge.sh python
+./scripts/status_public_robot.sh
+```
+
+持久回退可在根目录 `.env` 设置：
+
+```env
+ROS2_IMU_BRIDGE_IMPL=python
+ROS2_IMU_TOPIC=/serial/imu_backend
+ROS2_IMU_BRIDGE_RATE_HZ=20
+```
+
+本次修改前的完整备份：
+
+```text
+/home/robomaster/QHXD_backups/imu_bridge_20260703_120420.tar.gz
 ```
 
 注意：topic 存在只证明 publisher 已启动，不等于 C 板在持续上发。当前重启验收已确认节点和 topic 自启，但下位机 IMU/odom 持续数据仍作为独立实机待验项。
@@ -373,6 +406,71 @@ ros2 topic echo /odom --once
 `CBOARD_WATCHDOG_ENABLED=false` 默认关闭。只有在下位机本应持续上发时才建议打开，避免无数据时循环重启串口。
 
 详见 `standard_robot_pp_ros2/README.md`。
+
+### MID360 轻量 2D 建图
+
+导航继续使用 `livox_ros_driver2`、`pointcloud_to_laserscan`和 `slam_toolbox`
+的原生节点，完整 TF 所有权为：
+
+```text
+map -> odom                 slam_toolbox（建图）/ AMCL（导航）
+odom -> base_link           standard_robot_pp_ros2 + C 板里程计
+base_link -> livox_frame    静态外参
+```
+
+当前保守配置直接保存在 `~/livox_ws/config/mid360_to_scan.yaml` 和
+`~/livox_ws/config/slam_toolbox_mid360.yaml`：3° 扫描、4 m 量程、队列 1、
+SLAM 分辨率 0.15 m、关闭回环。调试时使用六个前台终端，不使用后台一键启动脚本。
+
+```bash
+# 终端 1：保持 standard_robot_pp_ros2 运行，提供 /odom 和 odom -> base_link
+
+# 终端 2：Livox 驱动
+cd ~/livox_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch livox_ros_driver2 msg_MID360_launch.py
+
+# 终端 3：点云转 LaserScan
+source /opt/ros/humble/setup.bash
+source ~/livox_ws/install/setup.bash
+ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node --ros-args \
+  -r cloud_in:=/livox/lidar -r scan:=/scan \
+  --params-file ~/livox_ws/config/mid360_to_scan.yaml
+
+# 终端 4：雷达静态 TF
+source /opt/ros/humble/setup.bash
+source ~/livox_ws/install/setup.bash
+ros2 run tf2_ros static_transform_publisher \
+  --x 0.0 --y 0.0 --z 0.25 --roll 0.0 --pitch 0.0 --yaw 0.0 \
+  --frame-id base_link --child-frame-id livox_frame
+
+# 终端 5：同步建图
+source /opt/ros/humble/setup.bash
+source ~/livox_ws/install/setup.bash
+ros2 launch slam_toolbox online_sync_launch.py \
+  slam_params_file:=/home/robomaster/livox_ws/config/slam_toolbox_mid360.yaml
+
+# 终端 6：RViz（已配好 /map、/scan、/odom、TF 和 SLAM markers）
+source /opt/ros/humble/setup.bash
+source ~/livox_ws/install/setup.bash
+rviz2 -d ~/livox_ws/rviz/sentinel_nav_mapping.rviz
+```
+
+RViz 必须使用 `-d` 加载配置；`rviz2 ./rviz/sentinel_nav_mapping.rviz`
+只会打开默认界面。Rockchip DRI 报错后如仍显示 OpenGL 版本，表示 RViz
+已回退到可用渲染路径。
+
+2026-07-03 实测：`/odom` 38.715 Hz，`/livox/lidar` 和 `/scan` 约 10 Hz，
+`/map_metadata` 可用，`map -> odom -> base_link -> livox_frame` 连通。单实例导航节点合计约
+130 MiB；`slam_toolbox` 约 4–5% 单核，未再出现 OOM。
+
+开始运动建图前仍必须人工确认：前进时 odom x 增大、左移时 y 增大、左转时 yaw
+增大，并在 RViz 中确认车前障碍物位于 `base_link +X`。默认雷达外参
+`x=0, y=0, z=0.25, rpy=0`仍是待实测的临时值。
+
+当前 C 板 USB CDC 的已知使用限制保持不变：停止上位机通信节点后，
+再启动前需重插或重新上电 C 板。
 
 ## 后端 API
 
@@ -618,6 +716,7 @@ experiments/rknn_yolo/README.md
 standard_robot_pp_ros2/README.md
 cloud_gateway/README.md
 REBOOT_ACCEPTANCE_DONE.md
+IMU_BRIDGE_CPP_DONE.md
 ```
 
 阶段交付记录：

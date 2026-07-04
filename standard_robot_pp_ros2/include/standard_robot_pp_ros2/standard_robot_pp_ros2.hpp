@@ -39,6 +39,7 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "serial_driver/serial_driver.hpp"
+#include "standard_robot_pp_ros2/bcp_safety.hpp"
 #include "standard_robot_pp_ros2/packet_typedef.hpp"
 #include "standard_robot_pp_ros2/robot_info.hpp"
 #include "tf2_ros/transform_broadcaster.h"
@@ -76,6 +77,7 @@ private:
 
   // Publish
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr backend_imu_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3>::SharedPtr serial_receive_pub_;
   rclcpp::Publisher<pb_rm_interfaces::msg::RobotStateInfo>::SharedPtr robot_state_info_pub_;
   rclcpp::Publisher<pb_rm_interfaces::msg::EventData>::SharedPtr event_data_pub_;
@@ -123,6 +125,9 @@ private:
   double bcp_last_gimbal_pitch_ = 0.0;
   bool publish_odom_ = true;
   bool publish_odom_tf_ = true;
+  bool cboard_odom_invert_x_ = true;
+  bool cboard_odom_invert_y_ = true;
+  bool cboard_odom_invert_yaw_ = true;
   std::string odom_frame_id_ = "odom";
   std::string base_frame_id_ = "base_link";
   bool odom_initialized_ = false;
@@ -130,6 +135,13 @@ private:
   double odom_x_ = 0.0;
   double odom_y_ = 0.0;
   double odom_yaw_ = 0.0;
+  OdomGuardConfig odom_guard_config_;
+  OdomGuard odom_guard_;
+  std::atomic<uint64_t> bcp_checksum_reject_count_{0};
+  std::atomic<uint64_t> odom_reject_count_{0};
+  std::atomic<uint64_t> odom_reset_compensation_count_{0};
+  double backend_imu_rate_hz_ = 20.0;
+  std::atomic<int64_t> last_backend_imu_publish_ms_{0};
 
   void getParams();
   void acquireSerialPortLock();
@@ -144,6 +156,7 @@ private:
   void publishBcpImuFromEulerDegrees(
     double yaw_deg, double pitch_deg, double roll_deg, double angle_x_deg, double angle_y_deg,
     double angle_z_deg, double acc_x, double acc_y, double acc_z);
+  void publishBackendImuIfDue(const sensor_msgs::msg::Imu & imu_msg);
   void receiveData();
   void sendData();
   void serialPortProtect();
@@ -155,8 +168,8 @@ private:
   void publishAllRobotHp(ReceiveAllRobotHpData & data);
   void publishGameStatus(ReceiveGameStatusData & data);
   void publishRobotMotion(ReceiveRobotMotionData & data);
-  void publishOdomFromTwist(const geometry_msgs::msg::Twist & twist_msg);
   void publishOdomFromCBoard(const geometry_msgs::msg::Twist & twist_msg);
+  void publishOdomFromTwist(const geometry_msgs::msg::Twist & twist_msg);
   void publishGroundRobotPosition(ReceiveGroundRobotPosition & data);
   void publishRfidStatus(ReceiveRfidStatus & data);
   void publishRobotStatus(ReceiveRobotStatus & data);

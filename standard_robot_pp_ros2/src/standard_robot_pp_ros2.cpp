@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "standard_robot_pp_ros2/crc8_crc16.hpp"
+#include "standard_robot_pp_ros2/bcp_safety.hpp"
 #include "standard_robot_pp_ros2/packet_typedef.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -54,6 +55,7 @@ constexpr uint8_t BCP_ID_ROBOT_HP = 0x31;
 constexpr uint8_t BCP_ID_ICRA_ZONE = 0x32;
 constexpr uint8_t BCP_ID_BARREL = 0x40;
 constexpr uint8_t BCP_ID_HEARTBEAT = 0xF0;
+constexpr size_t BCP_ODOM_PAYLOAD_SIZE = 9U * sizeof(int32_t);
 constexpr double BCP_PI = 3.14159265358979323846;
 constexpr int64_t BCP_CMD_ACTIVE_TIMEOUT_MS = 300;
 constexpr int64_t BCP_SEND_INTERVAL_MS = 10;
@@ -390,8 +392,38 @@ void StandardRobotPpRos2Node::getParams()
     static_cast<int16_t>(declare_parameter("bcp_default_remain_bullet", 0));
   publish_odom_ = declare_parameter("publish_odom", true);
   publish_odom_tf_ = declare_parameter("publish_odom_tf", true);
+  cboard_odom_invert_x_ = declare_parameter("cboard_odom_invert_x", true);
+  cboard_odom_invert_y_ = declare_parameter("cboard_odom_invert_y", true);
+  cboard_odom_invert_yaw_ = declare_parameter("cboard_odom_invert_yaw", true);
   odom_frame_id_ = declare_parameter<std::string>("odom_frame_id", "odom");
   base_frame_id_ = declare_parameter<std::string>("base_frame_id", "base_link");
+  odom_guard_config_.max_abs_position_m =
+    declare_parameter("odom_max_abs_position_m", 100.0);
+  odom_guard_config_.max_linear_speed_mps =
+    declare_parameter("odom_max_linear_speed_mps", 12.0);
+  odom_guard_config_.max_angular_speed_radps =
+    declare_parameter("odom_max_angular_speed_radps", 15.0);
+  odom_guard_config_.position_jump_margin_m =
+    declare_parameter("odom_position_jump_margin_m", 0.10);
+  odom_guard_config_.yaw_jump_margin_rad =
+    declare_parameter("odom_yaw_jump_margin_rad", 0.15);
+  odom_guard_config_.reset_gap_ms = declare_parameter<int>("odom_reset_gap_ms", 500);
+  odom_guard_config_.reset_origin_radius_m =
+    declare_parameter("odom_reset_origin_radius_m", 1.0);
+  const int reset_confirm_frames = declare_parameter<int>("odom_reset_confirm_frames", 3);
+
+  if (odom_guard_config_.max_abs_position_m <= 0.0 ||
+    odom_guard_config_.max_linear_speed_mps <= 0.0 ||
+    odom_guard_config_.max_angular_speed_radps <= 0.0 ||
+    odom_guard_config_.position_jump_margin_m < 0.0 ||
+    odom_guard_config_.yaw_jump_margin_rad < 0.0 ||
+    odom_guard_config_.reset_gap_ms < 0 ||
+    odom_guard_config_.reset_origin_radius_m < 0.0 || reset_confirm_frames < 1)
+  {
+    throw std::invalid_argument("Invalid odom guard parameter");
+  }
+  odom_guard_config_.reset_confirm_frames = static_cast<uint32_t>(reset_confirm_frames);
+  odom_guard_.setConfig(odom_guard_config_);
 }
 
 void StandardRobotPpRos2Node::acquireSerialPortLock()
@@ -823,7 +855,6 @@ void StandardRobotPpRos2Node::publishOdomFromTwist(const geometry_msgs::msg::Twi
     odom_tf_broadcaster_->sendTransform(tf_msg);
   }
 }
-
 void StandardRobotPpRos2Node::publishOdomFromCBoard(const geometry_msgs::msg::Twist & twist_msg)
 {
   if (!publish_odom_) {
@@ -865,6 +896,7 @@ void StandardRobotPpRos2Node::publishOdomFromCBoard(const geometry_msgs::msg::Tw
     odom_tf_broadcaster_->sendTransform(tf_msg);
   }
 }
+
 
 void StandardRobotPpRos2Node::publishGroundRobotPosition(
   ReceiveGroundRobotPosition & ground_robot_position)
@@ -1296,38 +1328,46 @@ bool StandardRobotPpRos2Node::verifyBcpFrame(const std::vector<uint8_t> & frame)
     return false;
   }
 
-  int sumcheck = frame[0] + frame[1];
-  int addcheck = frame[0] + sumcheck;
-  for (size_t idx = 2; idx < frame.size() - 2; ++idx) {
-    sumcheck += frame[idx];
-    addcheck += sumcheck;
+  const BcpChecksumResult checksum_result = verifyBcpChecksums(frame);
+  if (checksum_result == BcpChecksumResult::STANDARD ||
+    checksum_result == BcpChecksumResult::LEGACY)
+  {
+    if (debug_ && checksum_result == BcpChecksumResult::LEGACY) {
+      publishNamedDebugValue("bcp_legacy_addcheck_count", 1.0);
+    }
+    return true;
   }
 
-  const auto expected_sum = static_cast<uint8_t>(sumcheck & 0xFF);
-  const auto expected_add = static_cast<uint8_t>(addcheck & 0xFF);
-  const bool sumcheck_ok = frame[frame.size() - 2] == expected_sum;
-  const bool addcheck_ok = frame[frame.size() - 1] == expected_add;
-
-  if (debug_ && !sumcheck_ok) {
-    publishNamedDebugValue(
-      "bcp_checksum_actual_sum", static_cast<double>(frame[frame.size() - 2]));
-    publishNamedDebugValue("bcp_checksum_expected_sum", static_cast<double>(expected_sum));
-    publishNamedDebugValue(
-      "bcp_checksum_actual_add", static_cast<double>(frame[frame.size() - 1]));
-    publishNamedDebugValue("bcp_checksum_expected_add", static_cast<double>(expected_add));
-    return false;
+  const uint64_t reject_count = bcp_checksum_reject_count_.fetch_add(1U) + 1U;
+  uint32_t expected_sum = 0U;
+  uint32_t standard_running_sum = frame[0] + frame[1];
+  uint32_t expected_standard_add = frame[0] + standard_running_sum;
+  uint32_t legacy_running_sum = frame[0] + frame[1] + frame[2] + frame[3];
+  uint32_t expected_legacy_add = legacy_running_sum;
+  for (size_t i = 0U; i < frame.size() - 2U; ++i) {
+    expected_sum += frame[i];
+    if (i >= 2U) {
+      standard_running_sum += frame[i];
+      expected_standard_add += standard_running_sum;
+    }
+    if (i >= 4U) {
+      legacy_running_sum += frame[i];
+      expected_legacy_add += legacy_running_sum;
+    }
   }
-
-  if (debug_ && !addcheck_ok) {
-    publishNamedDebugValue(
-      "bcp_checksum_actual_add", static_cast<double>(frame[frame.size() - 1]));
-    publishNamedDebugValue("bcp_checksum_expected_add", static_cast<double>(expected_add));
-    publishNamedDebugValue("bcp_addcheck_mismatch_accepted", 1.0);
+  RCLCPP_WARN_THROTTLE(
+    get_logger(), *get_clock(), 2000,
+    "Rejected BCP checksum: result=%d id=0x%02x len=%u sum=%02x/%02x "
+    "add=%02x/%02x|%02x total=%llu",
+    static_cast<int>(checksum_result), frame[2], frame[3], frame[frame.size() - 2U],
+    static_cast<uint8_t>(expected_sum & 0xFFU), frame.back(),
+    static_cast<uint8_t>(expected_standard_add & 0xFFU),
+    static_cast<uint8_t>(expected_legacy_add & 0xFFU),
+    static_cast<unsigned long long>(reject_count));
+  if (debug_) {
+    publishNamedDebugValue("bcp_checksum_reject_count", static_cast<double>(reject_count));
   }
-
-  // Keep compatibility with the legacy Python parser, which still processes frames when
-  // the additive checksum mismatches but the frame head, address, length, and sumcheck match.
-  return true;
+  return false;
 }
 
 void StandardRobotPpRos2Node::handleBcpFrame(const std::vector<uint8_t> & frame)
@@ -1409,24 +1449,61 @@ void StandardRobotPpRos2Node::handleBcpChassisImuFrame(const std::vector<uint8_t
 
 void StandardRobotPpRos2Node::handleBcpChassisOdomFrame(const std::vector<uint8_t> & payload)
 {
-  if (payload.size() < 6 * sizeof(int32_t)) {
+  if (payload.size() != BCP_ODOM_PAYLOAD_SIZE) {
+    const uint64_t reject_count = odom_reject_count_.fetch_add(1U) + 1U;
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Rejected C-board odom with payload size %zu (expected %zu, total=%llu)",
+      payload.size(), BCP_ODOM_PAYLOAD_SIZE,
+      static_cast<unsigned long long>(reject_count));
     return;
   }
 
+  CBoardOdomSample cboard_raw;
+  cboard_raw.vx = static_cast<double>(readLittleEndian<int32_t>(payload, 0)) / 10000.0;
+  cboard_raw.vy = static_cast<double>(readLittleEndian<int32_t>(payload, 4)) / 10000.0;
+  cboard_raw.wz = static_cast<double>(readLittleEndian<int32_t>(payload, 8)) / 10000.0;
+  cboard_raw.x = static_cast<double>(readLittleEndian<int32_t>(payload, 12)) / 10000.0;
+  cboard_raw.y = static_cast<double>(readLittleEndian<int32_t>(payload, 16)) / 10000.0;
+  cboard_raw.yaw = static_cast<double>(readLittleEndian<int32_t>(payload, 20)) / 10000.0;
+  const CBoardOdomSample raw = applyOdomAxisInversion(
+    cboard_raw, cboard_odom_invert_x_, cboard_odom_invert_y_, cboard_odom_invert_yaw_);
+
+  const OdomGuardResult guarded = odom_guard_.process(raw, nowSteadyMs());
+  if (!guarded.accepted) {
+    const uint64_t reject_count = odom_reject_count_.fetch_add(1U) + 1U;
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Rejected C-board odom (%s): pose=[%.4f %.4f %.4f], twist=[%.4f %.4f %.4f], total=%llu",
+      odomRejectReasonName(guarded.reason), raw.x, raw.y, raw.yaw, raw.vx, raw.vy, raw.wz,
+      static_cast<unsigned long long>(reject_count));
+    if (debug_) {
+      publishNamedDebugValue("odom_reject_count", static_cast<double>(reject_count));
+      publishNamedDebugValue(
+        "odom_reject_reason", static_cast<double>(static_cast<int>(guarded.reason)));
+    }
+    return;
+  }
+
+  if (guarded.reset_compensated) {
+    const uint64_t reset_count = odom_reset_compensation_count_.fetch_add(1U) + 1U;
+    RCLCPP_WARN(
+      get_logger(), "C-board odom epoch reset detected; continuity transform applied (total=%llu)",
+      static_cast<unsigned long long>(reset_count));
+    if (debug_) {
+      publishNamedDebugValue("odom_reset_compensation_count", static_cast<double>(reset_count));
+    }
+  }
+
   geometry_msgs::msg::Twist msg;
-  msg.linear.x = static_cast<double>(readLittleEndian<int32_t>(payload, 0)) / 10000.0;
-  msg.linear.y = static_cast<double>(readLittleEndian<int32_t>(payload, 4)) / 10000.0;
-  msg.angular.z = static_cast<double>(readLittleEndian<int32_t>(payload, 8)) / 10000.0;
+  msg.linear.x = guarded.sample.vx;
+  msg.linear.y = guarded.sample.vy;
+  msg.angular.z = guarded.sample.wz;
   robot_motion_pub_->publish(msg);
 
-  // Use C-board pre-integrated position (fixed 1kHz dt) instead of RK3588 re-integration.
-  const double cboard_x = static_cast<double>(readLittleEndian<int32_t>(payload, 12)) / 10000.0;
-  const double cboard_y = static_cast<double>(readLittleEndian<int32_t>(payload, 16)) / 10000.0;
-  const double cboard_yaw = static_cast<double>(readLittleEndian<int32_t>(payload, 20)) / 10000.0;
-
-  odom_x_ = cboard_x;
-  odom_y_ = cboard_y;
-  odom_yaw_ = normalizeAngle(cboard_yaw);
+  odom_x_ = guarded.sample.x;
+  odom_y_ = guarded.sample.y;
+  odom_yaw_ = guarded.sample.yaw;
   odom_initialized_ = true;
 
   publishOdomFromCBoard(msg);

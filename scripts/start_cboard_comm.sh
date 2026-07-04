@@ -7,11 +7,12 @@ source "${SCRIPT_DIR}/common.sh"
 ROS_SETUP="${ROS_SETUP:-/opt/ros/humble/setup.bash}"
 QHXD_SETUP="${QHXD_SETUP:-${PROJECT_ROOT}/install/setup.bash}"
 CBOARD_DEVICE="${CBOARD_DEVICE:-/dev/ttyCBoard}"
-ROS2_IMU_TOPIC="${ROS2_IMU_TOPIC:-/serial/imu}"
+ROS2_IMU_TOPIC="${ROS2_IMU_TOPIC:-/serial/imu_backend}"
 ROS2_IMU_BRIDGE_RATE_HZ="${ROS2_IMU_BRIDGE_RATE_HZ:-20}"
 ROS2_IMU_BRIDGE_SOURCE="${ROS2_IMU_BRIDGE_SOURCE:-rk3588_cboard_ros2}"
 ROS2_IMU_BRIDGE_BACKEND_URL="${ROS2_IMU_BRIDGE_BACKEND_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 ROS2_IMU_HEARTBEAT_FILE="${ROS2_IMU_HEARTBEAT_FILE:-${RUNTIME_DIR}/ros2_imu_bridge.heartbeat}"
+ROS2_IMU_BRIDGE_IMPL="${ROS2_IMU_BRIDGE_IMPL:-cpp}"
 
 echo "starting C board communication..."
 
@@ -43,7 +44,16 @@ if [[ "${standard_robot_already_running}" != "true" ]]; then
 fi
 
 start_service ros2_imu_bridge \
-  bash -lc "source '${ROS_SETUP}' && cd '${PROJECT_ROOT}' && exec python3 scripts/ros2_imu_bridge.py --topic '${ROS2_IMU_TOPIC}' --backend-url '${ROS2_IMU_BRIDGE_BACKEND_URL}' --source '${ROS2_IMU_BRIDGE_SOURCE}' --rate-hz '${ROS2_IMU_BRIDGE_RATE_HZ}' --heartbeat-file '${ROS2_IMU_HEARTBEAT_FILE}'"
+  env \
+    ROS_SETUP="${ROS_SETUP}" \
+    QHXD_SETUP="${QHXD_SETUP}" \
+    ROS2_IMU_BRIDGE_IMPL="${ROS2_IMU_BRIDGE_IMPL}" \
+    ROS2_IMU_TOPIC="${ROS2_IMU_TOPIC}" \
+    ROS2_IMU_BRIDGE_RATE_HZ="${ROS2_IMU_BRIDGE_RATE_HZ}" \
+    ROS2_IMU_BRIDGE_SOURCE="${ROS2_IMU_BRIDGE_SOURCE}" \
+    ROS2_IMU_BRIDGE_BACKEND_URL="${ROS2_IMU_BRIDGE_BACKEND_URL}" \
+    ROS2_IMU_HEARTBEAT_FILE="${ROS2_IMU_HEARTBEAT_FILE}" \
+    "${SCRIPT_DIR}/run_imu_bridge.sh"
 
 if [[ "${CBOARD_WATCHDOG_INTERNAL_RESTART:-false}" != "true" && "${CBOARD_WATCHDOG_ENABLED:-false}" == "true" ]]; then
   start_service cboard_watchdog "${SCRIPT_DIR}/run_cboard_watchdog.sh"
