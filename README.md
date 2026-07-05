@@ -19,6 +19,17 @@ RK3588 已启用：
 - `qhxd-backend.service`：完整 FastAPI 后端，异常退出自动重启。
 - `qhxd-boot.service`：切换 `real` 模式，启动导航/C 板桥接，并按 Hik 优先、USB 备用选择相机。
 
+`qhxd-boot` 中的 C 板通信默认使用 Point-LIO 导航配置：
+
+```text
+params_file=/home/robomaster/QHXD/standard_robot_pp_ros2/config/standard_robot_pp_ros2_pointlio.yaml
+use_respawn=false
+```
+
+该配置保留串口和 IMU，但关闭 C 板 `/odom` 与 `odom -> base_link`，避免与
+Point-LIO interfaces 重复发布 TF。禁用 launch respawn 可避免节点退出后被旧父
+进程反复拉起并继续占用串口。
+
 正常重启后无需手动运行 `start_all.sh`：
 
 ```bash
@@ -95,6 +106,24 @@ PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=usb ./scripts/start_public_r
 ./scripts/start_cboard_comm.sh
 ./scripts/stop_cboard_comm.sh
 ```
+
+`start_cboard_comm.sh` 默认启动 Point-LIO 专用通信配置。需要临时覆盖时，可在
+`~/QHXD/.env` 设置：
+
+```bash
+CBOARD_PARAMS_FILE=/home/robomaster/QHXD/standard_robot_pp_ros2/config/standard_robot_pp_ros2_pointlio.yaml
+CBOARD_USE_RESPAWN=false
+```
+
+检查实际启动参数：
+
+```bash
+ps -eo pid,ppid,cmd | grep standard_robot_pp_ros2_node | grep -v grep
+grep -E 'params_file|use_respawn' logs/standard_robot_pp_ros2.log
+```
+
+停止通信后，当前 C 板固件要求重新插拔 USB 或重新上电后才能再次启动。lock 文件
+可以保留；以 `fuser -v /dev/ttyCBoard` 是否存在实际占用为准。
 
 不要同时启动旧 `rtt_nav_bridge` 和 `standard_robot_pp_ros2`，否则可能抢占同一串口。
 

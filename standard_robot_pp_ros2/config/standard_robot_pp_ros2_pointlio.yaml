@@ -1,0 +1,35 @@
+standard_robot_pp_ros2:
+  ros__parameters:
+    device_name: /dev/ttyCBoard
+    baud_rate: 115200
+    flow_control: none
+    parity: none
+    stop_bits: "1"
+    set_detector_color: false
+    record_rosbag: false
+    debug: false
+    bcp_d_addr: 3
+    bcp_rx_addr: 1
+    bcp_gimbal_ctrl_mode: 1
+    bcp_default_bullet_vel: 15
+    bcp_default_remain_bullet: 0
+    # Point-LIO navigation mode: keep serial/IMU communication, but let the
+    # lidar odometry chain be the only odom -> base_link authority.
+    publish_odom: false
+    publish_odom_tf: false
+    # Measured C-board signs: +x backward, +y right, +yaw clockwise.
+    # Invert all three axes to ROS REP-103: +x forward, +y left, +yaw counter-clockwise.
+    cboard_odom_invert_x: true
+    cboard_odom_invert_y: true
+    cboard_odom_invert_yaw: true
+    odom_frame_id: odom
+    base_frame_id: base_link
+    odom_max_abs_position_m: 100.0
+    odom_max_linear_speed_mps: 12.0
+    odom_max_angular_speed_radps: 15.0
+    odom_position_jump_margin_m: 0.10
+    odom_yaw_jump_margin_rad: 0.15
+    odom_reset_gap_ms: 500
+    odom_reset_origin_radius_m: 1.0
+    odom_reset_confirm_frames: 3
+    backend_imu_rate_hz: 20.0
