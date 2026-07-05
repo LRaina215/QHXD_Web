@@ -161,7 +161,13 @@ function drawMap() {
   context.restore()
 }
 
-function drawPath(context: CanvasRenderingContext2D, points: Point[], color: string, width: number) {
+function drawPath(
+  context: CanvasRenderingContext2D,
+  points: Point[],
+  color: string,
+  width: number,
+  dash: number[] = [],
+) {
   if (points.length < 2) return
   context.beginPath()
   points.forEach((point, index) => {
@@ -174,7 +180,9 @@ function drawPath(context: CanvasRenderingContext2D, points: Point[], color: str
   context.lineWidth = width
   context.lineJoin = 'round'
   context.lineCap = 'round'
+  context.setLineDash(dash)
   context.stroke()
+  context.setLineDash([])
 }
 
 function drawOverlay() {
@@ -183,8 +191,8 @@ function drawOverlay() {
   const context = configureCanvas(canvas, stage.value.clientWidth, stage.value.clientHeight)
   if (!context) return
 
-  drawPath(context, globalPath.value, '#f3ad44', 3)
-  drawPath(context, localPath.value, '#23b8ba', 2)
+  drawPath(context, globalPath.value, '#f3ad44', 6)
+  drawPath(context, localPath.value, '#23b8ba', 2.5, [8, 6])
 
   const goal = activeGoal.value
   if (goal?.x !== undefined && goal?.y !== undefined) {
@@ -345,7 +353,7 @@ onBeforeUnmount(() => {
       <div class="map-legend" aria-hidden="true">
         <span><i class="legend-robot"></i>车体</span>
         <span><i class="legend-global"></i>全局路径</span>
-        <span><i class="legend-local"></i>局部路径</span>
+        <span><i class="legend-local"></i>控制路径</span>
       </div>
       <div class="map-tools">
         <button type="button" title="放大地图" aria-label="放大地图" @click.stop="adjustZoom(1.2)">+</button>

@@ -55,6 +55,11 @@ Internal ingest endpoints are local bridge interfaces:
 The occupancy map is uploaded only when its content version changes or after a backend reconnect.
 It is not included in each WebSocket frame.
 
+With the current Omni PID Pursuit controller, NavigateToPose publishes the active controller path
+on `/local_plan` in `base_link` and may not publish a separate `/plan`. The bridge transforms that
+path into `map` and uses it as the displayed global-path fallback. Therefore global and local path
+lines may overlap with this controller; they are not two independently planned trajectories.
+
 ## Parameters
 
 Edit `~/livox_ws/src/navigation_web_bridge/config/navigation_web_bridge.yaml`, rebuild the package,

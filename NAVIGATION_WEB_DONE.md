@@ -35,6 +35,9 @@ path was changed.
 - Frontend production build completed successfully.
 - Actual `/map`: 209 x 261, 0.05 m/cell, version `d1f0a37f3932fec`.
 - Actual `map -> base_link` pose and `/odometry` velocity reach the backend.
+- `/local_plan` published in `base_link` is transformed into `map` before Web upload.
+- Omni PID Pursuit `/local_plan` is used as the displayed global-route fallback when NavigateToPose
+  does not publish a separate `/plan`; both path lines may overlap for this controller.
 - Local and cloud WebSocket rate: approximately 10.1 Hz.
 - Cached map PNG is valid and is not sent in each WebSocket message.
 - Backend restart replayed the map automatically in approximately 1.2 seconds.
@@ -44,6 +47,26 @@ path was changed.
 ## Remaining field acceptance
 
 - Send a real Nav2 goal and visually compare `/plan`, the robot marker, and RViz.
-- Confirm local path frame behavior while the controller is active; non-`map` paths are currently
-  omitted rather than rendered in the wrong coordinate frame.
 - Perform final desktop/mobile visual acceptance in the operator's browser.
+
+## Disabled-chassis Nav2 path acceptance (2026-07-05)
+
+- Started the documented six-process Point-LIO front end and `rk3588_navigation` bringup.
+- Front-end rates were approximately 10 Hz for Point-LIO odometry, registered scan, and LaserScan.
+- The previous guessed initial pose `(1.49, 0.72)` was rejected for planning because its global
+  costmap cell was inflated/occupied. AMCL global localization plus no-motion updates converged to
+  approximately `(-0.33, 3.82, -0.84 rad)` with low covariance and a free robot-radius area.
+- Theta* successfully planned a disabled-chassis test route to `(0.072, 3.821)`.
+- During NavigateToPose, both RK local API and the public cloud API reported `global_path=9`,
+  `local_path=9`, state `navigating`, and approximately `0.42 m` remaining distance.
+- The current Omni PID Pursuit controller exposes the same active controller route through
+  `/local_plan`; after transformation to `map`, it is also used as the global display fallback, so
+  the two displayed lines overlap by design.
+- The Canvas renders the overlapping global route as a wide orange underlay and the controller
+  route as a narrow cyan dashed line so both remain visually distinguishable.
+- NavigateToPose was canceled successfully. After one second without local-plan updates, the Web
+  state returned to `localized` and both path arrays were cleared.
+- The cancellation velocity stream decelerated to about `0.04 m/s` but an explicit zero frame was
+  not observed before publishing stopped. A zero `/cmd_vel` was sent explicitly after each test.
+  This is a separate velocity-smoother safety observation and was not addressed by changing Nav2
+  behavior in the visualization task.
