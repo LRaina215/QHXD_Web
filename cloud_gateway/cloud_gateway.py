@@ -83,6 +83,7 @@ ALLOWED_PATH_PREFIXES = (
     "/api/imu/latest",
     "/api/perception/latest_frame",
     "/api/perception/frame_stream",
+    "/api/navigation/",
     "/api/external/weather/latest",
     "/api/voice/text_command",
     "/api/voice/audio_command",
@@ -726,7 +727,7 @@ async def proxy_http(path: str, request: Request):
 
 @app.websocket("/ws/{channel}")
 async def proxy_ws(websocket: WebSocket, channel: str):
-    if channel not in {"state", "imu"}:
+    if channel not in {"state", "imu", "navigation"}:
         await websocket.close(code=1008)
         return
 

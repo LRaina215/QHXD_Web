@@ -1,6 +1,7 @@
 const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
 const rawWsStateUrl = import.meta.env.VITE_WS_STATE_URL ?? ''
 const rawWsImuUrl = import.meta.env.VITE_WS_IMU_URL ?? ''
+const rawWsNavigationUrl = import.meta.env.VITE_WS_NAVIGATION_URL ?? ''
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '')
@@ -18,6 +19,7 @@ function sameOriginWsUrl(path: string): string {
 export const API_BASE_URL = trimTrailingSlash(rawApiBaseUrl)
 export const WS_STATE_URL = rawWsStateUrl
 export const WS_IMU_URL = rawWsImuUrl
+export const WS_NAVIGATION_URL = rawWsNavigationUrl
 export const ENABLE_LOCAL_RECORD_COMMAND = ['1', 'true', 'yes', 'on'].includes(
   String(import.meta.env.VITE_ENABLE_LOCAL_RECORD_COMMAND ?? '').toLowerCase(),
 )
@@ -37,6 +39,9 @@ export function wsUrl(path: string): string {
   }
   if (normalizedPath === '/ws/imu' && WS_IMU_URL) {
     return WS_IMU_URL
+  }
+  if (normalizedPath === '/ws/navigation' && WS_NAVIGATION_URL) {
+    return WS_NAVIGATION_URL
   }
   return sameOriginWsUrl(normalizedPath)
 }

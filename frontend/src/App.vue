@@ -75,6 +75,23 @@ type RobotState = {
   updated_at: string
 }
 
+type NavigationPoint = { x: number; y: number }
+
+type NavigationSnapshot = {
+  source: string
+  frame_id: string
+  timestamp: string
+  sequence: number
+  map_version: string | null
+  pose: ({ x: number; y: number; yaw: number }) | null
+  goal: ({ x: number; y: number; yaw: number }) | null
+  velocity: ({ vx: number; vy: number; wz: number }) | null
+  global_path: NavigationPoint[]
+  local_path: NavigationPoint[]
+  nav_state: string
+  remaining_distance: number | null
+}
+
 type AlertEvent = {
   alert_id: string
   level: string
@@ -291,6 +308,8 @@ const isConfirmingVoiceCommand = ref(false)
 const isSwitchingMode = ref(false)
 const wsConnected = ref(false)
 const imuWsConnected = ref(false)
+const navigationWsConnected = ref(false)
+const navigationSnapshot = ref<NavigationSnapshot | null>(null)
 const shouldReconnect = ref(true)
 let mobileLayoutQuery: MediaQueryList | null = null
 
@@ -313,6 +332,7 @@ const detectionEventHistory = ref<DetectionEventItem[]>([])
 
 let socket: WebSocket | null = null
 let imuSocket: WebSocket | null = null
+let navigationSocket: WebSocket | null = null
 let alertsTimer: number | null = null
 let stateTimer: number | null = null
 let latestFrameTimer: number | null = null
@@ -939,6 +959,7 @@ onMounted(async () => {
   await Promise.all([loadState(), loadAlerts(), loadImu()])
   connectWebSocket()
   connectImuWebSocket()
+  connectNavigationWebSocket()
   alertsTimer = window.setInterval(() => {
     void loadAlerts()
   }, 5000)
@@ -963,6 +984,10 @@ onBeforeUnmount(() => {
 
   if (imuSocket) {
     imuSocket.close()
+  }
+
+  if (navigationSocket) {
+    navigationSocket.close()
   }
 
   if (alertsTimer !== null) {
@@ -1107,6 +1132,32 @@ function connectImuWebSocket() {
 
   imuSocket.onerror = () => {
     imuConnectionLabel.value = 'IMU 流异常'
+  }
+}
+
+function connectNavigationWebSocket() {
+  navigationSocket = new WebSocket(wsUrl('/ws/navigation'))
+
+  navigationSocket.onopen = () => {
+    navigationWsConnected.value = true
+  }
+
+  navigationSocket.onmessage = (event) => {
+    const payload = JSON.parse(event.data) as { type: string; data: NavigationSnapshot | null }
+    if (payload.type === 'navigation') {
+      navigationSnapshot.value = payload.data
+    }
+  }
+
+  navigationSocket.onclose = () => {
+    navigationWsConnected.value = false
+    if (shouldReconnect.value) {
+      window.setTimeout(connectNavigationWebSocket, 3000)
+    }
+  }
+
+  navigationSocket.onerror = () => {
+    navigationWsConnected.value = false
   }
 }
 
@@ -1717,6 +1768,8 @@ function saveApiToken() {
           :robot-pose="state?.robot_pose ?? null"
           :goal="navGoal"
           :nav-state="state?.nav_status.state ?? null"
+          :navigation="navigationSnapshot"
+          :stream-connected="navigationWsConnected"
         />
 
         <NavigationAssistPanel

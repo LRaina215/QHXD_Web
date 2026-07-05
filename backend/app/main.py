@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from app.schemas import (
     AlertsResponse,
@@ -23,6 +23,12 @@ from app.schemas import (
     MissionActionResult,
     ModeSwitchRequest,
     ModeSwitchResponse,
+    NavigationLatestResponse,
+    NavigationMapMetadataResponse,
+    NavigationMapUpdateRequest,
+    NavigationSnapshot,
+    NavigationUpdateResponse,
+    NavigationUpdateResult,
     NucImuUpdateRequest,
     NucImuUpdateResponse,
     NucStateUpdateRequest,
@@ -56,6 +62,7 @@ from app.services.audio_recorder import audio_recorder
 from app.services.imu_store import imu_store
 from app.services.mission_gateway import mission_gateway
 from app.services.mode_manager import mode_manager
+from app.services.navigation_store import navigation_store
 from app.services.mock_state import mock_state_service
 from app.services.nuc_adapter import nuc_adapter
 from app.services.persistence import persistence
@@ -849,6 +856,58 @@ async def ingest_nuc_imu(request: NucImuUpdateRequest) -> NucImuUpdateResponse:
     return NucImuUpdateResponse(data=result)
 
 
+@app.post("/api/internal/navigation/map", response_model=NavigationUpdateResponse)
+async def ingest_navigation_map(request: NavigationMapUpdateRequest) -> NavigationUpdateResponse:
+    try:
+        navigation_store.update_map(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return NavigationUpdateResponse(
+        data=NavigationUpdateResult(
+            updated_at=datetime.now(timezone.utc),
+            detail="Navigation map cached.",
+        )
+    )
+
+
+@app.post("/api/internal/navigation/state", response_model=NavigationUpdateResponse)
+async def ingest_navigation_state(request: NavigationSnapshot) -> NavigationUpdateResponse:
+    snapshot = navigation_store.update_snapshot(request)
+    await ws_manager.broadcast_navigation(snapshot)
+    return NavigationUpdateResponse(
+        data=NavigationUpdateResult(
+            updated_at=datetime.now(timezone.utc),
+            detail="Navigation snapshot cached and broadcast.",
+        )
+    )
+
+
+@app.get("/api/navigation/latest", response_model=NavigationLatestResponse)
+async def navigation_latest() -> NavigationLatestResponse:
+    return NavigationLatestResponse(data=navigation_store.latest())
+
+
+@app.get("/api/navigation/map/metadata", response_model=NavigationMapMetadataResponse)
+async def navigation_map_metadata() -> NavigationMapMetadataResponse:
+    metadata = navigation_store.map_metadata()
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="Navigation map is not available.")
+    return NavigationMapMetadataResponse(data=metadata)
+
+
+@app.get("/api/navigation/map/image")
+async def navigation_map_image(request: Request) -> Response:
+    map_result = navigation_store.map_png()
+    if map_result is None:
+        raise HTTPException(status_code=404, detail="Navigation map is not available.")
+    metadata, png = map_result
+    etag = f'"{metadata.version}"'
+    headers = {"ETag": etag, "Cache-Control": "public, max-age=60, must-revalidate"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=png, media_type="image/png", headers=headers)
+
+
 @app.websocket("/ws/state")
 async def state_stream(websocket: WebSocket) -> None:
     await ws_manager.connect(websocket, state_store.get_latest_state())
@@ -864,6 +923,16 @@ async def state_stream(websocket: WebSocket) -> None:
 async def imu_stream(websocket: WebSocket) -> None:
     await ws_manager.connect_imu(websocket, imu_store.get_latest())
 
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+
+
+@app.websocket("/ws/navigation")
+async def navigation_stream(websocket: WebSocket) -> None:
+    await ws_manager.connect_navigation(websocket, navigation_store.latest())
     try:
         while True:
             await websocket.receive_text()

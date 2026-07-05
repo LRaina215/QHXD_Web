@@ -67,6 +67,87 @@ class NavStatus(ContractModel):
     remaining_distance: float | None = Field(default=None, description="剩余距离，单位 m")
 
 
+class NavigationPoint(ContractModel):
+    x: float = Field(description="map 坐标系 X，单位 m")
+    y: float = Field(description="map 坐标系 Y，单位 m")
+
+
+class NavigationPose(NavigationPoint):
+    yaw: float = Field(default=0.0, description="车体朝向，单位 rad")
+
+
+class NavigationVelocity(ContractModel):
+    vx: float = Field(default=0.0, description="X 方向速度，单位 m/s")
+    vy: float = Field(default=0.0, description="Y 方向速度，单位 m/s")
+    wz: float = Field(default=0.0, description="角速度，单位 rad/s")
+
+
+class NavigationSnapshot(ContractModel):
+    source: str = Field(default="rk3588-ros2-navigation-web-bridge")
+    frame_id: str = Field(default="map")
+    timestamp: datetime
+    sequence: int = Field(default=0, ge=0)
+    map_version: str | None = None
+    pose: NavigationPose | None = None
+    goal: NavigationPose | None = None
+    velocity: NavigationVelocity | None = None
+    global_path: list[NavigationPoint] = Field(default_factory=list)
+    local_path: list[NavigationPoint] = Field(default_factory=list)
+    nav_state: str = Field(default="waiting")
+    remaining_distance: float | None = Field(default=None, ge=0.0)
+
+
+class NavigationMapOrigin(ContractModel):
+    x: float
+    y: float
+    yaw: float = 0.0
+
+
+class NavigationMapUpdateRequest(ContractModel):
+    map_id: str = Field(default="navigation-map")
+    version: str
+    frame_id: str = Field(default="map")
+    timestamp: datetime
+    resolution: float = Field(gt=0.0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    origin: NavigationMapOrigin
+    data: list[int] = Field(description="ROS OccupancyGrid data：-1 未知，0~100 占用率")
+
+
+class NavigationMapMetadata(ContractModel):
+    map_id: str
+    version: str
+    frame_id: str
+    timestamp: datetime
+    resolution: float
+    width: int
+    height: int
+    origin: NavigationMapOrigin
+    image_url: str = Field(default="/api/navigation/map/image")
+
+
+class NavigationLatestResponse(ContractModel):
+    success: bool = True
+    data: NavigationSnapshot | None
+
+
+class NavigationMapMetadataResponse(ContractModel):
+    success: bool = True
+    data: NavigationMapMetadata
+
+
+class NavigationUpdateResult(ContractModel):
+    accepted: bool = True
+    updated_at: datetime
+    detail: str
+
+
+class NavigationUpdateResponse(ContractModel):
+    success: bool = True
+    data: NavigationUpdateResult
+
+
 class TaskStatus(ContractModel):
     task_id: str = Field(default="mock-task", description="任务 ID")
     task_type: TaskTypeValue = Field(default="placeholder", description="任务类型")

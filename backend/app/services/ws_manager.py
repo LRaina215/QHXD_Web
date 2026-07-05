@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi import WebSocket
 
-from app.schemas import ImuEnvelope, RobotState
+from app.schemas import ImuEnvelope, NavigationSnapshot, RobotState
 
 _WS_SEND_TIMEOUT = 2.0
 
@@ -11,6 +11,7 @@ class WebSocketManager:
     def __init__(self) -> None:
         self._connections: set[WebSocket] = set()
         self._imu_connections: set[WebSocket] = set()
+        self._navigation_connections: set[WebSocket] = set()
 
     async def connect(self, websocket: WebSocket, initial_state: RobotState) -> None:
         await websocket.accept()
@@ -26,6 +27,7 @@ class WebSocketManager:
     def disconnect(self, websocket: WebSocket) -> None:
         self._connections.discard(websocket)
         self._imu_connections.discard(websocket)
+        self._navigation_connections.discard(websocket)
 
     async def broadcast_state(self, state: RobotState) -> None:
         stale_connections: list[WebSocket] = []
@@ -66,6 +68,35 @@ class WebSocketManager:
             except Exception:
                 stale_connections.append(connection)
 
+        for connection in stale_connections:
+            self.disconnect(connection)
+
+    async def connect_navigation(
+        self, websocket: WebSocket, initial: NavigationSnapshot | None
+    ) -> None:
+        await websocket.accept()
+        self._navigation_connections.add(websocket)
+        try:
+            await asyncio.wait_for(
+                websocket.send_json(
+                    {
+                        "type": "navigation",
+                        "data": initial.model_dump(mode="json") if initial is not None else None,
+                    }
+                ),
+                timeout=_WS_SEND_TIMEOUT,
+            )
+        except Exception:
+            self._navigation_connections.discard(websocket)
+
+    async def broadcast_navigation(self, snapshot: NavigationSnapshot) -> None:
+        stale_connections: list[WebSocket] = []
+        payload = {"type": "navigation", "data": snapshot.model_dump(mode="json")}
+        for connection in list(self._navigation_connections):
+            try:
+                await asyncio.wait_for(connection.send_json(payload), timeout=_WS_SEND_TIMEOUT)
+            except Exception:
+                stale_connections.append(connection)
         for connection in stale_connections:
             self.disconnect(connection)
 
