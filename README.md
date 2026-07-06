@@ -4,6 +4,15 @@ QHXD 是琼海芯动车载机器人的 RK3588 中台工程。当前已打通公�
 
 安全原则：视觉和 LLM 不直接控制底盘；移动类指令必须二次确认；公网写接口需要 Token，mission 控制还受 `PUBLIC_CONTROL_ENABLED` 开关限制。
 
+## 当前进度（2026-07-06）
+
+- 公网前端、Cloud Gateway 与 RK3588 backend 稳定连通，公网 API/WS 地址保持不变。
+- C 板通信正式使用 `standard_robot_pp_ros2`，可接收 IMU/底盘数据并下发 `/cmd_vel`。
+- `/serial/imu_backend` 20 Hz 镜像与 C++ backend bridge 已修复，`/api/imu/latest` 实测返回 `source=rk3588_cboard_ros2`。
+- 导航正式使用 MID360 + Point-LIO 提供 `odom -> base_link`，不再使用 C 板 odom 或上位机速度积分作为导航前端里程计。
+- 2D 建图、地图保存、AMCL/Nav2 链路、全向 PID Pursuit 平移控制和上位机旋转指令已打通。
+- 剩余导航收尾项是 Nav2 目标点旋转验收、动态障碍实机避障与安全停车测试；它们不阻塞其他业务模块开发。
+
 ## 快捷启动
 
 以下命令默认在 RK3588 执行：
@@ -193,7 +202,7 @@ MJPEG 兜底：http://127.0.0.1:8000/api/perception/frame_stream
 - TTS：MiMO V2.5 在线合成，可通过 ES8388 板载扬声器自动播放。
 - 感知：Hik MVS 优先、USB/UVC 备用，RKNN YOLO26 独立推理并提交 `detection_status`。
 - 视频：相机帧与 YOLO 异步，MPP H.264 上传至 MediaMTX，前端 WebRTC 优先。
-- 导航：`standard_robot_pp_ros2` 提供 `/cmd_vel`、`/serial/imu`、`/serial/robot_motion`、`/odom` 和 TF 链路。
+- 导航：`standard_robot_pp_ros2` 负责 C 板数据与 `/cmd_vel`；`QHXD_NAV` 使用 MID360 + Point-LIO 提供前端里程计，使用 slam_toolbox/AMCL/Nav2 完成 2D 建图、定位、规划和控制。
 - 导航可视化：`navigation_web_bridge` 只读接入 `/map`、`map -> base_link`、`/plan`、`/local_plan` 和 `/odometry`，不发布控制话题。
 - 云端：Cloud Gateway 完成认证、限流、路由白名单、操作日志、API/WS 转发与视频会话。
 
@@ -391,32 +400,33 @@ QHXD_VIDEO_STREAM_URL='rtmp://<cloud-tailscale-ip>:1935/robot/front?user=<publis
 
 - 打开 `/dev/ttyCBoard`（默认 115200）。
 - BCP 协议接收下位机数据。
-- 发布 `/serial/robot_motion`、`/serial/imu`、`/odom` 和可选 TF。
-- 保留全速 `/serial/imu` 给导航，同时发布最多 20Hz 的 `/serial/imu_backend` 给 Dashboard 后端。
+- 发布 `/serial/robot_motion`、`/serial/imu`、`/serial/imu_backend` 以及可选的 `/odom`/TF。
+- 保留全速 `/serial/imu` 供 ROS 2 调试和其他模块使用，同时发布最多 20Hz 的 `/serial/imu_backend` 给 Dashboard 后端。
 - 订阅 `/cmd_vel` 并下发给 C 板。
 
-`/odom` 的位姿不是上位机速度积分结果，而是直接使用 C 板 `0x11`
-帧中的 `x/y/yaw`。上位机会严格检查帧长、校验、有限值、合理范围与单帧跳变，
-异常帧不会发布到 ROS。
-
-实车确认 C 板上行为 `+x` 向后、`+y` 向右、`+yaw` 顺时针。
-`standard_robot_pp_ros2` 默认在发布前对 `x/y/yaw` 和 `vx/vy/wz` 全部取反，
-统一为 ROS `+x` 向前、`+y` 向左、`+yaw` 逆时针。
+`standard_robot_pp_ros2` 仍保留 C 板 `0x11` odom 解析与安全检查，但当前正式导航
+配置 `standard_robot_pp_ros2_pointlio.yaml` 已设置 `publish_odom: false` 和
+`publish_odom_tf: false`。导航的唯一 `odom -> base_link` 来源是 Point-LIO
+接口，避免两个 TF 发布者互相冲突。
 
 ```bash
+cd /home/robomaster/QHXD
+unset LD_LIBRARY_PATH
 source /opt/ros/humble/setup.bash
 source /home/robomaster/QHXD/install/setup.bash
+
 ros2 topic list | sort
 ros2 topic echo /serial/imu --once
 ros2 topic hz /serial/imu_backend
 ros2 topic echo /serial/robot_motion --once
-ros2 topic echo /odom --once
+curl http://127.0.0.1:8000/api/imu/latest
 ```
 
 IMU 后端桥接默认使用 C++ `rclcpp + libcurl`，将 `/serial/imu_backend` 写入现有 `/api/internal/nuc/imu`，不改前后端接口。空闲或 20Hz 输入下实测约 2% CPU；旧 Python bridge 保留作为回退。
 
 ```bash
 # 立即切换，不重启 C 板串口节点
+cd /home/robomaster/QHXD
 ./scripts/switch_imu_bridge.sh cpp
 ./scripts/switch_imu_bridge.sh python
 ./scripts/status_public_robot.sh
@@ -436,76 +446,58 @@ ROS2_IMU_BRIDGE_RATE_HZ=20
 /home/robomaster/QHXD_backups/imu_bridge_20260703_120420.tar.gz
 ```
 
-注意：topic 存在只证明 publisher 已启动，不等于 C 板在持续上发。当前重启验收已确认节点和 topic 自启，但下位机 IMU/odom 持续数据仍作为独立实机待验项。
+当前已实测 `/serial/imu_backend` 同时存在 publisher/subscriber，本地
+`/api/imu/latest` 持续返回 `source=rk3588_cboard_ros2`。后端必须位于
+`real` 模式；`mock` 模式会按设计忽略真实 IMU。
 
 `CBOARD_WATCHDOG_ENABLED=false` 默认关闭。只有在下位机本应持续上发时才建议打开，避免无数据时循环重启串口。
 
 详见 `standard_robot_pp_ros2/README.md`。
 
-### MID360 轻量 2D 建图
+### QHXD_NAV 当前导航链路
 
-导航继续使用 `livox_ros_driver2`、`pointcloud_to_laserscan`和 `slam_toolbox`
-的原生节点，完整 TF 所有权为：
+导航已独立整理到 `~/livox_ws`（GitHub：`LRaina215/QHXD_NAV`），该仓库
+README 是唯一建议直接执行的导航启动手册。当前正式链路为：
 
 ```text
-map -> odom                 slam_toolbox（建图）/ AMCL（导航）
-odom -> base_link           standard_robot_pp_ros2 + C 板里程计
+MID360 CustomMsg + IMU
+  -> Point-LIO
+  -> loam_interface + sensor_scan_generation
+  -> odom -> base_link + /odometry + /registered_scan + /scan
+  -> slam_toolbox（建图）或 map_server + AMCL（定位）
+  -> Nav2 Theta* + Omni PID Pursuit
+  -> /cmd_vel
+  -> standard_robot_pp_ros2 -> C 板
+```
+
+TF 所有权必须保持唯一：
+
+```text
+map -> odom                 slam_toolbox（建图）或 AMCL（导航）
+odom -> base_link           Point-LIO 导航接口
 base_link -> livox_frame    静态外参
 ```
 
-当前保守配置直接保存在 `~/livox_ws/config/mid360_to_scan.yaml` 和
-`~/livox_ws/config/slam_toolbox_mid360.yaml`：3° 扫描、4 m 量程、队列 1、
-SLAM 分辨率 0.15 m、关闭回环。调试时使用六个前台终端，不使用后台一键启动脚本。
+一键启动六个导航前置窗格：
 
 ```bash
-# 终端 1：保持 standard_robot_pp_ros2 运行，提供 /odom 和 odom -> base_link
-
-# 终端 2：Livox 驱动
 cd ~/livox_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch livox_ros_driver2 msg_MID360_launch.py
-
-# 终端 3：点云转 LaserScan
-source /opt/ros/humble/setup.bash
-source ~/livox_ws/install/setup.bash
-ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node --ros-args \
-  -r cloud_in:=/livox/lidar -r scan:=/scan \
-  --params-file ~/livox_ws/config/mid360_to_scan.yaml
-
-# 终端 4：雷达静态 TF
-source /opt/ros/humble/setup.bash
-source ~/livox_ws/install/setup.bash
-ros2 run tf2_ros static_transform_publisher \
-  --x 0.0 --y 0.0 --z 0.25 --roll 0.0 --pitch 0.0 --yaw 0.0 \
-  --frame-id base_link --child-frame-id livox_frame
-
-# 终端 5：同步建图
-source /opt/ros/humble/setup.bash
-source ~/livox_ws/install/setup.bash
-ros2 launch slam_toolbox online_sync_launch.py \
-  slam_params_file:=/home/robomaster/livox_ws/config/slam_toolbox_mid360.yaml
-
-# 终端 6：RViz（已配好 /map、/scan、/odom、TF 和 SLAM markers）
-source /opt/ros/humble/setup.bash
-source ~/livox_ws/install/setup.bash
-rviz2 -d ~/livox_ws/rviz/sentinel_nav_mapping.rviz
+bash ~/livox_ws/scripts/start_navigation_frontend.sh
 ```
 
-RViz 必须使用 `-d` 加载配置；`rviz2 ./rviz/sentinel_nav_mapping.rviz`
-只会打开默认界面。Rockchip DRI 报错后如仍显示 OpenGL 版本，表示 RViz
-已回退到可用渲染路径。
+查看 tmux 窗格与实际 ROS 2 节点：
 
-2026-07-03 实测：`/odom` 38.715 Hz，`/livox/lidar` 和 `/scan` 约 10 Hz，
-`/map_metadata` 可用，`map -> odom -> base_link -> livox_frame` 连通。单实例导航节点合计约
-130 MiB；`slam_toolbox` 约 4–5% 单核，未再出现 OOM。
+```bash
+cd ~/livox_ws
+bash ~/livox_ws/scripts/start_navigation_frontend.sh --status
+```
 
-开始运动建图前仍必须人工确认：前进时 odom x 增大、左移时 y 增大、左转时 yaw
-增大，并在 RViz 中确认车前障碍物位于 `base_link +X`。默认雷达外参
-`x=0, y=0, z=0.25, rpy=0`仍是待实测的临时值。
+已完成 Point-LIO 方向/稳定性、2D 建图与地图保存、AMCL/Nav2 软件链路、
+全向平移控制与 C 板旋转指令验收。导航运行、建图、定位、地图保存、
+RViz、停止和排障命令均见 `~/livox_ws/README.md`。
 
-当前 C 板 USB CDC 的已知使用限制保持不变：停止上位机通信节点后，
-再启动前需重插或重新上电 C 板。
+已知限制：C 板通信节点停止后，当前固件仍需重插 USB 或重新上电后才能
+再次启动。不要同时运行 `rtt_nav_bridge` 和 `standard_robot_pp_ros2`。
 
 ## 后端 API
 
@@ -658,15 +650,24 @@ curl http://127.0.0.1:9997/v3/paths/list
 
 `robot/front` 应为 `ready=true`。腾讯云安全组需放行 `8189/TCP` 和 `8189/UDP`。
 
-### C 板独立待验
+### C 板与 IMU 链路
 
 ```bash
+cd /home/robomaster/QHXD
+unset LD_LIBRARY_PATH
+source /opt/ros/humble/setup.bash
+source /home/robomaster/QHXD/install/setup.bash
+
 ros2 topic echo /serial/imu --once
+timeout 5 ros2 topic hz /serial/imu_backend
 ros2 topic echo /serial/robot_motion --once
-ros2 topic echo /odom --once
+curl http://127.0.0.1:8000/api/imu/latest
+curl https://lingxunrobot.cn/api/imu/latest
 ```
 
-如节点已运行但命令一直等待，说明当前没有收到下位机持续有效帧，不应阻塞其他功能验收。
+当前已验收真实 IMU 从 C 板经 20 Hz C++ bridge 到 RK backend 和公网 API。
+预期 `source=rk3588_cboard_ros2` 且 `updated_at` 持续刷新。如命令一直等待，检查
+`logs/standard_robot_pp_ros2.log` 和 `logs/ros2_imu_bridge.log`。
 
 本次实际重启记录见 `REBOOT_ACCEPTANCE_DONE.md`。
 
