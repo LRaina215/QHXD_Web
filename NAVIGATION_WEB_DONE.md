@@ -18,7 +18,7 @@ path was changed.
 
 ## Main implementation
 
-- `~/livox_ws/src/navigation_web_bridge/`: independent ROS 2 C++ telemetry node.
+- `~/QHXD/navigation_web_bridge/`: independent ROS 2 C++ telemetry node owned by QHXD.
 - `backend/app/services/navigation_store.py`: latest navigation state and occupancy PNG cache.
 - `backend/app/main.py`: internal ingest, public map/state APIs, and `/ws/navigation`.
 - `backend/app/services/ws_manager.py`: isolated navigation WebSocket clients.
@@ -44,10 +44,10 @@ path was changed.
 - Steady bridge usage measured approximately 4.2% of one CPU core and 34 MB RSS.
 - Public frontend and Cloud Gateway were deployed with timestamped backups.
 
-## Remaining field acceptance
+## Repository boundary
 
-- Send a real Nav2 goal and visually compare `/plan`, the robot marker, and RViz.
-- Perform final desktop/mobile visual acceptance in the operator's browser.
+The Web bridge, its scripts, API documentation, and acceptance record live under `~/QHXD`.
+`~/livox_ws` contains navigation implementation only and does not own Web integration code.
 
 ## Disabled-chassis Nav2 path acceptance (2026-07-05)
 

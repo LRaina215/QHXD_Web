@@ -1,6 +1,7 @@
 # Navigation Web visualization
 
-The navigation visualization path is read-only and independent from Nav2 control:
+The navigation visualization path belongs to QHXD integration code. It is read-only and
+independent from the `~/livox_ws` Nav2 implementation:
 
 ```text
 /map + TF(map -> base_link) + /plan + /local_plan + /odometry
@@ -33,10 +34,10 @@ cd ~/QHXD
 The bridge can also be run in the foreground:
 
 ```bash
-cd ~/livox_ws
+cd ~/QHXD
 unset LD_LIBRARY_PATH
 source /opt/ros/humble/setup.bash
-source ~/livox_ws/install/setup.bash
+source ~/QHXD/install/setup.bash
 ros2 launch navigation_web_bridge navigation_web_bridge.launch.py
 ```
 
@@ -62,9 +63,19 @@ lines may overlap with this controller; they are not two independently planned t
 
 ## Parameters
 
-Edit `~/livox_ws/src/navigation_web_bridge/config/navigation_web_bridge.yaml`, rebuild the package,
+Edit `~/QHXD/navigation_web_bridge/config/navigation_web_bridge.yaml`, rebuild the package,
 and restart the bridge. `state_rate_hz` controls Web position refresh rate; it does not change lidar,
 Point-LIO, AMCL, or Nav2 rates.
+
+Build only this QHXD integration package with:
+
+```bash
+cd ~/QHXD
+unset LD_LIBRARY_PATH
+source /opt/ros/humble/setup.bash
+colcon build --packages-select navigation_web_bridge
+source ~/QHXD/install/setup.bash
+```
 
 ## Checks
 

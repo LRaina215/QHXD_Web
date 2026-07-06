@@ -1,0 +1,14 @@
+navigation_web_bridge:
+  ros__parameters:
+    backend_base_url: "http://127.0.0.1:8000"
+    map_topic: "/map"
+    global_path_topic: "/plan"
+    local_path_topic: "/local_plan"
+    odometry_topic: "/odometry"
+    map_frame: "map"
+    base_frame: "base_link"
+    map_id: "sentinel_map"
+    state_rate_hz: 10.0
+    http_timeout_ms: 400
+    max_global_path_points: 400
+    max_local_path_points: 200

@@ -20,7 +20,7 @@ if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
 fi
 
 # Clean up a node orphaned by an older launcher that did not own a process group.
-orphan="$(pgrep -f '^/home/robomaster/livox_ws/install/navigation_web_bridge/lib/navigation_web_bridge/navigation_web_bridge_node ' | head -n 1 || true)"
+orphan="$(pgrep -f '^/home/robomaster/QHXD/install/navigation_web_bridge/lib/navigation_web_bridge/navigation_web_bridge_node ' | head -n 1 || true)"
 if [[ -n "$orphan" ]]; then
   kill -TERM "$orphan" 2>/dev/null || true
 fi
