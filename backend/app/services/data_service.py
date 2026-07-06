@@ -51,11 +51,24 @@ class DataService:
             return "state_store", robot_status_provider.perception_reply()
         if intent in {"query_weather", "query_environment"}:
             weather = weather_provider.latest()
+            if weather.source == "unavailable":
+                return "weather_unavailable", "暂时无法获取实时天气，请稍后再试。"
+            temperature = f"气温{weather.temperature_c:.1f}摄氏度" if weather.temperature_c is not None else "气温未知"
+            apparent = (
+                f"，体感{weather.apparent_temperature_c:.1f}摄氏度"
+                if weather.apparent_temperature_c is not None else ""
+            )
+            humidity = f"，相对湿度{weather.humidity_percent:.0f}%" if weather.humidity_percent is not None else ""
+            rain_probability = (
+                f"今日最高降雨概率{weather.precipitation_probability_percent:.0f}%"
+                if weather.precipitation_probability_percent is not None else ""
+            )
+            uv_index = f"，紫外线指数{weather.uv_index:.1f}" if weather.uv_index is not None else ""
+            forecast = f"{rain_probability}{uv_index}。" if rain_probability or uv_index else ""
             return (
-                "weather_provider",
-                f"{weather.location}当前天气{weather.weather}，温度{weather.temperature_c:.1f}摄氏度，"
-                f"湿度{weather.humidity_percent:.0f}%，{weather.wind or '风力未知'}。"
-                "天气数据来自外部天气源，不代表机器人本体传感器。"
+                weather.source,
+                f"{weather.location}当前{weather.weather}，{temperature}{apparent}{humidity}，"
+                f"{weather.wind or '风力未知'}。{forecast}出行建议：{weather.advice or '请根据天气合理安排出行。'}"
             )
         return "none", "我还不能回答这个问题。"
 

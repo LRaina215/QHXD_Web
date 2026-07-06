@@ -33,6 +33,7 @@ from app.schemas import (
     ReturnHomeRequest,
     TaskStatus,
     Vector3Sample,
+    WeatherData,
     VoiceConfirmCommandRequest,
     VoiceRecordCommandRequest,
     SmartCommandRequest,
@@ -44,6 +45,7 @@ from app.services.mock_state import MockStateService
 from app.services.mode_manager import mode_manager
 from app.services.persistence import persistence
 from app.services.state_store import state_store
+from app.services.weather_provider import weather_provider
 from app.services.voice.llm_client import LLMClientResponse
 from app.services.voice import llm_intent_parser as llm_intent_parser_module
 
@@ -516,17 +518,39 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(identity.data.tts_status)
         self.assertEqual(identity.data.tts_status.status, "generated")
 
-        weather = await main_module.get_latest_weather()
-        self.assertTrue(weather.success)
-        self.assertIsNotNone(weather.data)
-        self.assertEqual(weather.data.source, "weather_provider")
-
-        weather_reply = await main_module.smart_command(
-            SmartCommandRequest(text="现在天气怎么样", source="test-smart", requested_by="unittest")
+        original_fetch_live = weather_provider._fetch_live
+        weather_provider._cache = None
+        weather_provider._fetch_live = lambda: WeatherData(
+            location="海南海口",
+            temperature_c=30.4,
+            apparent_temperature_c=33.6,
+            humidity_percent=70,
+            precipitation_mm=0.1,
+            precipitation_probability_percent=84,
+            uv_index=7.1,
+            weather="小毛毛雨",
+            wind="风速21.1公里/小时",
+            source="open_meteo",
+            advice="建议携带雨具，注意湿滑路面。",
+            updated_at=datetime.now(timezone.utc),
         )
-        self.assertEqual(weather_reply.data.intent, "query_weather")
-        self.assertEqual(weather_reply.data.data_source, "weather_provider")
-        self.assertIn("天气数据来自外部天气源", weather_reply.data.reply_text)
+        try:
+            weather = await main_module.get_latest_weather()
+            self.assertTrue(weather.success)
+            self.assertIsNotNone(weather.data)
+            self.assertEqual(weather.data.source, "open_meteo")
+
+            weather_reply = await main_module.smart_command(
+                SmartCommandRequest(text="现在天气怎么样", source="test-smart", requested_by="unittest")
+            )
+            self.assertEqual(weather_reply.data.intent, "query_weather")
+            self.assertEqual(weather_reply.data.data_source, "open_meteo")
+            self.assertIn("今日最高降雨概率84%", weather_reply.data.reply_text)
+            self.assertIn("出行建议", weather_reply.data.reply_text)
+            self.assertNotIn("传感器", weather_reply.data.reply_text)
+        finally:
+            weather_provider._fetch_live = original_fetch_live
+            weather_provider._cache = None
 
         tts = await main_module.speak(SpeakRequest(text="我是灵巡 Sentinel。", source="test"))
         self.assertTrue(tts.success)

@@ -249,10 +249,16 @@ class RobotProfile(ContractModel):
 class WeatherData(ContractModel):
     location: str
     temperature_c: float | None = None
+    apparent_temperature_c: float | None = None
     humidity_percent: float | None = None
+    precipitation_mm: float | None = None
+    precipitation_probability_percent: float | None = None
+    uv_index: float | None = None
     weather: str
     wind: str | None = None
     source: str = Field(default="weather_provider")
+    is_stale: bool = False
+    advice: str | None = None
     updated_at: datetime
 
 

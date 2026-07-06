@@ -200,6 +200,7 @@ MJPEG 兜底：http://127.0.0.1:8000/api/perception/frame_stream
 - ASR：FunASR SenseVoiceSmall + FSMN VAD，模型在进程内缓存，首次识别后复用。
 - LLM：DeepSeek 负责开放问答和复杂语义 fallback；本地规则、schema、白名单和确认流程负责安全。
 - TTS：MiMO V2.5 在线合成，可通过 ES8388 板载扬声器自动播放。
+- 天气：语音/文本天气查询通过 Open-Meteo 获取实时气温、体感温度、湿度、降雨概率和紫外线，并生成出行建议；成功结果在进程内短时缓存。
 - 感知：Hik MVS 优先、USB/UVC 备用，RKNN YOLO26 独立推理并提交 `detection_status`。
 - 视频：相机帧与 YOLO 异步，MPP H.264 上传至 MediaMTX，前端 WebRTC 优先。
 - 导航：`standard_robot_pp_ros2` 负责 C 板数据与 `/cmd_vel`；`QHXD_NAV` 使用 MID360 + Point-LIO 提供前端里程计，使用 slam_toolbox/AMCL/Nav2 完成 2D 建图、定位、规划和控制。
@@ -226,6 +227,23 @@ audio_test/               语音验收样本
 `.runtime/`、`logs/`、`backend/data/voice_records/`、`backend/data/tts/` 和 YOLO `outputs/` 已通过 `.gitignore` 排除。
 
 ## 语音、LLM 与 TTS
+
+### 实时天气
+
+天气查询不使用固定占位值，也不需要额外 API Key。默认通过 Open-Meteo 查询机器人配置地点，
+联网失败时优先使用最近一次成功缓存，不会把 `.env` 数值冒充实时天气：
+
+```env
+WEATHER_LOCATION=海南海口
+WEATHER_LATITUDE=20.0440
+WEATHER_LONGITUDE=110.1999
+WEATHER_TIMEZONE=Asia/Shanghai
+WEATHER_TIMEOUT_SECONDS=6
+WEATHER_CACHE_TTL_SECONDS=300
+```
+
+修改地点时必须同时修改地点名称、纬度和经度。`WEATHER_CACHE_TTL_SECONDS` 控制查询缓存，
+默认 300 秒，既保证数据较新，也避免每次语音问答都访问公网。
 
 ### 统一智能助手
 
