@@ -213,6 +213,8 @@ StandardRobotPpRos2Node::~StandardRobotPpRos2Node()
 void StandardRobotPpRos2Node::createPublisher()
 {
   imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("serial/imu", 10);
+  backend_imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>(
+    "serial/imu_backend", rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
   serial_receive_pub_ = this->create_publisher<geometry_msgs::msg::Vector3>("serial/receive", 10);
   robot_state_info_pub_ =
     this->create_publisher<pb_rm_interfaces::msg::RobotStateInfo>("serial/robot_state_info", 10);
@@ -284,6 +286,31 @@ void StandardRobotPpRos2Node::publishBcpImuFromEulerDegrees(
   imu_msg.linear_acceleration.y = acc_y;
   imu_msg.linear_acceleration.z = acc_z;
   imu_pub_->publish(imu_msg);
+  publishBackendImuIfDue(imu_msg);
+}
+
+void StandardRobotPpRos2Node::publishBackendImuIfDue(
+  const sensor_msgs::msg::Imu & imu_msg)
+{
+  if (!backend_imu_pub_ || backend_imu_rate_hz_ <= 0.0) {
+    return;
+  }
+
+  const int64_t stamp_ms =
+    static_cast<int64_t>(imu_msg.header.stamp.sec) * 1000LL +
+    static_cast<int64_t>(imu_msg.header.stamp.nanosec / 1000000U);
+  const int64_t interval_ms = std::max<int64_t>(
+    1, static_cast<int64_t>(std::llround(1000.0 / backend_imu_rate_hz_)));
+  int64_t previous_ms = last_backend_imu_publish_ms_.load(std::memory_order_relaxed);
+  if (previous_ms > 0 && stamp_ms - previous_ms < interval_ms) {
+    return;
+  }
+  if (!last_backend_imu_publish_ms_.compare_exchange_strong(
+      previous_ms, stamp_ms, std::memory_order_relaxed))
+  {
+    return;
+  }
+  backend_imu_pub_->publish(imu_msg);
 }
 
 void StandardRobotPpRos2Node::createSubscription()
@@ -392,6 +419,8 @@ void StandardRobotPpRos2Node::getParams()
     static_cast<int16_t>(declare_parameter("bcp_default_remain_bullet", 0));
   publish_odom_ = declare_parameter("publish_odom", true);
   publish_odom_tf_ = declare_parameter("publish_odom_tf", true);
+  backend_imu_rate_hz_ = std::clamp(
+    declare_parameter("backend_imu_rate_hz", 20.0), 0.0, 20.0);
   cboard_odom_invert_x_ = declare_parameter("cboard_odom_invert_x", true);
   cboard_odom_invert_y_ = declare_parameter("cboard_odom_invert_y", true);
   cboard_odom_invert_yaw_ = declare_parameter("cboard_odom_invert_yaw", true);
@@ -680,6 +709,7 @@ void StandardRobotPpRos2Node::publishImuData(ReceiveImuData & imu_data)
   imu_msg.angular_velocity.y = imu_data.data.pitch_vel;
   imu_msg.angular_velocity.z = imu_data.data.yaw_vel;
   imu_pub_->publish(imu_msg);
+  publishBackendImuIfDue(imu_msg);
 
   joint_msg.name = {
     "gimbal_pitch_joint",

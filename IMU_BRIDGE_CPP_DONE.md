@@ -60,3 +60,38 @@ ROS2_IMU_BRIDGE_RATE_HZ=20
 ```text
 /home/robomaster/QHXD_backups/imu_bridge_20260703_120420.tar.gz
 ```
+
+## 2026-07-06：补全 20Hz IMU 镜像
+
+复验发现 Tag 5.3 的实现并未完整落入 `standard_robot_pp_ros2.cpp`：头文件已有
+`backend_imu_pub_` 和限频函数声明，YAML 也已有 `backend_imu_rate_hz: 20.0`，但节点没有
+创建或发布 `/serial/imu_backend`，导致 C++ bridge 长期等待数据。
+
+本次仅补全 `standard_robot_pp_ros2/src/standard_robot_pp_ros2.cpp` 中缺失的镜像逻辑：
+
+- 创建 depth=1、best-effort 的 `/serial/imu_backend` publisher；
+- 在两条既有 IMU 发布路径中复用同一个 `sensor_msgs::msg::Imu`，不复制解析流程；
+- 使用消息时间戳、原子时间门控按最新样本限频，配置上限固定为 20Hz；
+- 未新增线程、定时器、Python 高频订阅或额外串口读取；
+- 未修改 `handleBcpChassisOdomFrame`、里程计积分或其他导航逻辑。
+
+实机验收结果：
+
+```text
+/serial/imu          约 680Hz（原始导航数据保持全速）
+/serial/imu_backend  约 18.7~18.8Hz
+通信节点 CPU          约 15.4% 单核
+C++ IMU bridge CPU   约 2.4% 单核
+```
+
+- `standard_robot_pp_ros2` Release 编译通过；
+- 目标包 6 项测试全部通过，包括“不使用 twist 积分覆盖 C 板 odom”的回归测试；
+- 本地 `/api/imu/latest` 持续收到 `rk3588_cboard_ros2` 实时数据；
+- 公网 `https://lingxunrobot.cn/api/imu/latest` 与 `wss://lingxunrobot.cn/ws/imu` 均持续更新；
+- 通信节点重启后 C 板 USB CDC 一度未恢复，执行 `sudo usbreset 0ffe:0001` 后恢复，代码无需降级。
+
+本次修复前备份：
+
+```text
+/home/robomaster/QHXD_backups/imu_backend_mirror_20260706_122804
+```

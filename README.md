@@ -105,6 +105,10 @@ PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=usb ./scripts/start_public_r
 # 当前正式 C 板通信包
 ./scripts/start_cboard_comm.sh
 ./scripts/stop_cboard_comm.sh
+
+# 导航 Web 可视化桥（需要 ROS 2 /map 与 map -> base_link TF）
+./scripts/start_navigation_web_bridge.sh
+./scripts/stop_navigation_web_bridge.sh
 ```
 
 `start_cboard_comm.sh` 默认启动 Point-LIO 专用通信配置。需要临时覆盖时，可在
@@ -164,9 +168,9 @@ Hik/USB 相机 -> RK3588 MPP H.264 -> RTMP/Tailscale -> 云 MediaMTX
 ```text
 Web：https://lingxunrobot.cn
 同域 API：https://lingxunrobot.cn/api
-同域 WS：wss://lingxunrobot.cn/ws/state 与 /ws/imu
+同域 WS：wss://lingxunrobot.cn/ws/state、/ws/imu 与 /ws/navigation
 外部 API：https://api.lingxunrobot.cn
-外部 WS：wss://api.lingxunrobot.cn/ws/state 与 /ws/imu
+外部 WS：wss://api.lingxunrobot.cn/ws/state、/ws/imu 与 /ws/navigation
 ```
 
 公网写操作的 Token 是云服务器 `/etc/lingxun-cloud-gateway.env` 中的 `PUBLIC_API_TOKEN`。不要把 Token 写入代码或提交到 Git。
@@ -190,6 +194,7 @@ MJPEG 兜底：http://127.0.0.1:8000/api/perception/frame_stream
 - 感知：Hik MVS 优先、USB/UVC 备用，RKNN YOLO26 独立推理并提交 `detection_status`。
 - 视频：相机帧与 YOLO 异步，MPP H.264 上传至 MediaMTX，前端 WebRTC 优先。
 - 导航：`standard_robot_pp_ros2` 提供 `/cmd_vel`、`/serial/imu`、`/serial/robot_motion`、`/odom` 和 TF 链路。
+- 导航可视化：`navigation_web_bridge` 只读接入 `/map`、`map -> base_link`、`/plan`、`/local_plan` 和 `/odometry`，不发布控制话题。
 - 云端：Cloud Gateway 完成认证、限流、路由白名单、操作日志、API/WS 转发与视频会话。
 
 ## 目录说明
@@ -200,6 +205,7 @@ frontend/                 Vue 3 Dashboard
 cloud_gateway/            云端公网中继
 experiments/rknn_yolo/    RKNN YOLO26 与相机检测
 standard_robot_pp_ros2/   当前正式 C 板 / ROS 2 通信包
+navigation_web_bridge/    ROS 2 导航到 Web 的只读可视化桥
 rtt_nav_bridge/           旧桥接，仅保留参考
 scripts/                  启动、状态、清理、设备绑定
 systemd/                  RK3588 systemd 服务模板
