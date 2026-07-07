@@ -17,7 +17,7 @@ SYSTEM_PROMPT = """你是灵巡 Sentinel 的受控型智能语音助手。
 只输出一个 JSON 对象，不要输出 Markdown。"""
 
 JSON_SCHEMA = {
-    "intent": "go_to_waypoint | start_patrol | pause_task | resume_task | return_home | query_self_identity | query_capability | query_safety_rule | query_assistant_model | query_robot_status | query_task_status | query_battery | query_emergency_stop | query_perception_status | query_weather | query_environment | speak_last_result | open_chat | unknown",
+    "intent": "go_to_waypoint | start_patrol | pause_task | resume_task | return_home | query_self_identity | query_capability | query_safety_rule | query_assistant_model | query_robot_status | query_task_status | query_navigation_status | query_battery | query_emergency_stop | query_perception_status | query_front_status | query_obstacle_status | query_navigation_safety | query_weather | query_environment | speak_last_result | open_chat | unknown",
     "command": "same as intent for executable/query commands, or null",
     "waypoint_alias": "用户提到的目标点别名，或 null",
     "waypoint_id": "仅可从可用 waypoint 列表选择，或 null",
@@ -51,7 +51,8 @@ def build_prompts(recognized_text: str) -> tuple[str, str]:
             "如果用户要求写代码、删除文件、随便高速移动、自由规划或无法确定任务，intent 返回 unknown。",
             "如果用户要求直接速度控制、关闭急停、忽略故障、撞过去，intent 返回 unknown。",
             "如果缺少目标点，intent 返回 unknown，并在 missing_slots 写 target_waypoint。",
-            "查询身份、能力、安全规则、助手模型、状态、任务、电量、急停、视觉、天气时，只输出对应 query intent，不要编造外部数据。",
+            "查询身份、能力、安全规则、助手模型、状态、任务、导航、电量、急停、视觉、前方状况、天气时，只输出对应 query intent，不要编造外部数据。",
+            "用户问前面有什么、前方安全吗、前方有没有人或障碍物时，使用 query_front_status/query_navigation_safety/query_obstacle_status，不要生成导航任务。",
             "开放问答使用 open_chat，可直接在 reply_text 给出简短回答；open_chat 不能包含 waypoint_id，不能触发机器人任务。",
             "开放回答不能声称大模型直接控制底盘或直接执行导航；涉及导航时，应说明会生成结构化任务候选，经本地安全校验和用户确认后交由机器人导航链路执行。",
         ],

@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 
 from app.schemas import AlertEvent, RobotProfile, RobotState, TaskStatus, WeatherData
 from app.services.profile_provider import profile_provider
@@ -43,6 +44,12 @@ class DataService:
             return "state_store", robot_status_provider.robot_status_reply()
         if intent in {"query_task_status", "query_task"}:
             return "state_store", robot_status_provider.task_reply()
+        if intent == "query_navigation_status":
+            return "navigation_store", robot_status_provider.navigation_reply()
+        if intent in {"query_navigation_safety"}:
+            return "navigation_store+visual_events", robot_status_provider.front_status_reply()
+        if intent in {"query_front_status", "query_obstacle_status"}:
+            return "visual_events+detection_status", robot_status_provider.front_status_reply()
         if intent == "query_battery":
             return "state_store", robot_status_provider.battery_reply()
         if intent == "query_emergency_stop":
@@ -65,9 +72,16 @@ class DataService:
             )
             uv_index = f"，紫外线指数{weather.uv_index:.1f}" if weather.uv_index is not None else ""
             forecast = f"{rain_probability}{uv_index}。" if rain_probability or uv_index else ""
+            age_seconds = max(0.0, (datetime.now(timezone.utc) - weather.updated_at).total_seconds())
+            if weather.source == "open_meteo":
+                freshness = f"实时天气，约{age_seconds / 60:.0f}分钟前更新"
+            elif weather.is_stale:
+                freshness = f"使用最近一次成功缓存，约{age_seconds / 60:.0f}分钟前更新"
+            else:
+                freshness = f"缓存天气，约{age_seconds / 60:.0f}分钟前更新"
             return (
                 weather.source,
-                f"{weather.location}当前{weather.weather}，{temperature}{apparent}{humidity}，"
+                f"{weather.location}当前{weather.weather}（{freshness}），{temperature}{apparent}{humidity}，"
                 f"{weather.wind or '风力未知'}。{forecast}出行建议：{weather.advice or '请根据天气合理安排出行。'}"
             )
         return "none", "我还不能回答这个问题。"

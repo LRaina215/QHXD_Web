@@ -73,6 +73,38 @@ class IntentParser:
                 detail="已解析为天气/环境查询。",
             )
 
+        if self._contains_any(normalized, ["当前导航", "导航状态", "导航怎么样", "导航正常", "还要走多远", "剩余距离"]):
+            return ParsedIntent(
+                intent="query_navigation_status",
+                confidence=0.94,
+                need_confirm=False,
+                detail="已解析为导航状态查询。",
+            )
+
+        if self._contains_any(normalized, ["前面有什么", "前方有什么", "前面有没有", "前方有没有", "前方状况", "前面状况", "前方情况", "前面情况"]):
+            return ParsedIntent(
+                intent="query_front_status",
+                confidence=0.95,
+                need_confirm=False,
+                detail="已解析为导航前方态势查询。",
+            )
+
+        if self._contains_any(normalized, ["前方安全吗", "前面安全吗", "能不能继续走", "可以继续走吗", "前方安全", "前面安全"]):
+            return ParsedIntent(
+                intent="query_navigation_safety",
+                confidence=0.94,
+                need_confirm=False,
+                detail="已解析为前方安全态势查询。",
+            )
+
+        if self._contains_any(normalized, ["有没有障碍", "障碍物", "前方障碍", "前面障碍", "挡路"]):
+            return ParsedIntent(
+                intent="query_obstacle_status",
+                confidence=0.94,
+                need_confirm=False,
+                detail="已解析为前方障碍查询。",
+            )
+
         if self._contains_any(normalized, ["视觉检测", "看到了什么", "检测到了什么", "识别到了什么", "刚才看到了"]):
             return ParsedIntent(
                 intent="query_perception_status",

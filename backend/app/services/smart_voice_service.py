@@ -118,7 +118,7 @@ class SmartVoiceService:
         if not generate_tts or not result.reply_text:
             return result
         try:
-            status = tts_service.speak(result.reply_text)
+            status = tts_service.speak_with_policy(result.reply_text)
         except Exception as exc:
             status = TTSStatus(
                 backend="unknown",

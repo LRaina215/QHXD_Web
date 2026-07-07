@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from app.schemas import AlertEvent, CommandLogEntry, MissionActionResult, RobotState, TaskEvent, TaskStatus
+from app.schemas import AlertEvent, CommandLogEntry, MissionActionResult, RobotState, TaskEvent, TaskStatus, VisualEventRecord
 
 
 class SqlitePersistence:
@@ -76,7 +76,157 @@ class SqlitePersistence:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_task_events_task_time ON task_events(task_id, timestamp DESC)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS visual_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    class_name TEXT,
+                    message TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    task_id TEXT,
+                    waypoint_id TEXT,
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    duration_s REAL NOT NULL,
+                    max_confidence REAL,
+                    count INTEGER NOT NULL,
+                    status TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_visual_events_recent ON visual_events(last_seen_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_visual_events_type_class ON visual_events(event_type, class_name, last_seen_at DESC)"
+            )
             connection.commit()
+
+    def upsert_visual_event(
+        self,
+        *,
+        event_type: str,
+        level: str,
+        class_name: str | None,
+        message: str,
+        source: str,
+        task_id: str | None,
+        waypoint_id: str | None,
+        timestamp: datetime,
+        max_confidence: float | None,
+        time_window_seconds: float = 8.0,
+    ) -> VisualEventRecord:
+        window = max(1.0, time_window_seconds)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM visual_events
+                WHERE event_type = ?
+                  AND COALESCE(class_name, '') = COALESCE(?, '')
+                ORDER BY last_seen_at DESC
+                LIMIT 1
+                """,
+                (event_type, class_name),
+            ).fetchone()
+
+            if row is not None:
+                last_seen_at = datetime.fromisoformat(row["last_seen_at"])
+                age_s = (timestamp - last_seen_at).total_seconds()
+                if 0 <= age_s <= window:
+                    first_seen_at = datetime.fromisoformat(row["first_seen_at"])
+                    duration_s = max(0.0, (timestamp - first_seen_at).total_seconds())
+                    merged_confidence = self._max_optional_float(row["max_confidence"], max_confidence)
+                    connection.execute(
+                        """
+                        UPDATE visual_events
+                        SET level = ?, message = ?, source = ?, task_id = ?, waypoint_id = ?,
+                            last_seen_at = ?, duration_s = ?, max_confidence = ?,
+                            count = count + 1, status = ?
+                        WHERE event_id = ?
+                        """,
+                        (
+                            level,
+                            message,
+                            source,
+                            task_id,
+                            waypoint_id,
+                            timestamp.isoformat(),
+                            duration_s,
+                            merged_confidence,
+                            "active",
+                            row["event_id"],
+                        ),
+                    )
+                    connection.commit()
+                    return self.get_visual_event(str(row["event_id"]))  # type: ignore[return-value]
+
+            safe_class = class_name or "none"
+            event_id = f"{event_type}:{safe_class}:{int(timestamp.timestamp())}"
+            connection.execute(
+                """
+                INSERT INTO visual_events (
+                    event_id, event_type, level, class_name, message, source,
+                    task_id, waypoint_id, first_seen_at, last_seen_at, duration_s,
+                    max_confidence, count, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    event_type,
+                    level,
+                    class_name,
+                    message,
+                    source,
+                    task_id,
+                    waypoint_id,
+                    timestamp.isoformat(),
+                    timestamp.isoformat(),
+                    0.0,
+                    max_confidence,
+                    1,
+                    "active",
+                ),
+            )
+            connection.execute(
+                """
+                DELETE FROM visual_events
+                WHERE event_id NOT IN (
+                    SELECT event_id FROM visual_events ORDER BY last_seen_at DESC LIMIT 500
+                )
+                """
+            )
+            connection.commit()
+            return self.get_visual_event(event_id)  # type: ignore[return-value]
+
+    def get_visual_event(self, event_id: str) -> VisualEventRecord | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM visual_events WHERE event_id = ?", (event_id,)).fetchone()
+        return self._visual_event_from_row(row) if row is not None else None
+
+    def list_visual_events(
+        self,
+        limit: int = 50,
+        event_type: str | None = None,
+        task_id: str | None = None,
+    ) -> list[VisualEventRecord]:
+        limit = max(1, min(limit, 200))
+        clauses: list[str] = []
+        params: list[object] = []
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if task_id:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM visual_events {where} ORDER BY last_seen_at DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        return [self._visual_event_from_row(row) for row in rows]
 
     def save_task_event(self, event: TaskEvent) -> bool:
         with self._connect() as connection:
@@ -288,6 +438,30 @@ class SqlitePersistence:
         connection = sqlite3.connect(self._db_path)
         connection.row_factory = sqlite3.Row
         return connection
+
+    @staticmethod
+    def _max_optional_float(left: float | None, right: float | None) -> float | None:
+        values = [value for value in (left, right) if value is not None]
+        return max(values) if values else None
+
+    @staticmethod
+    def _visual_event_from_row(row: sqlite3.Row) -> VisualEventRecord:
+        return VisualEventRecord(
+            event_id=row["event_id"],
+            event_type=row["event_type"],
+            level=row["level"],
+            class_name=row["class_name"],
+            message=row["message"],
+            source=row["source"],
+            task_id=row["task_id"],
+            waypoint_id=row["waypoint_id"],
+            first_seen_at=datetime.fromisoformat(row["first_seen_at"]),
+            last_seen_at=datetime.fromisoformat(row["last_seen_at"]),
+            duration_s=float(row["duration_s"]),
+            max_confidence=row["max_confidence"],
+            count=int(row["count"]),
+            status=row["status"],
+        )
 
 
 persistence = SqlitePersistence()

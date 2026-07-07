@@ -30,9 +30,13 @@ VoiceIntentValue = Literal[
     "query_assistant_model",
     "query_robot_status",
     "query_task_status",
+    "query_navigation_status",
     "query_battery",
     "query_emergency_stop",
     "query_perception_status",
+    "query_front_status",
+    "query_obstacle_status",
+    "query_navigation_safety",
     "query_weather",
     "query_environment",
     "speak_last_result",
@@ -215,6 +219,49 @@ class DetectionStatus(ContractModel):
     timestamp: datetime = Field(description="检测状态更新时间")
     objects: list[DetectionObject] = Field(default_factory=list, description="最近检测目标")
     events: list[DetectionEvent] = Field(default_factory=list, description="检测派生事件")
+
+
+class VisualEventRecord(ContractModel):
+    event_id: str
+    event_type: str
+    level: AlertLevelValue = "info"
+    class_name: str | None = None
+    message: str
+    source: str = "visual_event_store"
+    task_id: str | None = None
+    waypoint_id: str | None = None
+    first_seen_at: datetime
+    last_seen_at: datetime
+    duration_s: float = Field(default=0.0, ge=0.0)
+    max_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    count: int = Field(default=1, ge=1)
+    status: str = Field(default="active")
+
+
+class VisualEventsResponse(ContractModel):
+    success: bool = True
+    data: list[VisualEventRecord]
+
+
+class VideoHealthStatus(ContractModel):
+    status: str
+    latest_frame_path: str | None = None
+    latest_frame_age_s: float | None = None
+    latest_frame_fresh: bool = False
+    detection_enabled: bool | None = None
+    detection_updated_at: datetime | None = None
+    detection_age_s: float | None = None
+    yolo_camera_pid: int | None = None
+    yolo_camera_running: bool = False
+    stream_url: str | None = None
+    recent_visual_events: list[VisualEventRecord] = Field(default_factory=list)
+    detail: str
+    updated_at: datetime
+
+
+class VideoHealthResponse(ContractModel):
+    success: bool = True
+    data: VideoHealthStatus
 
 
 class RobotState(ContractModel):

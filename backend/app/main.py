@@ -4,6 +4,7 @@ import re
 import tempfile
 import time
 import wave
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pathlib import Path
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
@@ -61,6 +62,9 @@ from app.schemas import (
     VoiceRecordCommandResponse,
     VoiceRecordCommandResult,
     VoiceTextCommandRequest,
+    VideoHealthResponse,
+    VideoHealthStatus,
+    VisualEventsResponse,
     WaypointResponse,
     WaypointsResponse,
 )
@@ -77,6 +81,7 @@ from app.services.persistence import persistence
 from app.services.smart_voice_service import smart_voice_service
 from app.services.state_store import state_store
 from app.services.tts_service import tts_service
+from app.services.visual_event_service import visual_event_service
 from app.services.voice_entry import voice_entry_service
 from app.services.weather_provider import weather_provider
 from app.services.waypoint_registry import waypoint_registry
@@ -100,13 +105,14 @@ async def _real_health_loop() -> None:
         await asyncio.sleep(1)
 
 
-async def _speak_mission_event(event_type: str, detail: str) -> None:
+async def _speak_mission_event(event_type: str, detail: str, event_key: str | None = None) -> None:
     if os.getenv("MISSION_EVENT_TTS_ENABLED", "false").strip().lower() not in {"1", "true", "yes", "on"}:
         return
     if event_type not in {"started", "paused", "resumed", "arrived", "completed", "cancelled", "failed"}:
         return
     try:
-        await asyncio.to_thread(tts_service.speak, detail)
+        priority = "critical" if event_type == "failed" else "normal"
+        await asyncio.to_thread(tts_service.speak_with_policy, detail, event_key=event_key, priority=priority)
     except Exception:
         return
 
@@ -301,6 +307,94 @@ def _latest_frame_response():
             "X-Latest-Frame-Path": str(frame_path),
             "X-Latest-Frame-Age": f"{age_s:.3f}",
         },
+    )
+
+
+def _pid_running(pid: int | None) -> bool:
+    if pid is None or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _read_pid_file(path: Path) -> int | None:
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _redacted_stream_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return "<configured>"
+
+    safe_query = urlencode(
+        [
+            (key, item_value)
+            for key, item_value in parse_qsl(parts.query, keep_blank_values=True)
+            if key.lower() not in {"pass", "password", "token", "key", "secret"}
+        ]
+    )
+    netloc = parts.hostname or ""
+    if parts.port:
+        netloc = f"{netloc}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, safe_query, ""))
+
+
+def _video_health_status() -> VideoHealthStatus:
+    now = datetime.now(timezone.utc)
+    frame_path = _latest_frame_path()
+    latest_frame_age_s: float | None = None
+    latest_frame_fresh = False
+    if frame_path.exists() and frame_path.is_file():
+        latest_frame_age_s = max(0.0, time.time() - frame_path.stat().st_mtime)
+        latest_frame_fresh = latest_frame_age_s <= _perception_latest_frame_max_age_s()
+
+    detection = state_store.get_latest_state().detection_status
+    detection_age_s: float | None = None
+    if detection is not None:
+        detection_age_s = max(0.0, (now - detection.timestamp).total_seconds())
+
+    yolo_pid = _read_pid_file(PROJECT_ROOT / ".runtime" / "yolo_camera.pid")
+    yolo_running = _pid_running(yolo_pid)
+    recent_events = visual_event_service.list_recent(limit=5)
+
+    status = "ok"
+    details: list[str] = []
+    if not yolo_running:
+        status = "degraded"
+        details.append("YOLO camera service is not running")
+    if not latest_frame_fresh:
+        status = "degraded"
+        details.append("latest perception frame is missing or stale")
+    if detection is not None and not detection.enabled:
+        status = "degraded"
+        details.append("detection status reports camera unavailable")
+    if detection is None:
+        status = "degraded"
+        details.append("detection status is not available")
+
+    return VideoHealthStatus(
+        status=status,
+        latest_frame_path=str(frame_path) if frame_path.exists() else None,
+        latest_frame_age_s=latest_frame_age_s,
+        latest_frame_fresh=latest_frame_fresh,
+        detection_enabled=detection.enabled if detection is not None else None,
+        detection_updated_at=detection.timestamp if detection is not None else None,
+        detection_age_s=detection_age_s,
+        yolo_camera_pid=yolo_pid,
+        yolo_camera_running=yolo_running,
+        stream_url=_redacted_stream_url(os.getenv("QHXD_VIDEO_STREAM_URL")),
+        recent_visual_events=recent_events,
+        detail="; ".join(details) if details else "video and perception health look normal",
+        updated_at=now,
     )
 
 
@@ -571,6 +665,20 @@ async def get_perception_frame_stream():
             "X-Frame-Stream": "mjpeg",
         },
     )
+
+
+@app.get("/api/perception/events", response_model=VisualEventsResponse)
+async def get_perception_events(
+    limit: int = 50,
+    event_type: str | None = None,
+    task_id: str | None = None,
+) -> VisualEventsResponse:
+    return VisualEventsResponse(data=visual_event_service.list_recent(limit=limit, event_type=event_type, task_id=task_id))
+
+
+@app.get("/api/perception/video_health", response_model=VideoHealthResponse)
+async def get_perception_video_health() -> VideoHealthResponse:
+    return VideoHealthResponse(data=_video_health_status())
 
 
 @app.get("/api/state/latest", response_model=StateLatestResponse)
@@ -921,7 +1029,8 @@ async def ingest_mission_update(request: MissionExecutorUpdateRequest) -> Missio
     if state is not None:
         await ws_manager.broadcast_state(state)
     if result.accepted and not result.duplicate:
-        asyncio.create_task(_speak_mission_event(request.event.event_type, request.event.detail))
+        event_key = f"{request.event.task_id}:{request.event.event_type}:{request.event.waypoint_id or 'none'}"
+        asyncio.create_task(_speak_mission_event(request.event.event_type, request.event.detail, event_key=event_key))
     return MissionExecutorUpdateResponse(data=result)
 
 
@@ -944,6 +1053,7 @@ async def ingest_detection_status(
     request: PerceptionDetectionStatusRequest,
 ) -> PerceptionDetectionStatusResponse:
     latest_state = state_store.update_detection_status(request.detection_status)
+    visual_event_service.ingest_detection_status(request.detection_status)
     await ws_manager.broadcast_state(latest_state)
     return PerceptionDetectionStatusResponse(
         data=PerceptionDetectionStatusResult(

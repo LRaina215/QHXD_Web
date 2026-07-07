@@ -207,8 +207,8 @@ MJPEG 兜底：http://127.0.0.1:8000/api/perception/frame_stream
 - LLM：DeepSeek 负责开放问答和复杂语义 fallback；本地规则、schema、白名单和确认流程负责安全。
 - TTS：MiMO V2.5 在线合成，可通过 ES8388 板载扬声器自动播放。
 - 天气：语音/文本天气查询通过 Open-Meteo 获取实时气温、体感温度、湿度、降雨概率和紫外线，并生成出行建议；成功结果在进程内短时缓存。
-- 感知：Hik MVS 优先、USB/UVC 备用，RKNN YOLO26 独立推理并提交 `detection_status`。
-- 视频：相机帧与 YOLO 异步，MPP H.264 上传至 MediaMTX，前端 WebRTC 优先。
+- 感知：Hik MVS 优先、USB/UVC 备用，RKNN YOLO26 独立推理并提交 `detection_status`，后端持久化最近视觉事件。
+- 视频：相机帧与 YOLO 异步，MPP H.264 上传至 MediaMTX，前端 WebRTC 优先，后端提供视频健康状态。
 - 导航：`standard_robot_pp_ros2` 负责 C 板数据与 `/cmd_vel`；`QHXD_NAV` 使用 MID360 + Point-LIO 提供前端里程计，使用 slam_toolbox/AMCL/Nav2 完成 2D 建图、定位、规划和控制。
 - 导航可视化：`navigation_web_bridge` 只读接入 `/map`、`map -> base_link`、`/plan`、`/local_plan` 和 `/odometry`，不发布控制话题。
 - 云端：Cloud Gateway 完成认证、限流、路由白名单、操作日志、API/WS 转发与视频会话。
@@ -277,6 +277,27 @@ pending_command_id=...
 ```
 
 使用 `/api/voice/confirm_command` 确认或取消。
+
+常用查询类语义不会生成 mission：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"当前导航怎么样","source":"curl","generate_tts":false}'
+
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"前方安全吗","source":"curl","generate_tts":false}'
+
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"天气怎么样，适合出门吗","source":"curl","generate_tts":false}'
+```
+
+- “当前导航怎么样”读取 `navigation_store` 和任务状态。
+- “前方安全吗 / 前面有什么 / 你看到了什么”读取当前 `detection_status` 与持久化视觉事件。
+- “天气怎么样”读取 Open-Meteo 实时天气和缓存，不输出固定占位值。
+- 查询类失败也只返回文本说明，不会触发底盘任务。
 
 ### 支持命令与点位
 
@@ -366,9 +387,12 @@ MIMO_TTS_MODEL=mimo-v2.5-tts
 MIMO_TTS_VOICE=茉莉
 TTS_AUTO_PLAY_LOCAL=true
 TTS_PLAYER_CMD="aplay -D plughw:2,0"
+TTS_EVENT_DEDUP_SECONDS=3600
+TTS_NORMAL_COOLDOWN_SECONDS=1.5
 ```
 
 `DEEPSEEK_MODEL=deepseek-chat` 是 API 请求别名；当前 API 响应的实际模型为 `deepseek-v4-flash`，页面展示名由 `DEEPSEEK_DISPLAY_MODEL` 控制。
+任务开始、暂停、恢复、到达、完成、取消和失败等事件可自动播报；同一任务事件会按 `event_key` 去重，普通播报有短冷却，TTS 失败不改变任务状态。
 
 ## YOLO、相机与实时视频
 
@@ -417,6 +441,19 @@ QHXD_VIDEO_STREAM_URL='rtmp://<cloud-tailscale-ip>:1935/robot/front?user=<publis
 ```
 
 `PERCEPTION_MJPEG_INTERVAL_MS` 只控制最终 MJPEG 兜底的检查间隔，不决定 WebRTC/HLS 正常视频帧率。详细模型、labels 和调试参数见 `experiments/rknn_yolo/README.md`。
+
+视觉事件与视频健康接口：
+
+```bash
+curl 'http://127.0.0.1:8000/api/perception/events?limit=10'
+curl 'http://127.0.0.1:8000/api/perception/video_health'
+```
+
+- `/api/perception/events` 返回最近视觉事件，刷新页面后仍可查询。
+- 事件按 `event_type + class_name` 在短时间窗口内去重，不逐帧写入 SQLite。
+- 第一版事件包括 `person_detected`、`obstacle_detected`、`camera_offline`、`camera_recovered`。
+- `/api/perception/video_health` 返回最后帧年龄、YOLO 相机服务 PID、检测状态和最近视觉事件。
+- 视频健康接口会对推流 URL 做脱敏，不暴露 `pass`、`token`、`secret` 等参数。
 
 ## ROS 2 导航与 C 板
 
@@ -594,6 +631,8 @@ GET /api/imu/latest
 GET /api/external/weather/latest
 GET /api/perception/latest_frame
 GET /api/perception/frame_stream
+GET /api/perception/events
+GET /api/perception/video_health
 WS  /ws/state
 WS  /ws/imu
 ```
@@ -714,6 +753,23 @@ curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
 ```
 
 预期：音频识别为“去201实验室”并返回 `need_confirm=true`；模型查询返回 DeepSeek V4 Flash。
+
+Phase 10 F2 查询验收：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"前方安全吗","source":"manual-check","generate_tts":false}'
+
+curl -X POST http://127.0.0.1:8000/api/voice/smart_command \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"天气怎么样，适合出门吗","source":"manual-check","generate_tts":false}'
+
+curl 'http://127.0.0.1:8000/api/perception/events?limit=5'
+curl 'http://127.0.0.1:8000/api/perception/video_health'
+```
+
+预期：查询类响应 `mission_candidate=null`；前方状态会引用当前视觉对象或最近视觉事件；天气回复包含实时温湿度、降雨概率和出行建议；视频健康状态不暴露推流密钥。
 
 ### 视频
 

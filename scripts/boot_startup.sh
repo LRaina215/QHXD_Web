@@ -25,6 +25,9 @@ amixer -c 2 sset 'Output 1' 90% >/dev/null 2>&1 || true
 amixer -c 2 sset 'Output 2' 90% >/dev/null 2>&1 || true
 echo "Audio initialized."
 
+# Fix routing: force gateway through WiFi when eth1 (radar) is on same subnet
+sudo ip route add 192.168.1.1/32 dev wlan0 2>/dev/null || true
+
 # Step 2: Wait for backend
 echo "[2/5] Waiting for backend..."
 for i in $(seq 1 30); do

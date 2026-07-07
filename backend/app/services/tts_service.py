@@ -53,6 +53,8 @@ _MIMO_TTS_SYSTEM_PROMPT = (
 class TTSService:
     def __init__(self) -> None:
         self._latest: TTSStatus | None = None
+        self._recent_event_keys: dict[str, datetime] = {}
+        self._last_normal_at: datetime | None = None
 
     # ------------------------------------------------------------------
     # public API
@@ -65,6 +67,46 @@ class TTSService:
         if backend == "local":
             return self._speak_online(text)
         return self._speak_mock(text)
+
+    def speak_with_policy(
+        self,
+        text: str,
+        *,
+        event_key: str | None = None,
+        priority: str = "normal",
+    ) -> TTSStatus:
+        now = datetime.now(timezone.utc)
+        self._prune_recent_events(now)
+        if event_key and event_key in self._recent_event_keys:
+            status = TTSStatus(
+                backend=self._backend(),
+                status="skipped",
+                text=text,
+                detail="TTS 事件已播报过，已按去重策略跳过。",
+                updated_at=now,
+            )
+            self._latest = status
+            return status
+
+        if priority != "critical" and self._last_normal_at is not None:
+            elapsed = (now - self._last_normal_at).total_seconds()
+            if elapsed < self._normal_cooldown_seconds():
+                status = TTSStatus(
+                    backend=self._backend(),
+                    status="skipped",
+                    text=text,
+                    detail=f"TTS 普通播报冷却中，{elapsed:.1f}s 内重复内容已跳过。",
+                    updated_at=now,
+                )
+                self._latest = status
+                return status
+
+        status = self.speak(text)
+        if event_key and status.status in {"generated", "failed"}:
+            self._recent_event_keys[event_key] = now
+        if priority != "critical" and status.status in {"generated", "failed"}:
+            self._last_normal_at = now
+        return status
 
     def latest(self) -> TTSStatus | None:
         return self._latest
@@ -231,6 +273,29 @@ class TTSService:
             return float(os.getenv("TTS_API_TIMEOUT", "15"))
         except ValueError:
             return 15.0
+
+    def _prune_recent_events(self, now: datetime) -> None:
+        max_age = self._event_dedup_seconds()
+        stale = [
+            key for key, timestamp in self._recent_event_keys.items()
+            if (now - timestamp).total_seconds() > max_age
+        ]
+        for key in stale:
+            self._recent_event_keys.pop(key, None)
+
+    @staticmethod
+    def _event_dedup_seconds() -> float:
+        try:
+            return max(10.0, float(os.getenv("TTS_EVENT_DEDUP_SECONDS", "3600")))
+        except ValueError:
+            return 3600.0
+
+    @staticmethod
+    def _normal_cooldown_seconds() -> float:
+        try:
+            return max(0.0, float(os.getenv("TTS_NORMAL_COOLDOWN_SECONDS", "1.5")))
+        except ValueError:
+            return 1.5
 
 
 tts_service = TTSService()
