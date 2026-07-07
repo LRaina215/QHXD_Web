@@ -306,6 +306,7 @@ private:
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, timeout_ms_);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms_);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "127.0.0.1,localhost,::1");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendResponse);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 

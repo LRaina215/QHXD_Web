@@ -111,6 +111,20 @@ type AlertsResponse = {
   data: AlertEvent[]
 }
 
+type WaypointDefinition = {
+  waypoint_id: string
+  name: string
+  map_id: string
+  group: string
+  enabled: boolean
+  configured: boolean
+}
+
+type WaypointsResponse = {
+  success: boolean
+  data: WaypointDefinition[]
+}
+
 type MissionActionResponse = {
   success: boolean
   data: {
@@ -280,7 +294,8 @@ type DetectionEventItem = DetectionStatus['events'][number] & {
 const state = ref<RobotState | null>(null)
 const alerts = ref<AlertEvent[]>([])
 const imu = ref<ImuEnvelope | null>(null)
-const waypointId = ref('mock-waypoint')
+const waypointId = ref('')
+const waypoints = ref<WaypointDefinition[]>([])
 const textCommand = ref('去一号点')
 const voiceResult = ref<VoiceCommandResponse['data'] | null>(null)
 const voiceRecordResult = ref<VoiceRecordCommandResult | null>(null)
@@ -956,7 +971,7 @@ onMounted(async () => {
   mobileLayoutQuery.addEventListener('change', handleMobileLayoutChange)
   updateClock()
   clockTimer = window.setInterval(updateClock, 1000)
-  await Promise.all([loadState(), loadAlerts(), loadImu()])
+  await Promise.all([loadState(), loadAlerts(), loadImu(), loadWaypoints()])
   connectWebSocket()
   connectImuWebSocket()
   connectNavigationWebSocket()
@@ -1032,6 +1047,22 @@ async function loadAlerts() {
     alerts.value = payload.data
   } catch {
     alerts.value = []
+  }
+}
+
+async function loadWaypoints() {
+  try {
+    const response = await fetch(apiUrl('/api/waypoints'))
+    if (!response.ok) {
+      throw new Error('点位接口不可用')
+    }
+    const payload = (await response.json()) as WaypointsResponse
+    waypoints.value = payload.data.filter((item) => item.enabled)
+    if (!waypointId.value && waypoints.value.length > 0) {
+      waypointId.value = waypoints.value[0].waypoint_id
+    }
+  } catch {
+    waypoints.value = []
   }
 }
 
@@ -1185,7 +1216,7 @@ async function sendMission(
     actionMessage.value = payload.data.detail || successText
     await Promise.all([loadState(), loadAlerts()])
   } catch (error) {
-    actionMessage.value = "error instanceof Error ? error.message : '命令发送失败'"
+    actionMessage.value = error instanceof Error ? error.message : '命令发送失败'
   } finally {
     isSending.value = false
   }
@@ -1801,8 +1832,13 @@ function saveApiToken() {
 
           <div class="mission-form-row">
             <label class="field inline-field">
-              <span>目标点 ID</span>
-              <input v-model="waypointId" type="text" placeholder="例如 wp_201" />
+              <span>目标点</span>
+              <select v-model="waypointId" aria-label="导航目标点">
+                <option disabled value="">请选择目标点</option>
+                <option v-for="waypoint in waypoints" :key="waypoint.waypoint_id" :value="waypoint.waypoint_id">
+                  {{ waypoint.name }} · {{ waypoint.waypoint_id }}{{ waypoint.configured ? '' : '（待配置坐标）' }}
+                </option>
+              </select>
             </label>
 
             <div class="button-row mission-actions">
@@ -1828,6 +1864,14 @@ function saveApiToken() {
                 @click="sendMission('/api/mission/resume', { source: 'web', requested_by: 'dashboard' }, '已发送恢复命令')"
               >
                 恢复
+              </button>
+              <button
+                :disabled="isSending"
+                class="danger"
+                type="button"
+                @click="sendMission('/api/mission/cancel', { source: 'web', requested_by: 'dashboard' }, '已发送取消命令')"
+              >
+                取消
               </button>
               <button
                 :disabled="isSending"

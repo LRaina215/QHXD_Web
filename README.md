@@ -8,9 +8,10 @@ QHXD 是琼海芯动车载机器人的 RK3588 中台工程。当前已打通公�
 
 - 公网前端、Cloud Gateway 与 RK3588 backend 稳定连通，公网 API/WS 地址保持不变。
 - C 板通信正式使用 `standard_robot_pp_ros2`，可接收 IMU/底盘数据并下发 `/cmd_vel`。
-- `/serial/imu_backend` 20 Hz 镜像与 C++ backend bridge 已修复，`/api/imu/latest` 实测返回 `source=rk3588_cboard_ros2`。
+- `/serial/imu_backend` 20 Hz 镜像与 C++ backend bridge 已修复；libcurl 对本机 backend 明确绕过系统 HTTP 代理，`/api/imu/latest` 实测返回 `source=rk3588_cboard_ros2`。
 - 导航正式使用 MID360 + Point-LIO 提供 `odom -> base_link`，不再使用 C 板 odom 或上位机速度积分作为导航前端里程计。
 - 2D 建图、地图保存、AMCL/Nav2 链路、全向 PID Pursuit 平移控制和上位机旋转指令已打通。
+- Phase 10 F1 已加入独立 `qhxd-nav-mission.service`、Nav2 Action 任务状态回写、pause/resume/cancel、巡检路线和任务事件；点位真实坐标尚待现场填写，未配置时会安全拒绝 Goal。
 - 剩余导航收尾项是 Nav2 目标点旋转验收、动态障碍实机避障与安全停车测试；它们不阻塞其他业务模块开发。
 
 ## 快捷启动
@@ -44,13 +45,14 @@ Point-LIO interfaces 重复发布 TF。禁用 launch respawn 可避免节点退�
 ```bash
 ./scripts/status_public_robot.sh
 systemctl is-enabled qhxd-backend qhxd-boot
-systemctl is-active qhxd-backend qhxd-boot
+systemctl is-active qhxd-backend qhxd-boot qhxd-nav-mission
 ```
 
 常用管理命令：
 
 ```bash
 sudo systemctl restart qhxd-backend
+sudo systemctl restart qhxd-nav-mission
 sudo systemctl restart qhxd-boot
 sudo systemctl status qhxd-backend qhxd-boot
 sudo journalctl -u qhxd-backend -f
@@ -118,6 +120,10 @@ PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=usb ./scripts/start_public_r
 # 导航 Web 可视化桥（需要 ROS 2 /map 与 map -> base_link TF）
 ./scripts/start_navigation_web_bridge.sh
 ./scripts/stop_navigation_web_bridge.sh
+
+# Nav2 业务任务执行器（只监听 loopback :9101，不会自行发送 Goal）
+./scripts/start_nav2_mission_executor.sh
+./scripts/stop_nav2_mission_executor.sh
 ```
 
 `start_cboard_comm.sh` 默认启动 Point-LIO 专用通信配置。需要临时覆盖时，可在
@@ -414,6 +420,60 @@ QHXD_VIDEO_STREAM_URL='rtmp://<cloud-tailscale-ip>:1935/robot/front?user=<publis
 
 ## ROS 2 导航与 C 板
 
+### Phase 10 F1 Mission -> Nav2
+
+公网与本地继续使用原有 `/api/mission/*`。Real 模式下命令不再转发给历史 NUC，
+而是进入独立 `qhxd-nav-mission.service`，由它调用 Nav2 `NavigateToPose`：
+
+```text
+Web / 小程序 / 语音确认
+-> FastAPI MissionGateway（模式、急停、故障、地图、定位与点位准入）
+-> 127.0.0.1:9101 Nav2 Mission Executor
+-> NavigateToPose
+-> /api/internal/mission/update
+-> task_status + task_events + /ws/state
+```
+
+Executor 空闲时不会发送 Goal；实测稳态约 `0~2%` 单核 CPU。查看状态：
+
+```bash
+systemctl status qhxd-nav-mission
+curl http://127.0.0.1:9101/health
+curl http://127.0.0.1:8000/api/tasks/events
+```
+
+点位配置位于 `backend/app/config/waypoints.json`。当前四个点位的 `pose` 故意保持
+`null`，因为尚未取得现场真实地图坐标；不得使用 `(0,0,0)` 代替：
+
+```json
+{
+  "waypoint_id": "wp_001",
+  "map_id": "sentinel_map",
+  "pose": {"x": 1.25, "y": -0.80, "yaw": 0.0},
+  "enabled": true
+}
+```
+
+填写 `wp_001/wp_002/wp_201/home` 后检查并重启 Executor：
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/robomaster/QHXD/install/setup.bash
+source /home/robomaster/livox_ws/install/setup.bash
+python3 scripts/nav2_mission_executor.py --check-config
+sudo systemctl restart qhxd-nav-mission
+```
+
+巡检路线配置在 `backend/app/config/patrol_routes.json`。`pause` 的语义是取消当前
+Nav2 Goal 但保留任务上下文；`resume` 会重新通过准入门并发送原目标；`cancel`
+会清除恢复资格。新任务不会静默抢占现有活动任务。
+
+Mission API 在命令成功进入 ROS Action 发送队列后立即返回
+`accepted=true` 和 `state=pending`；Nav2 后续的 accepted/rejected/feedback/result 通过
+`task_status` 和 `task_events` 异步收敛，避免网页超时后实际 Goal 仍被执行。
+准入门优先使用真实设备状态；当历史 NUC 状态字段为离线时，使用现有
+`ROS2_IMU_HEARTBEAT_FILE` 判断 C 板链路，默认最大年龄为 3 秒，不新增轮询进程。
+
 当前正式包为 `standard_robot_pp_ros2`：
 
 - 打开 `/dev/ttyCBoard`（默认 115200）。
@@ -440,7 +500,7 @@ ros2 topic echo /serial/robot_motion --once
 curl http://127.0.0.1:8000/api/imu/latest
 ```
 
-IMU 后端桥接默认使用 C++ `rclcpp + libcurl`，将 `/serial/imu_backend` 写入现有 `/api/internal/nuc/imu`，不改前后端接口。空闲或 20Hz 输入下实测约 2% CPU；旧 Python bridge 保留作为回退。
+IMU 后端桥接默认使用 C++ `rclcpp + libcurl`，将 `/serial/imu_backend` 写入现有 `/api/internal/nuc/imu`，不改前后端接口。本机 `127.0.0.1/localhost/::1` 请求强制不经过 `http_proxy`。空闲或 20Hz 输入下实测约 2% CPU；旧 Python bridge 保留作为回退。
 
 ```bash
 # 立即切换，不重启 C 板串口节点
@@ -527,6 +587,9 @@ GET /api/state/latest
 GET /api/alerts
 GET /api/commands/logs
 GET /api/tasks/current
+GET /api/tasks/events
+GET /api/waypoints
+GET /api/waypoints/{waypoint_id}
 GET /api/imu/latest
 GET /api/external/weather/latest
 GET /api/perception/latest_frame
@@ -558,6 +621,7 @@ POST /api/mission/start_patrol
 POST /api/mission/pause
 POST /api/mission/resume
 POST /api/mission/return_home
+POST /api/mission/cancel
 ```
 
 内部状态：

@@ -20,6 +20,13 @@ else
   echo "systemd backend: not installed"
 fi
 
+if systemctl list-unit-files qhxd-nav-mission.service >/dev/null 2>&1; then
+  echo "systemd Nav2 mission executor: $(systemctl is-active qhxd-nav-mission.service 2>/dev/null || true)"
+  echo "Nav2 mission executor enabled: $(systemctl is-enabled qhxd-nav-mission.service 2>/dev/null || true)"
+else
+  echo "systemd Nav2 mission executor: not installed"
+fi
+
 if is_running "$(pid_file backend)"; then
   echo "PID debug backend: running pid=$(cat "$(pid_file backend)") log=$(log_file backend)"
 else
@@ -32,6 +39,11 @@ if command -v curl >/dev/null 2>&1; then
     echo "local backend /health: OK"
   else
     echo "local backend /health: unavailable"
+  fi
+  if curl --noproxy '*' -fsS "http://127.0.0.1:${NAV_MISSION_EXECUTOR_PORT:-9101}/health" >/dev/null; then
+    echo "Nav2 mission executor /health: OK"
+  else
+    echo "Nav2 mission executor /health: unavailable"
   fi
 
   if curl -fsS --max-time 8 "${PUBLIC_API_HEALTH_URL}" >/dev/null 2>&1; then

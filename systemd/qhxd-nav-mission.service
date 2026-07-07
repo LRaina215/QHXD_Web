@@ -1,0 +1,19 @@
+[Unit]
+Description=QHXD Nav2 Mission Executor
+Wants=qhxd-backend.service
+After=qhxd-backend.service
+
+[Service]
+Type=simple
+User=robomaster
+Group=robomaster
+WorkingDirectory=/home/robomaster/QHXD
+ExecStart=/home/robomaster/QHXD/scripts/run_nav2_mission_executor.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillSignal=SIGINT
+SyslogIdentifier=qhxd-nav-mission
+
+[Install]
+WantedBy=multi-user.target

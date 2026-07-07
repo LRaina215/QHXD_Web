@@ -80,6 +80,8 @@ ALLOWED_PATH_PREFIXES = (
     "/api/alerts",
     "/api/commands/logs",
     "/api/tasks/current",
+    "/api/tasks/events",
+    "/api/waypoints",
     "/api/imu/latest",
     "/api/perception/latest_frame",
     "/api/perception/frame_stream",

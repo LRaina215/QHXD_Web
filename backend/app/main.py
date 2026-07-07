@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 from app.schemas import (
     AlertsResponse,
+    CancelMissionRequest,
     CommandLogsResponse,
     CurrentTaskResponse,
     ExternalWeatherLatestResponse,
@@ -21,6 +22,8 @@ from app.schemas import (
     ImuLatestResponse,
     MissionActionResponse,
     MissionActionResult,
+    MissionExecutorUpdateRequest,
+    MissionExecutorUpdateResponse,
     ModeSwitchRequest,
     ModeSwitchResponse,
     NavigationLatestResponse,
@@ -38,6 +41,7 @@ from app.schemas import (
     PerceptionDetectionStatusResponse,
     PerceptionDetectionStatusResult,
     ResumeMissionRequest,
+    RobotPose,
     ReturnHomeRequest,
     SmartCommandRequest,
     SmartCommandResponse,
@@ -47,6 +51,7 @@ from app.schemas import (
     StartPatrolRequest,
     StateLatestResponse,
     TTSLatestResponse,
+    TaskEventsResponse,
     VoiceAudioCommandResponse,
     VoiceAudioCommandResult,
     VoiceCommandResponse,
@@ -56,11 +61,14 @@ from app.schemas import (
     VoiceRecordCommandResponse,
     VoiceRecordCommandResult,
     VoiceTextCommandRequest,
+    WaypointResponse,
+    WaypointsResponse,
 )
 from app.services.asr_service import ASRResult, asr_service
 from app.services.audio_recorder import audio_recorder
 from app.services.imu_store import imu_store
 from app.services.mission_gateway import mission_gateway
+from app.services.mission_update_service import mission_update_service
 from app.services.mode_manager import mode_manager
 from app.services.navigation_store import navigation_store
 from app.services.mock_state import mock_state_service
@@ -71,6 +79,7 @@ from app.services.state_store import state_store
 from app.services.tts_service import tts_service
 from app.services.voice_entry import voice_entry_service
 from app.services.weather_provider import weather_provider
+from app.services.waypoint_registry import waypoint_registry
 from app.services.ws_manager import ws_manager
 
 
@@ -89,6 +98,76 @@ async def _real_health_loop() -> None:
         if state is not None:
             await ws_manager.broadcast_state(state)
         await asyncio.sleep(1)
+
+
+async def _speak_mission_event(event_type: str, detail: str) -> None:
+    if os.getenv("MISSION_EVENT_TTS_ENABLED", "false").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+    if event_type not in {"started", "paused", "resumed", "arrived", "completed", "cancelled", "failed"}:
+        return
+    try:
+        await asyncio.to_thread(tts_service.speak, detail)
+    except Exception:
+        return
+
+
+def _nav_state_for_main_state(nav_state: str | None) -> str:
+    value = (nav_state or "").strip().lower()
+    if value in {"running", "navigating", "active"}:
+        return "running"
+    if value in {"paused", "suspended"}:
+        return "paused"
+    if value in {"completed", "succeeded", "success"}:
+        return "completed"
+    if value in {"failed", "aborted", "error"}:
+        return "failed"
+    if value in {"offline", "lost", "waiting"}:
+        return "offline"
+    return "idle"
+
+
+def _publish_navigation_main_state(snapshot: NavigationSnapshot):
+    if state_store.get_system_mode().mode != "real" or snapshot.pose is None:
+        return None
+
+    latest = state_store.get_latest_state()
+    transient_faults = {
+        None,
+        "waiting-for-real-state",
+        "real-state-timeout",
+        "real-command-link-unreachable",
+        "nuc-state-timeout",
+        "nuc-bridge-unreachable",
+    }
+    fault_code = latest.device_status.fault_code
+    if fault_code in transient_faults:
+        fault_code = None
+
+    next_state = latest.model_copy(
+        update={
+            "robot_pose": RobotPose(
+                x=snapshot.pose.x,
+                y=snapshot.pose.y,
+                yaw=snapshot.pose.yaw,
+                frame_id=snapshot.frame_id,
+                timestamp=snapshot.timestamp,
+            ),
+            "nav_status": latest.nav_status.model_copy(
+                update={
+                    "state": _nav_state_for_main_state(snapshot.nav_state),
+                    "remaining_distance": snapshot.remaining_distance,
+                }
+            ),
+            "device_status": latest.device_status.model_copy(
+                update={
+                    "online": True,
+                    "fault_code": fault_code,
+                }
+            ),
+            "updated_at": datetime.now(timezone.utc),
+        }
+    )
+    return state_store.publish_real_state(next_state)
 
 
 @asynccontextmanager
@@ -514,6 +593,24 @@ async def get_current_task() -> CurrentTaskResponse:
     return CurrentTaskResponse(data=state_store.get_current_task())
 
 
+@app.get("/api/tasks/events", response_model=TaskEventsResponse)
+async def get_task_events(limit: int = 50, task_id: str | None = None) -> TaskEventsResponse:
+    return TaskEventsResponse(data=persistence.list_task_events(limit=limit, task_id=task_id))
+
+
+@app.get("/api/waypoints", response_model=WaypointsResponse)
+async def get_waypoints() -> WaypointsResponse:
+    return WaypointsResponse(data=waypoint_registry.list())
+
+
+@app.get("/api/waypoints/{waypoint_id}", response_model=WaypointResponse)
+async def get_waypoint(waypoint_id: str) -> WaypointResponse:
+    waypoint = waypoint_registry.get(waypoint_id)
+    if waypoint is None:
+        raise HTTPException(status_code=404, detail="Waypoint not found.")
+    return WaypointResponse(data=waypoint)
+
+
 @app.get("/api/imu/latest", response_model=ImuLatestResponse)
 async def get_latest_imu() -> ImuLatestResponse:
     return ImuLatestResponse(data=imu_store.get_latest())
@@ -810,6 +907,24 @@ async def return_home(request: ReturnHomeRequest) -> MissionActionResponse:
     return MissionActionResponse(data=result)
 
 
+@app.post("/api/mission/cancel", response_model=MissionActionResponse)
+async def cancel_mission(request: CancelMissionRequest) -> MissionActionResponse:
+    result, state = mission_gateway.cancel(request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    return MissionActionResponse(data=result)
+
+
+@app.post("/api/internal/mission/update", response_model=MissionExecutorUpdateResponse)
+async def ingest_mission_update(request: MissionExecutorUpdateRequest) -> MissionExecutorUpdateResponse:
+    result, state = mission_update_service.ingest(request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    if result.accepted and not result.duplicate:
+        asyncio.create_task(_speak_mission_event(request.event.event_type, request.event.detail))
+    return MissionExecutorUpdateResponse(data=result)
+
+
 @app.post("/api/system/mode/switch", response_model=ModeSwitchResponse)
 async def switch_system_mode(request: ModeSwitchRequest) -> ModeSwitchResponse:
     response = ModeSwitchResponse(data=mock_state_service.switch_system_mode(request))
@@ -874,10 +989,13 @@ async def ingest_navigation_map(request: NavigationMapUpdateRequest) -> Navigati
 async def ingest_navigation_state(request: NavigationSnapshot) -> NavigationUpdateResponse:
     snapshot = navigation_store.update_snapshot(request)
     await ws_manager.broadcast_navigation(snapshot)
+    state_update = _publish_navigation_main_state(snapshot)
+    if state_update is not None:
+        await ws_manager.broadcast_state(mode_manager.record_real_state(state_update))
     return NavigationUpdateResponse(
         data=NavigationUpdateResult(
             updated_at=datetime.now(timezone.utc),
-            detail="Navigation snapshot cached and broadcast.",
+            detail="Navigation snapshot cached, broadcast, and reflected in main state.",
         )
     )
 

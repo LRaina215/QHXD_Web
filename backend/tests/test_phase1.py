@@ -50,17 +50,17 @@ from app.services.voice.llm_client import LLMClientResponse
 from app.services.voice import llm_intent_parser as llm_intent_parser_module
 
 
-class _FakeNucMissionServer:
+class _FakeMissionExecutorServer:
     def __init__(self) -> None:
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._build_handler())
         self._server.requests = []
         self._server.current_goal = None
         self._server.task_status = {
-            "task_id": "nuc-task-idle",
+            "task_id": "nav2-task-idle",
             "task_type": "placeholder",
             "state": "idle",
             "progress": 0,
-            "source": "nuc",
+            "source": "nav2_mission_executor",
         }
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
@@ -105,37 +105,37 @@ class _FakeNucMissionServer:
                 if command == "go_to_waypoint":
                     current_goal = command_payload["waypoint_id"]
                     task_status = {
-                        "task_id": "nuc-task-go-to-waypoint",
+                        "task_id": "nav2-task-go-to-waypoint",
                         "task_type": "go_to_waypoint",
                         "state": "running",
                         "progress": 10,
-                        "source": "nuc",
+                        "source": "nav2_mission_executor",
                     }
                     nav_state = "running"
                 elif command == "start_patrol":
                     current_goal = command_payload["patrol_id"]
                     task_status = {
-                        "task_id": "nuc-task-start-patrol",
+                        "task_id": "nav2-task-start-patrol",
                         "task_type": "start_patrol",
                         "state": "running",
                         "progress": 5,
-                        "source": "nuc",
+                        "source": "nav2_mission_executor",
                     }
                     nav_state = "running"
                 elif command == "pause_task":
-                    task_status.update({"state": "paused", "source": "nuc"})
+                    task_status.update({"state": "paused", "source": "nav2_mission_executor"})
                     nav_state = "paused"
                 elif command == "resume_task":
-                    task_status.update({"state": "running", "source": "nuc"})
+                    task_status.update({"state": "running", "source": "nav2_mission_executor"})
                     nav_state = "running"
                 elif command == "return_home":
                     current_goal = "home"
                     task_status = {
-                        "task_id": "nuc-task-return-home",
+                        "task_id": "nav2-task-return-home",
                         "task_type": "return_home",
                         "state": "running",
                         "progress": 15,
-                        "source": "nuc",
+                        "source": "nav2_mission_executor",
                     }
                     nav_state = "running"
                 else:
@@ -218,9 +218,11 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self._temp_dir = tempfile.TemporaryDirectory()
         self._original_db_path = persistence._db_path
         self._original_service = main_module.mock_state_service
-        self._original_nuc_base_url = os.environ.get("NUC_BASE_URL")
-        self._original_nuc_mission_path = os.environ.get("NUC_MISSION_PATH")
-        self._original_nuc_timeout = os.environ.get("NUC_TIMEOUT_SECONDS")
+        self._original_nav_mission_base_url = os.environ.get("NAV_MISSION_EXECUTOR_BASE_URL")
+        self._original_nav_mission_path = os.environ.get("NAV_MISSION_EXECUTOR_PATH")
+        self._original_nav_mission_timeout = os.environ.get("NAV_MISSION_EXECUTOR_TIMEOUT_SECONDS")
+        self._original_nav_mission_preflight = os.environ.get("NAV_MISSION_PREFLIGHT_ENABLED")
+        os.environ["NAV_MISSION_PREFLIGHT_ENABLED"] = "false"
         self._original_real_stale_after = os.environ.get("REAL_STATE_STALE_AFTER_SECONDS")
         self._original_asr_backend = os.environ.get("ASR_BACKEND")
         self._original_voice_mock_text = os.environ.get("VOICE_MOCK_RECOGNIZED_TEXT")
@@ -254,9 +256,10 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         main_module.mock_state_service = self._original_service
         persistence._db_path = self._original_db_path
-        self._restore_env("NUC_BASE_URL", self._original_nuc_base_url)
-        self._restore_env("NUC_MISSION_PATH", self._original_nuc_mission_path)
-        self._restore_env("NUC_TIMEOUT_SECONDS", self._original_nuc_timeout)
+        self._restore_env("NAV_MISSION_EXECUTOR_BASE_URL", self._original_nav_mission_base_url)
+        self._restore_env("NAV_MISSION_EXECUTOR_PATH", self._original_nav_mission_path)
+        self._restore_env("NAV_MISSION_EXECUTOR_TIMEOUT_SECONDS", self._original_nav_mission_timeout)
+        self._restore_env("NAV_MISSION_PREFLIGHT_ENABLED", self._original_nav_mission_preflight)
         self._restore_env("REAL_STATE_STALE_AFTER_SECONDS", self._original_real_stale_after)
         self._restore_env("ASR_BACKEND", self._original_asr_backend)
         self._restore_env("VOICE_MOCK_RECOGNIZED_TEXT", self._original_voice_mock_text)
@@ -1014,10 +1017,11 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(latest_imu.data)
 
-    async def test_real_mode_forwards_three_commands_to_nuc_and_persists_logs(self) -> None:
-        server = _FakeNucMissionServer()
+    async def test_real_mode_forwards_three_commands_to_nav2_executor_and_persists_logs(self) -> None:
+        server = _FakeMissionExecutorServer()
         server.start()
-        os.environ["NUC_BASE_URL"] = server.base_url
+        os.environ["NAV_MISSION_EXECUTOR_BASE_URL"] = server.base_url
+        os.environ["NAV_MISSION_EXECUTOR_PATH"] = "/api/internal/rk3588/mission"
 
         try:
             await main_module.switch_system_mode(
@@ -1054,12 +1058,12 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(logs[0].command, "return_home")
         self.assertEqual(logs[1].payload["forwarded_command"], "pause_task")
         self.assertEqual(latest_state.system_mode.mode, "real")
-        self.assertEqual(latest_state.task_status.source, "nuc")
+        self.assertEqual(latest_state.task_status.source, "nav2_mission_executor")
         self.assertEqual(latest_state.nav_status.current_goal, "home")
 
     async def test_real_mode_returns_structured_failure_when_nuc_unreachable(self) -> None:
-        os.environ["NUC_BASE_URL"] = "http://127.0.0.1:1"
-        os.environ["NUC_TIMEOUT_SECONDS"] = "0.2"
+        os.environ["NAV_MISSION_EXECUTOR_BASE_URL"] = "http://127.0.0.1:1"
+        os.environ["NAV_MISSION_EXECUTOR_TIMEOUT_SECONDS"] = "0.2"
 
         await main_module.switch_system_mode(
             ModeSwitchRequest(mode="real", source="test", requested_by="unittest")
@@ -1071,7 +1075,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(response.success)
         self.assertFalse(response.data.accepted)
-        self.assertIn("真实任务命令接口", response.data.detail)
+        self.assertIn("Nav2 任务执行器", response.data.detail)
         self.assertEqual(len(logs), 1)
         self.assertFalse(logs[0].accepted)
         self.assertEqual(logs[0].command, "resume")

@@ -12,7 +12,9 @@ TaskTypeValue = Literal["placeholder", "go_to_waypoint", "start_patrol", "return
 TaskStateValue = Literal["idle", "pending", "running", "paused", "completed", "failed", "cancelled"]
 SensorStatusValue = Literal["mock", "nominal", "warning", "fault", "offline"]
 AlertLevelValue = Literal["info", "warning", "error", "critical"]
-MissionCommandValue = Literal["go_to_waypoint", "start_patrol", "pause_task", "resume_task", "return_home"]
+MissionCommandValue = Literal[
+    "go_to_waypoint", "start_patrol", "pause_task", "resume_task", "cancel_task", "return_home"
+]
 VoiceIntentValue = Literal[
     "go_to_waypoint",
     "start_patrol",
@@ -154,6 +156,12 @@ class TaskStatus(ContractModel):
     state: TaskStateValue = Field(default="idle", description="任务状态")
     progress: int = Field(default=0, ge=0, le=100, description="任务进度，百分比")
     source: str = Field(default="web", description="任务来源")
+    phase: str | None = Field(default=None, description="任务当前阶段")
+    current_waypoint_id: str | None = Field(default=None, description="当前点位 ID")
+    waypoint_index: int | None = Field(default=None, ge=0, description="当前巡检点序号，从 0 开始")
+    waypoint_count: int | None = Field(default=None, ge=0, description="巡检点总数")
+    detail: str | None = Field(default=None, description="最近任务状态说明")
+    updated_at: datetime | None = Field(default=None, description="任务状态更新时间")
 
 
 class DeviceStatus(ContractModel):
@@ -294,6 +302,55 @@ class ReturnHomeRequest(MissionRequestBase):
     pass
 
 
+class CancelMissionRequest(MissionRequestBase):
+    pass
+
+
+class WaypointPose(ContractModel):
+    x: float
+    y: float
+    yaw: float = 0.0
+
+
+class WaypointDefinition(ContractModel):
+    waypoint_id: str
+    name: str
+    aliases: list[str] = Field(default_factory=list)
+    map_id: str = Field(default="sentinel_map")
+    pose: WaypointPose | None = None
+    group: str = Field(default="navigation")
+    enabled: bool = True
+    configured: bool = False
+
+
+class WaypointsResponse(ContractModel):
+    success: bool = True
+    data: list[WaypointDefinition]
+
+
+class WaypointResponse(ContractModel):
+    success: bool = True
+    data: WaypointDefinition
+
+
+class TaskEvent(ContractModel):
+    event_id: str
+    task_id: str
+    event_type: str
+    task_state: TaskStateValue
+    detail: str
+    source: str = Field(default="nav2_mission_executor")
+    waypoint_id: str | None = None
+    remaining_distance: float | None = Field(default=None, ge=0.0)
+    progress: int = Field(default=0, ge=0, le=100)
+    timestamp: datetime
+
+
+class TaskEventsResponse(ContractModel):
+    success: bool = True
+    data: list[TaskEvent]
+
+
 class MissionActionResult(ContractModel):
     accepted: bool = Field(default=True)
     command: str = Field(description="命令名称")
@@ -305,6 +362,25 @@ class MissionActionResult(ContractModel):
 class MissionActionResponse(ContractModel):
     success: bool = Field(default=True)
     data: MissionActionResult
+
+
+class MissionExecutorUpdateRequest(ContractModel):
+    event: TaskEvent
+    task_status: TaskStatus
+    current_goal: str | None = None
+    nav_state: NavStateValue = "idle"
+
+
+class MissionExecutorUpdateResult(ContractModel):
+    accepted: bool = True
+    state_updated: bool = True
+    duplicate: bool = False
+    detail: str
+
+
+class MissionExecutorUpdateResponse(ContractModel):
+    success: bool = True
+    data: MissionExecutorUpdateResult
 
 
 class VoiceTextCommandRequest(ContractModel):

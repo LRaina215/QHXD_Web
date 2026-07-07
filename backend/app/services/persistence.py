@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from app.schemas import AlertEvent, CommandLogEntry, MissionActionResult, RobotState, TaskStatus
+from app.schemas import AlertEvent, CommandLogEntry, MissionActionResult, RobotState, TaskEvent, TaskStatus
 
 
 class SqlitePersistence:
@@ -57,7 +57,91 @@ class SqlitePersistence:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_events (
+                    event_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    task_state TEXT NOT NULL,
+                    detail TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    waypoint_id TEXT,
+                    remaining_distance REAL,
+                    progress INTEGER NOT NULL,
+                    timestamp TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_events_task_time ON task_events(task_id, timestamp DESC)"
+            )
             connection.commit()
+
+    def save_task_event(self, event: TaskEvent) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO task_events (
+                    event_id, task_id, event_type, task_state, detail, source,
+                    waypoint_id, remaining_distance, progress, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.event_id,
+                    event.task_id,
+                    event.event_type,
+                    event.task_state,
+                    event.detail,
+                    event.source,
+                    event.waypoint_id,
+                    event.remaining_distance,
+                    event.progress,
+                    event.timestamp.isoformat(),
+                ),
+            )
+            connection.execute(
+                """
+                DELETE FROM task_events
+                WHERE event_id NOT IN (
+                    SELECT event_id FROM task_events ORDER BY timestamp DESC LIMIT 1000
+                )
+                """
+            )
+            connection.commit()
+            return cursor.rowcount > 0
+
+    def list_task_events(self, limit: int = 50, task_id: str | None = None) -> list[TaskEvent]:
+        limit = max(1, min(limit, 200))
+        with self._connect() as connection:
+            if task_id:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM task_events WHERE task_id = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                    """,
+                    (task_id, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM task_events ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [
+            TaskEvent(
+                event_id=row["event_id"],
+                task_id=row["task_id"],
+                event_type=row["event_type"],
+                task_state=row["task_state"],
+                detail=row["detail"],
+                source=row["source"],
+                waypoint_id=row["waypoint_id"],
+                remaining_distance=row["remaining_distance"],
+                progress=row["progress"],
+                timestamp=datetime.fromisoformat(row["timestamp"]),
+            )
+            for row in rows
+        ]
 
     def save_command_log(
         self,

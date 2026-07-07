@@ -1,0 +1,11 @@
+[
+  {
+    "route_id": "default_patrol",
+    "name": "默认巡检路线",
+    "waypoints": ["wp_001", "wp_002", "wp_201"],
+    "stop_seconds": 3,
+    "capture_perception": true,
+    "return_home": true,
+    "enabled": true
+  }
+]

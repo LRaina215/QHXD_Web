@@ -552,6 +552,12 @@ button.warn {
   box-shadow: 0 12px 20px rgba(217, 130, 24, 0.22);
 }
 
+button.danger {
+  border-color: #9f2d2d;
+  background: #9f2d2d;
+  color: #fffdf8;
+}
+
 button.accent {
   color: #15130f;
   border-color: #f3ad44;

@@ -1,6 +1,6 @@
-import json
 from dataclasses import dataclass, field
-from pathlib import Path
+
+from app.services.waypoint_registry import waypoint_registry
 
 
 @dataclass(frozen=True)
@@ -14,10 +14,6 @@ class WaypointResolveResult:
 class WaypointResolver:
     """Resolves human waypoint aliases to stable waypoint IDs."""
 
-    def __init__(self, config_path: Path | None = None) -> None:
-        self._config_path = config_path or Path(__file__).resolve().parents[1] / "config" / "waypoints.json"
-        self._waypoints = self._load_waypoints()
-
     def resolve(self, text: str) -> tuple[str | None, str | None]:
         result = self.resolve_detail(text)
         if result.ambiguous:
@@ -25,18 +21,18 @@ class WaypointResolver:
         return result.waypoint_id, result.name
 
     def list_waypoints(self) -> list[dict[str, object]]:
-        return [dict(item) for item in self._waypoints]
+        return [item.model_dump(mode="json") for item in waypoint_registry.list()]
 
     def waypoint_exists(self, waypoint_id: str | None) -> bool:
         if waypoint_id is None:
             return False
-        return any(str(item.get("waypoint_id")) == str(waypoint_id) for item in self._waypoints)
+        return waypoint_registry.get(str(waypoint_id)) is not None
 
     def resolve_detail(self, text: str) -> WaypointResolveResult:
         normalized_text = self._normalize(text)
         candidates: list[dict[str, str | int]] = []
-        for waypoint in self._waypoints:
-            aliases = [waypoint["waypoint_id"], waypoint.get("name", ""), *waypoint.get("aliases", [])]
+        for waypoint in waypoint_registry.list():
+            aliases = [waypoint.waypoint_id, waypoint.name, *waypoint.aliases]
             best_alias = ""
             best_score = 0
             for alias in aliases:
@@ -46,8 +42,8 @@ class WaypointResolver:
                     best_score = len(normalized_alias)
             if best_score > 0:
                 candidates.append({
-                    "waypoint_id": str(waypoint["waypoint_id"]),
-                    "name": str(waypoint.get("name", "")),
+                    "waypoint_id": waypoint.waypoint_id,
+                    "name": waypoint.name,
                     "alias": best_alias,
                     "score": best_score,
                 })
@@ -72,26 +68,9 @@ class WaypointResolver:
         best = best_matches[0]
         return WaypointResolveResult(str(best["waypoint_id"]), str(best["name"]), matches=match_payload)
 
-    def _load_waypoints(self) -> list[dict[str, object]]:
-        try:
-            return json.loads(self._config_path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return [
-                {
-                    "waypoint_id": "wp_001",
-                    "name": "一号点",
-                    "aliases": ["一号点", "1号点", "一号", "201", "实验室", "送到实验室"],
-                },
-                {
-                    "waypoint_id": "home",
-                    "name": "起点",
-                    "aliases": ["起点", "home", "家"],
-                },
-            ]
-
     @staticmethod
     def _normalize(value: str) -> str:
-        return "".join(value.lower().split())
+        return waypoint_registry.normalize(value)
 
 
 waypoint_resolver = WaypointResolver()
