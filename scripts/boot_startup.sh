@@ -25,8 +25,9 @@ amixer -c 2 sset 'Output 1' 90% >/dev/null 2>&1 || true
 amixer -c 2 sset 'Output 2' 90% >/dev/null 2>&1 || true
 echo "Audio initialized."
 
-# Fix routing: force gateway through WiFi when eth1 (radar) is on same subnet
-sudo ip route add 192.168.1.1/32 dev wlan0 2>/dev/null || true
+# Fix routing when WiFi and the MID360 Ethernet link share 192.168.1.0/24.
+# The gateway should stay on WiFi, but the Livox lidar must use eth1.
+"${SCRIPT_DIR}/ensure_livox_route.sh" || true
 
 # Step 2: Wait for backend
 echo "[2/6] Waiting for backend..."
@@ -83,6 +84,7 @@ fi
 echo "[6/6] Starting navigation support..."
 
 if [[ "${QHXD_BOOT_START_NAV_FRONTEND:-true}" =~ ^(1|true|yes|on)$ ]]; then
+    "${SCRIPT_DIR}/ensure_livox_route.sh" || true
     "${SCRIPT_DIR}/start_navigation_frontend_detached.sh" || echo "Navigation front-end start failed."
 else
     echo "  Navigation front-end autostart skipped by QHXD_BOOT_START_NAV_FRONTEND=${QHXD_BOOT_START_NAV_FRONTEND:-false}."

@@ -32,6 +32,26 @@ if ! command -v tmux >/dev/null 2>&1; then
   exit 1
 fi
 
+stop_frontend_processes() {
+  local patterns=(
+    "/home/robomaster/livox_ws/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node"
+    "/home/robomaster/livox_ws/install/point_lio/lib/point_lio/pointlio_mapping"
+    "/home/robomaster/livox_ws/install/loam_interface/lib/loam_interface/loam_interface_node"
+    "/home/robomaster/livox_ws/install/sensor_scan_generation/lib/sensor_scan_generation/sensor_scan_generation_node"
+    "/opt/ros/humble/lib/pointcloud_to_laserscan/pointcloud_to_laserscan_node"
+    "/opt/ros/humble/lib/tf2_ros/static_transform_publisher .*--child-frame-id livox_frame"
+    "/opt/ros/humble/bin/ros2 launch /home/robomaster/livox_ws/launch/msg_MID360_pointlio_launch.py"
+    "/opt/ros/humble/bin/ros2 run point_lio pointlio_mapping"
+    "/opt/ros/humble/bin/ros2 launch /home/robomaster/livox_ws/launch/point_lio_interfaces.launch.py"
+    "/opt/ros/humble/bin/ros2 run pointcloud_to_laserscan pointcloud_to_laserscan_node"
+    "/opt/ros/humble/bin/ros2 run tf2_ros static_transform_publisher .*--child-frame-id livox_frame"
+  )
+  local pattern
+  for pattern in "${patterns[@]}"; do
+    pkill -f "${pattern}" 2>/dev/null || true
+  done
+}
+
 if [[ "${mode}" == "status" ]]; then
   if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
     echo "navigation front-end tmux '${SESSION}': stopped"
@@ -61,10 +81,13 @@ if [[ "${mode}" == "stop" ]]; then
   else
     echo "navigation front-end tmux '${SESSION}' already stopped"
   fi
+  stop_frontend_processes
+  echo "navigation front-end ROS 2 child processes stopped"
   exit 0
 fi
 
 if tmux has-session -t "${SESSION}" 2>/dev/null; then
+  "${SCRIPT_DIR}/ensure_livox_route.sh" || true
   echo "navigation front-end tmux '${SESSION}' already running"
   exit 0
 fi
@@ -82,8 +105,31 @@ for required in \
   fi
 done
 
+"${SCRIPT_DIR}/ensure_livox_route.sh" || true
+
 common_setup="cd ${WORKSPACE}; unset LD_LIBRARY_PATH; source /opt/ros/humble/setup.bash; source ${WORKSPACE}/install/setup.bash"
 qhxd_setup="cd ${QHXD}; unset LD_LIBRARY_PATH; source /opt/ros/humble/setup.bash; source ${QHXD}/install/setup.bash"
+ros_setup="unset LD_LIBRARY_PATH; source /opt/ros/humble/setup.bash; source ${WORKSPACE}/install/setup.bash"
+
+wait_for_topic_once() {
+  local topic="$1"
+  local label="$2"
+  local timeout_seconds="${3:-20}"
+  echo "waiting for ${label} (${topic})..."
+  if bash -lc "${ros_setup}; ROS_DISABLE_DAEMON=1 timeout ${timeout_seconds} ros2 topic echo '${topic}' --once >/dev/null 2>&1"; then
+    echo "${label} is ready."
+    return 0
+  fi
+  echo "ERROR: timed out waiting for ${label} (${topic})." >&2
+  return 1
+}
+
+send_pane_command() {
+  local pane="$1"
+  local command="$2"
+  printf -v quoted_command '%q' "${command}"
+  tmux send-keys -t "${pane}" "bash -lc ${quoted_command}" C-m
+}
 
 commands=(
   "${qhxd_setup}; if pgrep -f '^${QHXD}/install/standard_robot_pp_ros2/lib/standard_robot_pp_ros2/standard_robot_pp_ros2_node( |$)' >/dev/null; then echo 'C board communication is already running; following its log.'; echo 'Ctrl+C here stops log following only, not C board communication.'; exec tail -n 80 -F ${QHXD}/logs/standard_robot_pp_ros2.log; else echo 'Starting C board communication with Point-LIO parameters.'; exec ros2 launch standard_robot_pp_ros2 standard_robot_pp_ros2.launch.py params_file:=${QHXD}/standard_robot_pp_ros2/config/standard_robot_pp_ros2_pointlio.yaml use_respawn:=false; fi"
@@ -117,9 +163,21 @@ done
 for index in 0 1 2 3 4 5; do
   pane="${panes[${index}]}"
   tmux select-pane -t "${pane}" -T "${titles[${index}]}"
-  printf -v quoted_command '%q' "${commands[${index}]}"
-  tmux send-keys -t "${pane}" "bash -lc ${quoted_command}" C-m
 done
+
+send_pane_command "${panes[0]}" "${commands[0]}"
+send_pane_command "${panes[1]}" "${commands[1]}"
+wait_for_topic_once "/livox/lidar" "MID360 lidar" "${NAV_FRONTEND_WAIT_LIVOX_SECONDS:-25}"
+
+send_pane_command "${panes[2]}" "${commands[2]}"
+send_pane_command "${panes[3]}" "${commands[3]}"
+wait_for_topic_once "/aft_mapped_to_init" "Point-LIO odometry" "${NAV_FRONTEND_WAIT_LIO_SECONDS:-90}"
+
+send_pane_command "${panes[4]}" "${commands[4]}"
+wait_for_topic_once "/sensor_scan" "Point-LIO navigation scan cloud" "${NAV_FRONTEND_WAIT_SENSOR_SCAN_SECONDS:-45}"
+
+send_pane_command "${panes[5]}" "${commands[5]}"
+wait_for_topic_once "/scan" "LaserScan" "${NAV_FRONTEND_WAIT_SCAN_SECONDS:-35}"
 
 tmux select-layout -t "${SESSION}:frontend" tiled >/dev/null
 tmux select-pane -t "${panes[0]}"

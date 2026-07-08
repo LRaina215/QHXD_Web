@@ -13,10 +13,11 @@ QHXD 是琼海芯动车载机器人的 RK3588 中台工程。当前已打通公�
 - IMU 后端桥已切到 C++ `imu_backend_bridge_node`，`/api/imu/latest` 已实测 `source=rk3588_cboard_ros2`，Cloud Gateway 也能转发公网 IMU API。
 - 导航本体在 `/home/robomaster/livox_ws`（QHXD_NAV），不是 QHXD 主仓库的一部分。当前使用 MID360 + Point-LIO 提供 `odom -> base_link`，再接 slam_toolbox/AMCL/Nav2/Omni PID Pursuit。
 - Phase 10 F1 已接入 `qhxd-nav-mission.service`：`/api/mission/* -> FastAPI MissionGateway -> 127.0.0.1:9101 Nav2 Mission Executor -> NavigateToPose -> 状态回写`。
+- 网页端导航可视化由 QHXD 内的 `navigation_web_bridge` 只读桥接 `/map`、`map -> base_link`、`/plan`、`/local_plan` 和 `/odometry`。桥接已加入 `/map` watchdog：ROS 已有地图但后端地图缓存为空时，会自动重启一次桥接恢复网页地图。
 - 点位 `wp_001`、`wp_002`、`wp_201`、`home` 当前已经在 `backend/app/config/waypoints.json` 配置真实 pose；仍建议现场复核 yaw、通道安全和地图版本一致性。
 - Phase 10 F2 已把文本、网页麦克风和车载麦克风统一进 smart assistant；移动类任务仍需二次确认。天气、前方视觉/导航状态查询由结构化上下文和 LLM 综合回答，不直接控制底盘。
 - Hik/USB 相机、RKNN YOLO26、视觉事件持久化、视频健康接口、H.264 推流和 WebRTC/HLS/MJPEG 回退已经接入。`/api/perception/video_health` 会识别 stale PID，旧 PID 不再被误判为 YOLO 正在运行。
-- 剩余导航验收主要是 Nav2 Goal 转向/停车、动态障碍避障、急停/通信中断和连续导航压力测试；这些是实车安全验收项，不阻塞语音、视觉、天气和前端业务继续迭代。
+- 当前导航、网页桥接和任务链路已达到阶段演示预期；后续仍建议继续做动态障碍、急停/通信中断和连续导航压力测试，这些属于实车安全加固项。
 
 ## 快捷启动
 
@@ -82,6 +83,60 @@ sudo systemctl enable --now qhxd-boot.service
 `qhxd-boot` 遇到未接 C 板或相机时会记录警告后继续，不会阻止后端、语音和公网页面启动。
 Hik/USB 相机服务的 PID 会校验命令行，旧 PID 不会再阻止重新启动 YOLO。
 
+如果 WiFi 和 MID360 有线网口都在 `192.168.1.0/24`，必须保证雷达 IP 走
+`eth1`，否则 Livox 驱动会启动但 `/livox/lidar` 没有数据，表现为 RViz
+初始化位姿不收敛、`/scan` 和 costmap 不显示。`qhxd-boot` 和
+`start_navigation_frontend_detached.sh` 会自动设置：
+
+```bash
+./scripts/ensure_livox_route.sh
+```
+
+可在 `~/QHXD/.env` 覆盖：
+
+```env
+WIFI_GATEWAY_IP=192.168.1.1
+WIFI_INTERFACE=wlan0
+LIVOX_LIDAR_IP=192.168.1.3
+LIVOX_INTERFACE=eth1
+LIVOX_HOST_IP=192.168.1.50
+```
+
+检查命令：
+
+```bash
+ip route get 192.168.1.3
+ros2 topic hz /livox/lidar
+ros2 topic hz /scan
+```
+
+如果你只手动运行 `ros2 launch rk3588_navigation bringup.launch.py`，但没有先启动
+导航前置 1-6，AMCL 只能看到 map_server/Nav2，收不到雷达、Point-LIO TF 和 `/scan`，
+`2D Pose Estimate` 会表现为无法定位。正确顺序是：
+
+```bash
+cd ~/QHXD
+./scripts/start_navigation_frontend_detached.sh
+
+cd ~/livox_ws
+unset LD_LIBRARY_PATH
+source /opt/ros/humble/setup.bash
+source ~/livox_ws/install/setup.bash
+ros2 launch rk3588_navigation bringup.launch.py
+```
+
+`start_navigation_frontend_detached.sh` 会分阶段等待健康信号：
+
+```text
+MID360 -> /livox/lidar
+Point-LIO -> /aft_mapped_to_init
+interfaces -> /sensor_scan
+LaserScan -> /scan
+```
+
+如果任一阶段超时，后续阶段不会硬启动。此时先看对应 tmux 窗格和
+`ip route get 192.168.1.3`，不要直接反复启动 `bringup.launch.py`。
+
 导航开机行为由 `~/QHXD/.env` 控制：
 
 ```env
@@ -90,6 +145,11 @@ QHXD_BOOT_START_NAV_FRONTEND=true
 
 # 开机启动导航 Web 只读桥，给公网 Dashboard 的 /ws/navigation 提供数据
 QHXD_BOOT_START_NAV_WEB_BRIDGE=true
+
+# 可选：Web 桥启动后短时监控 ROS /map。
+# 若 /map 已存在但后端 /api/navigation/map/metadata 仍为空，会自动重启一次桥接。
+QHXD_NAV_WEB_BRIDGE_MAP_WATCHDOG=true
+QHXD_NAV_WEB_BRIDGE_MAP_WAIT_SECONDS=600
 
 # 默认不替用户选择建图或导航，避免 slam_toolbox 与 AMCL 同时拥有 map -> odom
 QHXD_BOOT_NAV_MODE=none
@@ -839,6 +899,28 @@ curl https://api.lingxunrobot.cn/health
 curl https://lingxunrobot.cn/api/state/latest
 ```
 
+### 导航地图与网页桥接
+
+网页导航地图依赖三层同时正常：`livox_ws` 导航/定位产生 `/map` 与 TF，`navigation_web_bridge` 上传地图和位姿，Cloud Gateway 公网反代给前端。
+
+```bash
+cd /home/robomaster/QHXD
+./scripts/start_navigation_frontend_detached.sh --status
+./scripts/status_public_robot.sh
+
+source /opt/ros/humble/setup.bash
+source /home/robomaster/livox_ws/install/setup.bash
+ros2 topic echo /map --once --field info
+ros2 run tf2_ros tf2_echo map base_link
+
+curl http://127.0.0.1:8000/api/navigation/map/metadata
+curl http://127.0.0.1:8000/api/navigation/latest
+curl https://lingxunrobot.cn/api/navigation/map/metadata
+curl https://lingxunrobot.cn/api/navigation/latest
+```
+
+预期：metadata 返回 `width/height/resolution/image_url`，latest 返回 `map_version` 与 `pose`。如果 metadata 为 404，先执行 `./scripts/start_navigation_web_bridge.sh`，脚本会启动地图 watchdog 自动恢复一次。
+
 ### 音频设备
 
 ```bash
@@ -954,6 +1036,36 @@ cd /opt/lingxun-cloud-gateway
 ### 重启后需要手动开后端吗？
 
 不需要。先查 `systemctl is-active qhxd-backend qhxd-boot`。本地 Vite 不自启也不影响公网前端。
+
+### 网页端看不到导航地图
+
+先区分是导航本体没出地图、桥接没上传，还是公网反代/前端缓存问题：
+
+```bash
+cd /home/robomaster/QHXD
+./scripts/status_public_robot.sh
+
+source /opt/ros/humble/setup.bash
+source /home/robomaster/livox_ws/install/setup.bash
+ros2 topic echo /map --once --field info
+ros2 run tf2_ros tf2_echo map base_link
+
+curl http://127.0.0.1:8000/api/navigation/map/metadata
+curl https://lingxunrobot.cn/api/navigation/map/metadata
+```
+
+- `/map` 没有输出：先启动或修复 `~/livox_ws` 的定位/导航 bringup。
+- `map -> base_link` 不存在：检查 AMCL/Point-LIO/TF 所有权，避免多个节点抢 `map -> odom` 或 `odom -> base_link`。
+- 本地 metadata 404 但 `/map` 正常：重启 QHXD 桥接。
+
+```bash
+./scripts/stop_navigation_web_bridge.sh
+./scripts/start_navigation_web_bridge.sh
+tail -n 80 logs/navigation_web_bridge.log
+tail -n 80 logs/navigation_web_bridge_map_watchdog.log
+```
+
+当前 `start_navigation_web_bridge.sh` 已带地图 watchdog；开机时如果 ROS `/map` 已存在但后端地图缓存为空，会自动重启一次桥接。若本地 metadata 正常而公网 metadata 异常，再查云端 Cloud Gateway/Nginx。
 
 ### 语音报“车载麦克风识别失败”
 
