@@ -190,5 +190,49 @@ class DeepSeekClient:
         response_model = str(raw.get("model") or config.model)
         return LLMClientResponse(success=True, content=str(content), model=response_model, raw_response=raw if config.debug_raw else None)
 
+    def chat_text(self, *, system_prompt: str, user_prompt: str, force_enable: bool | None = None) -> LLMClientResponse:
+        config = self.config(force_enable=force_enable)
+        if not config.enabled:
+            return LLMClientResponse(success=False, error="llm-disabled-or-missing-api-key", model=config.model)
+        url = f"{config.base_url}/v1/chat/completions"
+        payload = {
+            "model": config.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+        }
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {config.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=config.timeout_seconds) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")[:200]
+            return LLMClientResponse(success=False, error=f"deepseek-http-{exc.code}: {detail}", model=config.model)
+        except TimeoutError:
+            return LLMClientResponse(success=False, error="deepseek-timeout", model=config.model)
+        except (urllib.error.URLError, json.JSONDecodeError, OSError):
+            curl_response = self._chat_json_with_curl(url, payload, config)
+            if not curl_response.success:
+                return curl_response
+            raw = curl_response.raw_response or {}
+
+        try:
+            content = raw["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            return LLMClientResponse(success=False, error="deepseek-invalid-response", model=config.model, raw_response=raw)
+        response_model = str(raw.get("model") or config.model)
+        return LLMClientResponse(success=True, content=str(content), model=response_model, raw_response=raw if config.debug_raw else None)
+
 
 llm_client = DeepSeekClient()

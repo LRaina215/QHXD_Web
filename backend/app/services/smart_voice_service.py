@@ -54,7 +54,7 @@ class SmartVoiceService:
             return result, None
 
         if parsed.intent in QUERY_INTENTS:
-            data_source, reply_text = data_service.reply_for_query(parsed.intent)
+            data_source, reply_text = data_service.reply_for_query(parsed.intent, question=text)
             result = SmartCommandResult(
                 request_id=request_id,
                 recognized_text=text,

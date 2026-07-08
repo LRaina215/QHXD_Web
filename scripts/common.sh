@@ -35,7 +35,20 @@ is_running() {
   local pid
   pid="$(cat "${file}" 2>/dev/null || true)"
   [[ -n "${pid}" ]] || return 1
-  kill -0 "${pid}" 2>/dev/null
+  kill -0 "${pid}" 2>/dev/null || return 1
+  if [[ "$(basename "${file}")" == "yolo_camera.pid" ]]; then
+    local args
+    args="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
+    case "${args}" in
+      *run_yolo_camera_service.sh*camera_detect_service.py*|*camera_detect_service.py*--config*)
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  fi
+  return 0
 }
 
 

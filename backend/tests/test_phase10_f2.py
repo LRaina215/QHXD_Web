@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import app.main as main_module
+from app.services.voice import llm_client as llm_client_module
 from app.schemas import DetectionObject, DetectionStatus, PerceptionDetectionStatusRequest, SmartCommandRequest
 from app.services.mock_state import MockStateService
 from app.services.mode_manager import mode_manager
@@ -20,6 +21,9 @@ class Phase10F2Tests(unittest.IsolatedAsyncioTestCase):
         self._old_db = persistence._db_path
         self._old_tts_backend = os.environ.get("TTS_BACKEND")
         self._old_tts_cooldown = os.environ.get("TTS_NORMAL_COOLDOWN_SECONDS")
+        self._old_front_status_llm = os.environ.get("FRONT_STATUS_LLM_ENABLE")
+        self._old_front_status_fresh = os.environ.get("FRONT_STATUS_FRESH_SECONDS")
+        self._old_front_status_recent = os.environ.get("FRONT_STATUS_RECENT_SECONDS")
         persistence._db_path = Path(self._temp_dir.name) / "phase10-f2.db"
         persistence.initialize()
         service = MockStateService()
@@ -31,11 +35,17 @@ class Phase10F2Tests(unittest.IsolatedAsyncioTestCase):
         tts_service._last_normal_at = None
         os.environ["TTS_BACKEND"] = "mock"
         os.environ["TTS_NORMAL_COOLDOWN_SECONDS"] = "0"
+        os.environ["FRONT_STATUS_LLM_ENABLE"] = "false"
+        os.environ["FRONT_STATUS_FRESH_SECONDS"] = "15"
+        os.environ["FRONT_STATUS_RECENT_SECONDS"] = "60"
 
     def tearDown(self) -> None:
         persistence._db_path = self._old_db
         self._restore("TTS_BACKEND", self._old_tts_backend)
         self._restore("TTS_NORMAL_COOLDOWN_SECONDS", self._old_tts_cooldown)
+        self._restore("FRONT_STATUS_LLM_ENABLE", self._old_front_status_llm)
+        self._restore("FRONT_STATUS_FRESH_SECONDS", self._old_front_status_fresh)
+        self._restore("FRONT_STATUS_RECENT_SECONDS", self._old_front_status_recent)
         self._temp_dir.cleanup()
 
     async def test_visual_event_is_persisted_and_front_query_uses_it(self) -> None:
@@ -70,7 +80,7 @@ class Phase10F2Tests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.intent, "query_front_status")
         self.assertIsNone(result.mission_candidate)
-        self.assertIn("前方视觉", result.reply_text)
+        self.assertIn("前方检测到人员", result.reply_text)
         self.assertIn("人员", result.reply_text)
 
     async def test_visual_event_deduplicates_within_time_window(self) -> None:
@@ -106,6 +116,54 @@ class Phase10F2Tests(unittest.IsolatedAsyncioTestCase):
         second = tts_service.speak_with_policy("到达一号点", event_key="task-1:arrived:wp_001")
         self.assertEqual(first.status, "generated")
         self.assertEqual(second.status, "skipped")
+
+    async def test_front_status_uses_llm_context_without_mission(self) -> None:
+        os.environ["FRONT_STATUS_LLM_ENABLE"] = "true"
+        timestamp = datetime.now(timezone.utc)
+        await main_module.ingest_detection_status(
+            PerceptionDetectionStatusRequest(
+                detection_status=DetectionStatus(
+                    enabled=True,
+                    source="test-yolo",
+                    model_name="test.rknn",
+                    frame_id="camera_front",
+                    timestamp=timestamp,
+                    objects=[
+                        DetectionObject(class_name="person", confidence=0.9, bbox_xyxy=[0, 0, 10, 20]),
+                        DetectionObject(class_name="chair", confidence=0.7, bbox_xyxy=[20, 0, 40, 30]),
+                    ],
+                    events=[],
+                )
+            )
+        )
+
+        original_chat_text = llm_client_module.llm_client.chat_text
+        captured = {}
+
+        def fake_chat_text(**kwargs):
+            captured.update(kwargs)
+            return llm_client_module.LLMClientResponse(
+                success=True,
+                content="前方有人，旁边还有疑似椅子的障碍物。建议先减速或暂停观察，确认通道安全后再继续。",
+                model="fake",
+            )
+
+        llm_client_module.llm_client.chat_text = fake_chat_text
+        try:
+            result, _ = main_module.smart_voice_service.handle(
+                SmartCommandRequest(text="现在导航前方有什么", source="test", generate_tts=False)
+            )
+        finally:
+            llm_client_module.llm_client.chat_text = original_chat_text
+
+        self.assertEqual(result.intent, "query_front_status")
+        self.assertIsNone(result.mission_candidate)
+        self.assertIn("前方有人", result.reply_text)
+        self.assertNotIn("更新时间", result.reply_text)
+        self.assertNotIn("rk3588", result.reply_text.lower())
+        self.assertIn("现在导航前方有什么", captured["user_prompt"])
+        self.assertIn("person", captured["user_prompt"])
+        self.assertIn("chair", captured["user_prompt"])
 
     @staticmethod
     def _restore(key: str, value: str | None) -> None:

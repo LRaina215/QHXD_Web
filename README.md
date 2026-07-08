@@ -379,6 +379,9 @@ DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_DISPLAY_MODEL="DeepSeek V4 Flash"
 DEEPSEEK_TIMEOUT_SECONDS=45
 LLM_REQUIRE_CONFIRM_FOR_MOTION=true
+FRONT_STATUS_LLM_ENABLE=true
+FRONT_STATUS_FRESH_SECONDS=15
+FRONT_STATUS_RECENT_SECONDS=60
 
 TTS_BACKEND=online
 MIMO_API_KEY=...
@@ -392,6 +395,7 @@ TTS_NORMAL_COOLDOWN_SECONDS=1.5
 ```
 
 `DEEPSEEK_MODEL=deepseek-chat` 是 API 请求别名；当前 API 响应的实际模型为 `deepseek-v4-flash`，页面展示名由 `DEEPSEEK_DISPLAY_MODEL` 控制。
+`FRONT_STATUS_LLM_ENABLE=true` 时，前方状态查询会把当前视觉、最近视觉事件、导航状态和任务状态整理为受控上下文，再交给 LLM 生成自然回复；正常情况下不会在语音回复里说 `rk3588`、`YOLO`、`detection_status` 或更新时间。只有视觉链路明显异常或数据过旧时，才提示“现在无法可靠查看前方画面”。
 任务开始、暂停、恢复、到达、完成、取消和失败等事件可自动播报；同一任务事件会按 `event_key` 去重，普通播报有短冷却，TTS 失败不改变任务状态。
 
 ## YOLO、相机与实时视频
@@ -453,6 +457,7 @@ curl 'http://127.0.0.1:8000/api/perception/video_health'
 - 事件按 `event_type + class_name` 在短时间窗口内去重，不逐帧写入 SQLite。
 - 第一版事件包括 `person_detected`、`obstacle_detected`、`camera_offline`、`camera_recovered`。
 - `/api/perception/video_health` 返回最后帧年龄、YOLO 相机服务 PID、检测状态和最近视觉事件。
+- YOLO 相机健康判断会校验 PID 对应命令是否真的是 `camera_detect_service.py`，旧 PID 不会再被误判为运行中。
 - 视频健康接口会对推流 URL 做脱敏，不暴露 `pass`、`token`、`secret` 等参数。
 
 ## ROS 2 导航与 C 板
@@ -769,7 +774,7 @@ curl 'http://127.0.0.1:8000/api/perception/events?limit=5'
 curl 'http://127.0.0.1:8000/api/perception/video_health'
 ```
 
-预期：查询类响应 `mission_candidate=null`；前方状态会引用当前视觉对象或最近视觉事件；天气回复包含实时温湿度、降雨概率和出行建议；视频健康状态不暴露推流密钥。
+预期：查询类响应 `mission_candidate=null`；前方状态会基于当前视觉对象、最近视觉事件和导航状态生成自然回复，不出现 `rk3588`、`YOLO`、`detection_status`、更新时间等工程描述；天气回复包含实时温湿度、降雨概率和出行建议；视频健康状态不暴露推流密钥。
 
 ### 视频
 

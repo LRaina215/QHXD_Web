@@ -8,6 +8,22 @@
 
 ## 已完成内容
 
+### 0. 追加修复：前方状态由 LLM 综合回答
+
+- `backend/app/services/voice/llm_client.py`：新增 `chat_text`，用于非 JSON 的自然语言回复生成。
+- `backend/app/services/smart_voice_service.py`：查询类调用向下传递用户原问题，使前方状态回答能区分“有什么”“安不安全”等语义。
+- `backend/app/services/data_service.py`：前方/障碍物/导航安全查询的数据源标记为 `visual_events+detection_status+llm` 或 `navigation_store+visual_events+llm`。
+- `backend/app/services/robot_status_provider.py`：新增 `front_status_context`，把当前视觉目标、最近视觉事件、导航状态和任务状态整理成受控上下文，再交给 LLM 综合回答。
+- 正常视觉新鲜时，回复不再出现 `rk3588`、`YOLO`、`detection_status`、更新时间等工程描述。
+- 视觉轻微延迟时仍使用最近视觉事实和事件回答；视觉明显异常时才自然提示“现在无法可靠查看前方画面”。
+- `FRONT_STATUS_FRESH_SECONDS=15`、`FRONT_STATUS_RECENT_SECONDS=60` 控制前方视觉新鲜度分层。
+
+### 0.1 追加修复：YOLO stale PID 健康判断
+
+- `backend/app/main.py`：`/api/perception/video_health` 不再只用 `kill -0` 判断 YOLO 运行状态，会校验 PID 命令行必须包含 `camera_detect_service.py`。
+- `scripts/common.sh`：`start_yolo_hik_camera.sh` / `status_all.sh` 的 `yolo_camera.pid` 判断同步修正，旧 PID 不再阻止相机服务重新启动。
+- 已验证 stale PID `3338` 不再被当成有效 YOLO 服务；Hik YOLO 重新启动后 PID 为 `11707`，`video_health.status=ok`。
+
 ### 1. 统一智能助手查询编排
 
 - `backend/app/schemas.py:33`：新增 `query_navigation_status`、`query_front_status`、`query_obstacle_status`、`query_navigation_safety` 等查询意图。
@@ -65,8 +81,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q
 结果：
 
 ```text
-3 passed
-35 passed
+4 passed
+36 passed
 ```
 
 ### 接口验收
@@ -74,6 +90,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q
 - `GET /api/perception/events?limit=3`：返回最近视觉事件。
 - `GET /api/perception/video_health`：返回 `status=ok`，最后帧新鲜，YOLO 相机服务运行中，推流 URL 未暴露 `pass`。
 - `POST /api/voice/smart_command`，文本“前方安全吗”：返回 `intent=query_navigation_safety`，`mission_candidate=null`，回答引用当前视觉目标和最近视觉事件。
+- `POST /api/voice/smart_command`，文本“现在导航前方有什么”：Hik YOLO 正常运行时返回类似“导航前方检测到几把椅子，还有一台电视。建议减速通过，注意避让。”，不包含工程字段和更新时间。
 - `POST /api/voice/smart_command`，文本“当前导航怎么样”：返回 `intent=query_navigation_status`，`mission_candidate=null`。
 - `POST /api/voice/smart_command`，文本“天气怎么样，适合出门吗”：返回实时 Open-Meteo 天气、温湿度、降雨概率、紫外线和出行建议，不出现“不是传感器读取的数据”。
 - `POST /api/voice/smart_command`，文本“你使用的模型是什么”：返回 DeepSeek V4 Flash 信息，`mission_candidate=null`。

@@ -31,7 +31,7 @@ class DataService:
             return f"当前智能语音助手的大模型后端是 DeepSeek，模型配置为 {model}。机器人运动控制仍由本地安全校验和确认流程接管。"
         return f"当前智能语音助手的大模型后端配置为 {backend}，模型配置为 {model}。机器人运动控制仍由本地安全校验和确认流程接管。"
 
-    def reply_for_query(self, intent: str) -> tuple[str, str]:
+    def reply_for_query(self, intent: str, *, question: str | None = None) -> tuple[str, str]:
         if intent == "query_self_identity":
             return "robot_profile", profile_provider.identity_reply()
         if intent == "query_capability":
@@ -47,9 +47,9 @@ class DataService:
         if intent == "query_navigation_status":
             return "navigation_store", robot_status_provider.navigation_reply()
         if intent in {"query_navigation_safety"}:
-            return "navigation_store+visual_events", robot_status_provider.front_status_reply()
+            return "navigation_store+visual_events+llm", robot_status_provider.front_status_reply(question)
         if intent in {"query_front_status", "query_obstacle_status"}:
-            return "visual_events+detection_status", robot_status_provider.front_status_reply()
+            return "visual_events+detection_status+llm", robot_status_provider.front_status_reply(question)
         if intent == "query_battery":
             return "state_store", robot_status_provider.battery_reply()
         if intent == "query_emergency_stop":

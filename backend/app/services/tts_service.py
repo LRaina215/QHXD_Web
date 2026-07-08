@@ -241,6 +241,8 @@ class TTSService:
     def _maybe_local_play(self, audio_path: Path) -> None:
         if not self._local_play_enabled():
             return
+        # Always fix ES8388 output before playing — some process keeps resetting it to 0%
+        self._fix_es8388_output()
         player_cmd = os.getenv("TTS_PLAYER_CMD", "aplay -D plughw:2,0").strip()
         try:
             subprocess.Popen(
@@ -250,6 +252,22 @@ class TTSService:
             )
         except Exception:
             pass
+
+    @staticmethod
+    def _fix_es8388_output() -> None:
+        import subprocess as _sp
+        cmds = [
+            ["amixer", "-c", "2", "sset", "Speaker", "on"],
+            ["amixer", "-c", "2", "sset", "Headphone", "on"],
+            ["amixer", "-c", "2", "sset", "PCM", "95%"],
+            ["amixer", "-c", "2", "sset", "Output 1", "90%"],
+            ["amixer", "-c", "2", "sset", "Output 2", "90%"],
+        ]
+        for cmd in cmds:
+            try:
+                _sp.run(cmd, capture_output=True, timeout=2)
+            except Exception:
+                pass
 
     def _local_play_enabled(self) -> bool:
         val = os.getenv("TTS_AUTO_PLAY_LOCAL", "false").strip().lower()

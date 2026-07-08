@@ -327,6 +327,22 @@ def _read_pid_file(path: Path) -> int | None:
         return None
 
 
+def _pid_cmdline(pid: int | None) -> str:
+    if pid is None or pid <= 0:
+        return ""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def _yolo_camera_running(pid: int | None) -> bool:
+    if not _pid_running(pid):
+        return False
+    cmdline = _pid_cmdline(pid)
+    return "camera_detect_service.py" in cmdline
+
+
 def _redacted_stream_url(value: str | None) -> str | None:
     if not value:
         return None
@@ -363,7 +379,7 @@ def _video_health_status() -> VideoHealthStatus:
         detection_age_s = max(0.0, (now - detection.timestamp).total_seconds())
 
     yolo_pid = _read_pid_file(PROJECT_ROOT / ".runtime" / "yolo_camera.pid")
-    yolo_running = _pid_running(yolo_pid)
+    yolo_running = _yolo_camera_running(yolo_pid)
     recent_events = visual_event_service.list_recent(limit=5)
 
     status = "ok"
@@ -374,6 +390,9 @@ def _video_health_status() -> VideoHealthStatus:
     if not latest_frame_fresh:
         status = "degraded"
         details.append("latest perception frame is missing or stale")
+    if detection is not None and detection_age_s is not None and detection_age_s > _perception_latest_frame_max_age_s():
+        status = "degraded"
+        details.append("detection status is stale")
     if detection is not None and not detection.enabled:
         status = "degraded"
         details.append("detection status reports camera unavailable")
