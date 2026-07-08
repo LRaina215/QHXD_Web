@@ -4,15 +4,19 @@ QHXD 是琼海芯动车载机器人的 RK3588 中台工程。当前已打通公�
 
 安全原则：视觉和 LLM 不直接控制底盘；移动类指令必须二次确认；公网写接口需要 Token，mission 控制还受 `PUBLIC_CONTROL_ENABLED` 开关限制。
 
-## 当前进度（2026-07-06）
+## 当前进度（2026-07-08）
 
-- 公网前端、Cloud Gateway 与 RK3588 backend 稳定连通，公网 API/WS 地址保持不变。
-- C 板通信正式使用 `standard_robot_pp_ros2`，可接收 IMU/底盘数据并下发 `/cmd_vel`。
-- `/serial/imu_backend` 20 Hz 镜像与 C++ backend bridge 已修复；libcurl 对本机 backend 明确绕过系统 HTTP 代理，`/api/imu/latest` 实测返回 `source=rk3588_cboard_ros2`。
-- 导航正式使用 MID360 + Point-LIO 提供 `odom -> base_link`，不再使用 C 板 odom 或上位机速度积分作为导航前端里程计。
-- 2D 建图、地图保存、AMCL/Nav2 链路、全向 PID Pursuit 平移控制和上位机旋转指令已打通。
-- Phase 10 F1 已加入独立 `qhxd-nav-mission.service`、Nav2 Action 任务状态回写、pause/resume/cancel、巡检路线和任务事件；点位真实坐标尚待现场填写，未配置时会安全拒绝 Goal。
-- 剩余导航收尾项是 Nav2 目标点旋转验收、动态障碍实机避障与安全停车测试；它们不阻塞其他业务模块开发。
+- 公网前端在云服务器，Cloud Gateway 反代到 RK3588 backend；`https://lingxunrobot.cn`、`https://api.lingxunrobot.cn`、`/api/*` 与 `/ws/*` 当前可用。
+- 云服务器只运行 Nginx、静态前端、Cloud Gateway 和 MediaMTX；完整 QHXD backend 仍在 RK3588 上，因为 ASR、TTS、YOLO、相机、ROS 2、C 板和导航都依赖本体环境。
+- RK backend 正常入口是 `http://127.0.0.1:8000`。正常开机由 `qhxd-backend.service` 提供 backend，手动调试时也可能由 `scripts/start_backend.sh` 拉起 PID 模式；判断是否可用以 `./scripts/status_public_robot.sh` 和 `/health` 为准，不只看某一个 systemd unit 是否 active。
+- C 板通信正式使用 `standard_robot_pp_ros2`。当前 Point-LIO 导航配置为 `standard_robot_pp_ros2_pointlio.yaml`，保留串口、`/cmd_vel` 下发和 `/serial/imu_backend` 20 Hz 后端镜像，但关闭 C 板 `/odom` 与 `odom -> base_link`，避免和 Point-LIO TF 冲突。
+- IMU 后端桥已切到 C++ `imu_backend_bridge_node`，`/api/imu/latest` 已实测 `source=rk3588_cboard_ros2`，Cloud Gateway 也能转发公网 IMU API。
+- 导航本体在 `/home/robomaster/livox_ws`（QHXD_NAV），不是 QHXD 主仓库的一部分。当前使用 MID360 + Point-LIO 提供 `odom -> base_link`，再接 slam_toolbox/AMCL/Nav2/Omni PID Pursuit。
+- Phase 10 F1 已接入 `qhxd-nav-mission.service`：`/api/mission/* -> FastAPI MissionGateway -> 127.0.0.1:9101 Nav2 Mission Executor -> NavigateToPose -> 状态回写`。
+- 点位 `wp_001`、`wp_002`、`wp_201`、`home` 当前已经在 `backend/app/config/waypoints.json` 配置真实 pose；仍建议现场复核 yaw、通道安全和地图版本一致性。
+- Phase 10 F2 已把文本、网页麦克风和车载麦克风统一进 smart assistant；移动类任务仍需二次确认。天气、前方视觉/导航状态查询由结构化上下文和 LLM 综合回答，不直接控制底盘。
+- Hik/USB 相机、RKNN YOLO26、视觉事件持久化、视频健康接口、H.264 推流和 WebRTC/HLS/MJPEG 回退已经接入。`/api/perception/video_health` 会识别 stale PID，旧 PID 不再被误判为 YOLO 正在运行。
+- 剩余导航验收主要是 Nav2 Goal 转向/停车、动态障碍避障、急停/通信中断和连续导航压力测试；这些是实车安全验收项，不阻塞语音、视觉、天气和前端业务继续迭代。
 
 ## 快捷启动
 
@@ -26,8 +30,9 @@ cd /home/robomaster/QHXD
 
 RK3588 已启用：
 
-- `qhxd-backend.service`：完整 FastAPI 后端，异常退出自动重启。
-- `qhxd-boot.service`：切换 `real` 模式，启动导航/C 板桥接，并按 Hik 优先、USB 备用选择相机。
+- `qhxd-backend.service`：完整 FastAPI 后端的正常开机入口，异常退出时由 systemd 管理。
+- `qhxd-boot.service`：backend 就绪后切换 `real` 模式，启动 C 板通信、YOLO 相机、导航前置六窗格和导航 Web 桥接。
+- `qhxd-nav-mission.service`：Nav2 Mission Executor，只监听本机 `127.0.0.1:9101`，等待 backend 转发任务。
 
 `qhxd-boot` 中的 C 板通信默认使用 Point-LIO 导航配置：
 
@@ -40,13 +45,18 @@ use_respawn=false
 Point-LIO interfaces 重复发布 TF。禁用 launch respawn 可避免节点退出后被旧父
 进程反复拉起并继续占用串口。
 
-正常重启后无需手动运行 `start_all.sh`：
+正常重启后无需手动运行 `start_all.sh`。优先用以下命令看整体状态：
 
 ```bash
 ./scripts/status_public_robot.sh
 systemctl is-enabled qhxd-backend qhxd-boot
-systemctl is-active qhxd-backend qhxd-boot qhxd-nav-mission
+systemctl is-active qhxd-boot qhxd-nav-mission
+curl http://127.0.0.1:8000/health
 ```
+
+如果你刚手动重启过 backend，可能看到 `qhxd-backend.service` 为 `inactive`，
+但 PID 调试模式的 backend 仍在运行；只要 `/health` 和 `status_public_robot.sh`
+显示 backend OK，公网 Gateway 就仍能转发到 RK。
 
 常用管理命令：
 
@@ -70,6 +80,41 @@ sudo systemctl enable --now qhxd-boot.service
 ```
 
 `qhxd-boot` 遇到未接 C 板或相机时会记录警告后继续，不会阻止后端、语音和公网页面启动。
+Hik/USB 相机服务的 PID 会校验命令行，旧 PID 不会再阻止重新启动 YOLO。
+
+导航开机行为由 `~/QHXD/.env` 控制：
+
+```env
+# 开机启动前置 1-6：C 板日志/MID360/Point-LIO/静态 TF/LIO interfaces/LaserScan
+QHXD_BOOT_START_NAV_FRONTEND=true
+
+# 开机启动导航 Web 只读桥，给公网 Dashboard 的 /ws/navigation 提供数据
+QHXD_BOOT_START_NAV_WEB_BRIDGE=true
+
+# 默认不替用户选择建图或导航，避免 slam_toolbox 与 AMCL 同时拥有 map -> odom
+QHXD_BOOT_NAV_MODE=none
+
+# 可选：mapping | localization | navigation | bringup | none
+# mapping      = 前置 1-6 + slam_toolbox
+# localization = 前置 1-6 + AMCL/map_server
+# navigation   = 只启动 Nav2 规划控制，要求 localization 已经启动
+# bringup      = AMCL/map_server + Nav2 合并启动
+```
+
+如果你希望机器人开机后直接进入导航待命，设置：
+
+```env
+QHXD_BOOT_NAV_MODE=bringup
+```
+
+如果要现场建图，设置：
+
+```env
+QHXD_BOOT_NAV_MODE=mapping
+```
+
+`mapping` 和 `localization/bringup` 不要同时运行；切换模式前先执行
+`./scripts/stop_navigation_mode.sh`。
 
 ### 手动恢复
 
@@ -102,6 +147,7 @@ PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=usb ./scripts/start_public_r
 - 公网前端在云服务器，不需要 RK 运行 `start_frontend.sh`。
 - `start_backend.sh` 和 `status_all.sh` 是 PID 文件调试模式；生产状态以 systemd 和 `status_public_robot.sh` 为准。
 - `stop_all.sh` 不会停止 `qhxd-backend` / `qhxd-boot`。
+- RK 上看到 `frontend: stopped` 是正常的公网生产状态；只有本地 Vite 调试才需要启动前端。
 
 ### 相机与导航快捷入口
 
@@ -120,6 +166,19 @@ PUBLIC_ROBOT_START_YOLO=true PUBLIC_ROBOT_YOLO_MODE=usb ./scripts/start_public_r
 # 导航 Web 可视化桥（需要 ROS 2 /map 与 map -> base_link TF）
 ./scripts/start_navigation_web_bridge.sh
 ./scripts/stop_navigation_web_bridge.sh
+
+# 导航前置 1-6：无附着启动，适合开机自启
+./scripts/start_navigation_frontend_detached.sh
+./scripts/start_navigation_frontend_detached.sh --status
+./scripts/start_navigation_frontend_detached.sh --attach
+
+# 选择建图/定位/导航模式。默认开机不自动选择，避免 TF 冲突
+./scripts/start_navigation_mode.sh mapping
+./scripts/start_navigation_mode.sh localization
+./scripts/start_navigation_mode.sh navigation
+./scripts/start_navigation_mode.sh bringup
+./scripts/start_navigation_mode.sh --status
+./scripts/stop_navigation_mode.sh
 
 # Nav2 业务任务执行器（只监听 loopback :9101，不会自行发送 Goal）
 ./scripts/start_nav2_mission_executor.sh
@@ -202,14 +261,15 @@ MJPEG 兜底：http://127.0.0.1:8000/api/perception/frame_stream
 ## 当前实现能力
 
 - Dashboard：Mock/Real 切换、状态卡片、导航可视化、任务链路、任务控制、视觉事件、告警、语音/LLM 交互。
-- 语音：文本、浏览器麦克风、RK 车载麦克风三种入口统一进入智能助手。
+- 语音：文本、浏览器麦克风、RK 车载麦克风三种入口统一进入 smart assistant。
 - ASR：FunASR SenseVoiceSmall + FSMN VAD，模型在进程内缓存，首次识别后复用。
-- LLM：DeepSeek 负责开放问答和复杂语义 fallback；本地规则、schema、白名单和确认流程负责安全。
+- LLM：DeepSeek 负责开放问答、复杂语义 fallback 和前方视觉/导航状态综合回复；本地规则、schema、白名单和确认流程负责安全。
 - TTS：MiMO V2.5 在线合成，可通过 ES8388 板载扬声器自动播放。
 - 天气：语音/文本天气查询通过 Open-Meteo 获取实时气温、体感温度、湿度、降雨概率和紫外线，并生成出行建议；成功结果在进程内短时缓存。
-- 感知：Hik MVS 优先、USB/UVC 备用，RKNN YOLO26 独立推理并提交 `detection_status`，后端持久化最近视觉事件。
-- 视频：相机帧与 YOLO 异步，MPP H.264 上传至 MediaMTX，前端 WebRTC 优先，后端提供视频健康状态。
-- 导航：`standard_robot_pp_ros2` 负责 C 板数据与 `/cmd_vel`；`QHXD_NAV` 使用 MID360 + Point-LIO 提供前端里程计，使用 slam_toolbox/AMCL/Nav2 完成 2D 建图、定位、规划和控制。
+- 感知：Hik MVS 优先、USB/UVC 备用，RKNN YOLO26 独立推理并提交 `detection_status`，后端持久化最近视觉事件并提供 `/api/perception/events`。
+- 视频：相机帧与 YOLO 异步，MPP H.264 上传至 MediaMTX，前端 WebRTC 优先，HLS/MJPEG 回退，后端提供 `/api/perception/video_health`。
+- 导航：`standard_robot_pp_ros2` 负责 C 板数据与 `/cmd_vel`；导航本体在 `/home/robomaster/livox_ws`，使用 MID360 + Point-LIO 提供前端里程计，使用 slam_toolbox/AMCL/Nav2 完成 2D 建图、定位、规划和控制。
+- Mission：`/api/mission/*` 在 Real 模式下经 MissionGateway 转发到本机 `qhxd-nav-mission.service`，由 Nav2 `NavigateToPose` 执行并回写任务事件。
 - 导航可视化：`navigation_web_bridge` 只读接入 `/map`、`map -> base_link`、`/plan`、`/local_plan` 和 `/odometry`，不发布控制话题。
 - 云端：Cloud Gateway 完成认证、限流、路由白名单、操作日志、API/WS 转发与视频会话。
 
@@ -229,6 +289,10 @@ streaming/                MediaMTX、Nginx 与视频配置
 docs/                     协议和阶段文档
 audio_test/               语音验收样本
 ```
+
+导航本体仓库不在 QHXD 目录内，位于 `/home/robomaster/livox_ws`；建图、定位、Nav2、
+RViz 和底层 launch 细节以 `/home/robomaster/livox_ws/README.md` 为准。QHXD 只提供
+开机编排和 Web 桥接脚本，不修改导航本体代码。
 
 `.runtime/`、`logs/`、`backend/data/voice_records/`、`backend/data/tts/` 和 YOLO `outputs/` 已通过 `.gitignore` 排除。
 
@@ -464,8 +528,8 @@ curl 'http://127.0.0.1:8000/api/perception/video_health'
 
 ### Phase 10 F1 Mission -> Nav2
 
-公网与本地继续使用原有 `/api/mission/*`。Real 模式下命令不再转发给历史 NUC，
-而是进入独立 `qhxd-nav-mission.service`，由它调用 Nav2 `NavigateToPose`：
+公网与本地继续使用原有 `/api/mission/*`。Real 模式下命令进入独立
+`qhxd-nav-mission.service`，由它调用 Nav2 `NavigateToPose`：
 
 ```text
 Web / 小程序 / 语音确认
@@ -484,19 +548,19 @@ curl http://127.0.0.1:9101/health
 curl http://127.0.0.1:8000/api/tasks/events
 ```
 
-点位配置位于 `backend/app/config/waypoints.json`。当前四个点位的 `pose` 故意保持
-`null`，因为尚未取得现场真实地图坐标；不得使用 `(0,0,0)` 代替：
+点位配置位于 `backend/app/config/waypoints.json`。当前四个点位已经配置
+`[x, y, yaw]` 地图坐标；如更换地图或重新建图，必须重新现场复核，不要沿用旧地图 pose：
 
 ```json
-{
-  "waypoint_id": "wp_001",
-  "map_id": "sentinel_map",
-  "pose": {"x": 1.25, "y": -0.80, "yaw": 0.0},
-  "enabled": true
-}
+[
+  {"waypoint_id": "wp_201", "pose": [-2.27, 4.02, 0]},
+  {"waypoint_id": "wp_001", "pose": [0.237, 5.01, 0]},
+  {"waypoint_id": "wp_002", "pose": [1.5, 0.398, 0]},
+  {"waypoint_id": "home", "pose": [-1.05, 4.54, 0]}
+]
 ```
 
-填写 `wp_001/wp_002/wp_201/home` 后检查并重启 Executor：
+修改点位后检查并重启 Executor：
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -513,14 +577,14 @@ Nav2 Goal 但保留任务上下文；`resume` 会重新通过准入门并发送�
 Mission API 在命令成功进入 ROS Action 发送队列后立即返回
 `accepted=true` 和 `state=pending`；Nav2 后续的 accepted/rejected/feedback/result 通过
 `task_status` 和 `task_events` 异步收敛，避免网页超时后实际 Goal 仍被执行。
-准入门优先使用真实设备状态；当历史 NUC 状态字段为离线时，使用现有
+准入门优先使用真实设备状态；兼容旧字段为空或离线时，使用现有
 `ROS2_IMU_HEARTBEAT_FILE` 判断 C 板链路，默认最大年龄为 3 秒，不新增轮询进程。
 
 当前正式包为 `standard_robot_pp_ros2`：
 
 - 打开 `/dev/ttyCBoard`（默认 115200）。
 - BCP 协议接收下位机数据。
-- 发布 `/serial/robot_motion`、`/serial/imu`、`/serial/imu_backend` 以及可选的 `/odom`/TF。
+- 发布 `/serial/robot_motion`、`/serial/imu`、`/serial/imu_backend`。Point-LIO 正式导航配置关闭 C 板 `/odom` 与 `odom -> base_link` TF，避免 TF 冲突。
 - 保留全速 `/serial/imu` 供 ROS 2 调试和其他模块使用，同时发布最多 20Hz 的 `/serial/imu_backend` 给 Dashboard 后端。
 - 订阅 `/cmd_vel` 并下发给 C 板。
 
@@ -542,7 +606,7 @@ ros2 topic echo /serial/robot_motion --once
 curl http://127.0.0.1:8000/api/imu/latest
 ```
 
-IMU 后端桥接默认使用 C++ `rclcpp + libcurl`，将 `/serial/imu_backend` 写入现有 `/api/internal/nuc/imu`，不改前后端接口。本机 `127.0.0.1/localhost/::1` 请求强制不经过 `http_proxy`。空闲或 20Hz 输入下实测约 2% CPU；旧 Python bridge 保留作为回退。
+IMU 后端桥接默认使用 C++ `rclcpp + libcurl`，将 `/serial/imu_backend` 写入现有兼容接口 `/api/internal/nuc/imu`，不改前后端接口。本机 `127.0.0.1/localhost/::1` 请求强制不经过 `http_proxy`。空闲或 20Hz 输入下实测约 2% CPU；旧 Python bridge 保留作为回退。
 
 ```bash
 # 立即切换，不重启 C 板串口节点
@@ -576,8 +640,9 @@ ROS2_IMU_BRIDGE_RATE_HZ=20
 
 ### QHXD_NAV 当前导航链路
 
-导航已独立整理到 `~/livox_ws`（GitHub：`LRaina215/QHXD_NAV`），该仓库
-README 是唯一建议直接执行的导航启动手册。当前正式链路为：
+导航已独立整理到 `~/livox_ws`（GitHub：`LRaina215/QHXD_NAV`）。该仓库
+README 是建图、定位、Nav2、RViz 和底层 launch 的权威手册；QHXD 主仓库只负责
+开机编排、网页端导航桥接和业务任务转发。当前正式链路为：
 
 ```text
 MID360 CustomMsg + IMU
@@ -598,7 +663,16 @@ odom -> base_link           Point-LIO 导航接口
 base_link -> livox_frame    静态外参
 ```
 
-一键启动六个导航前置窗格：
+QHXD 侧无附着启动六个导航前置窗格，适合开机自启：
+
+```bash
+cd ~/QHXD
+./scripts/start_navigation_frontend_detached.sh
+./scripts/start_navigation_frontend_detached.sh --status
+./scripts/start_navigation_frontend_detached.sh --attach
+```
+
+手动在 `livox_ws` 中启动六窗格仍然可用，适合现场调试：
 
 ```bash
 cd ~/livox_ws
@@ -611,6 +685,29 @@ bash ~/livox_ws/scripts/start_navigation_frontend.sh
 cd ~/livox_ws
 bash ~/livox_ws/scripts/start_navigation_frontend.sh --status
 ```
+
+建图/定位/导航模式由用户选择，QHXD 不会默认同时启动互斥模式：
+
+```bash
+cd ~/QHXD
+./scripts/start_navigation_mode.sh mapping       # slam_toolbox 建图
+./scripts/start_navigation_mode.sh localization  # map_server + AMCL
+./scripts/start_navigation_mode.sh navigation    # 单独 Nav2，要求定位已启动
+./scripts/start_navigation_mode.sh bringup       # 定位 + Nav2 合并启动
+./scripts/start_navigation_mode.sh --status
+./scripts/stop_navigation_mode.sh
+```
+
+开机默认行为：
+
+```text
+QHXD_BOOT_START_NAV_FRONTEND=true
+QHXD_BOOT_START_NAV_WEB_BRIDGE=true
+QHXD_BOOT_NAV_MODE=none
+```
+
+也就是说，默认开机会准备好前置链路和网页可视化桥，但不会替用户决定建图还是导航。
+如果需要开机直接进入导航待命，可在 `~/QHXD/.env` 设置 `QHXD_BOOT_NAV_MODE=bringup`。
 
 已完成 Point-LIO 方向/稳定性、2D 建图与地图保存、AMCL/Nav2 软件链路、
 全向平移控制与 C 板旋转指令验收。导航运行、建图、定位、地图保存、
@@ -638,8 +735,12 @@ GET /api/perception/latest_frame
 GET /api/perception/frame_stream
 GET /api/perception/events
 GET /api/perception/video_health
+GET /api/navigation/latest
+GET /api/navigation/map/metadata
+GET /api/navigation/map/image
 WS  /ws/state
 WS  /ws/imu
+WS  /ws/navigation
 ```
 
 语音与智能助手：
@@ -674,6 +775,8 @@ POST /api/mission/cancel
 POST /api/internal/perception/detection_status
 POST /api/internal/nuc/state
 POST /api/internal/nuc/imu
+POST /api/internal/navigation/map
+POST /api/internal/navigation/state
 ```
 
 `/api/internal/nuc/*` 是为保持兼容而保留的历史接口名，前端已使用 Nav/Navi 表述。
@@ -702,7 +805,7 @@ curl http://127.0.0.1:9997/v3/paths/list
 ```env
 RK_BACKEND_BASE_URL=http://100.113.173.115:8000
 PUBLIC_API_TOKEN=...
-PUBLIC_CONTROL_ENABLED=false
+PUBLIC_CONTROL_ENABLED=false  # 默认建议 false；演示/验收需要公网控制时可临时设为 true
 PUBLIC_RATE_LIMIT_PER_MINUTE=60
 PUBLIC_AUDIO_MAX_MB=20
 PUBLIC_BROWSER_AUDIO_MAX_MB=5
@@ -712,6 +815,7 @@ PUBLIC_BROWSER_AUDIO_MAX_SECONDS=10
 - 读接口可按白名单公开转发。
 - 语音、模式切换和任务等写接口需 `Authorization: Bearer <PUBLIC_API_TOKEN>`。
 - mission 控制另需 `PUBLIC_CONTROL_ENABLED=true`。
+- 当前云端实际开关以 `curl https://api.lingxunrobot.cn/health` 返回的 `public_control_enabled` 为准。
 - `/api/voice/record_command` 永远不直接暴露到公网。
 
 ## 重启后验收
@@ -723,7 +827,9 @@ cd /home/robomaster/QHXD
 ./scripts/status_public_robot.sh
 ```
 
-预期：RK backend、公网 gateway、公网 Web 正常；有相机时 YOLO 与 H.264 publisher 运行。`PID debug backend: not running` 在 systemd backend 为 active 时是正常状态。
+预期：RK backend、公网 gateway、公网 Web 正常；有相机时 YOLO 与 H.264 publisher 运行。
+backend 可能显示为 systemd backend active，也可能显示为 PID debug backend running；只要
+本地 `/health` 与公网 state proxy 正常即可。
 
 ### 后端与公网
 

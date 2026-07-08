@@ -88,6 +88,28 @@ if is_running "${bridge_pid_file}"; then
 fi
 status_service cboard_watchdog
 
+echo
+echo "Navigation support:"
+if command -v tmux >/dev/null 2>&1; then
+  nav_frontend_session="${NAV_FRONTEND_TMUX_SESSION:-nav_frontend}"
+  if tmux has-session -t "${nav_frontend_session}" 2>/dev/null; then
+    echo "navigation front-end tmux: running (${nav_frontend_session})"
+  else
+    echo "navigation front-end tmux: stopped (${nav_frontend_session})"
+  fi
+
+  nav_mode_session="${QHXD_NAV_MODE_TMUX_SESSION:-nav_mode}"
+  if tmux has-session -t "${nav_mode_session}" 2>/dev/null; then
+    mode_window="$(tmux list-windows -t "${nav_mode_session}" -F '#{window_name}' 2>/dev/null | head -1 || true)"
+    echo "navigation mode tmux: running (${nav_mode_session}${mode_window:+/${mode_window}})"
+  else
+    echo "navigation mode tmux: stopped (${nav_mode_session})"
+  fi
+else
+  echo "tmux: not installed"
+fi
+status_service navigation_web_bridge
+
 if [[ "${QHXD_VIDEO_STREAM_ENABLED:-false}" =~ ^(1|true|yes|on)$ ]]; then
   echo "H.264 cloud publisher: enabled"
   publisher_log="$(log_file yolo_camera)"
