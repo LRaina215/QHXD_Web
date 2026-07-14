@@ -109,6 +109,25 @@ else
   echo "tmux: not installed"
 fi
 status_service navigation_web_bridge
+initial_pose_pid_file="${RUNTIME_DIR}/navigation_initial_pose.pid"
+initial_pose_log="${LOG_DIR}/navigation_initial_pose.log"
+if curl --noproxy '*' -fsS "http://127.0.0.1:${BACKEND_PORT}/api/navigation/latest" 2>/dev/null | grep -Eq '"nav_state":"localized".*"pose":|"pose":\{"x":.*"nav_state":"localized"'; then
+  echo "navigation initial pose: applied"
+elif [[ -f "${initial_pose_pid_file}" ]] && kill -0 "$(cat "${initial_pose_pid_file}" 2>/dev/null)" 2>/dev/null; then
+  echo "navigation initial pose: waiting (pid $(cat "${initial_pose_pid_file}"))"
+elif [[ -f "${initial_pose_log}" ]] && tail -n 20 "${initial_pose_log}" | grep -q "AMCL accepted the initial pose"; then
+  echo "navigation initial pose: applied"
+else
+  echo "navigation initial pose: not applied"
+fi
+
+if command -v curl >/dev/null 2>&1; then
+  if curl --noproxy '*' -fsS "http://127.0.0.1:${BACKEND_PORT}/api/navigation/map/metadata" >/dev/null 2>&1; then
+    echo "navigation web map: available"
+  else
+    echo "navigation web map: unavailable"
+  fi
+fi
 
 if [[ "${QHXD_VIDEO_STREAM_ENABLED:-false}" =~ ^(1|true|yes|on)$ ]]; then
   echo "H.264 cloud publisher: enabled"

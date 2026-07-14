@@ -41,7 +41,7 @@ start_map_watchdog() {
       fi
       if bash -lc "unset LD_LIBRARY_PATH; source /opt/ros/humble/setup.bash; source '$QHXD_ROOT/install/setup.bash'; ROS2CLI_DISABLE_DAEMON=1 timeout 4 ros2 topic echo /map --once --field info >/dev/null 2>&1"; then
         echo "ROS /map is available but backend map cache is empty; restarting navigation_web_bridge once."
-        QHXD_NAV_WEB_BRIDGE_MAP_WATCHDOG=false "$QHXD_ROOT/scripts/stop_navigation_web_bridge.sh"
+        QHXD_NAV_WEB_BRIDGE_KEEP_MAP_WATCHDOG=true QHXD_NAV_WEB_BRIDGE_MAP_WATCHDOG=false "$QHXD_ROOT/scripts/stop_navigation_web_bridge.sh"
         QHXD_NAV_WEB_BRIDGE_MAP_WATCHDOG=false "$QHXD_ROOT/scripts/start_navigation_web_bridge.sh"
         sleep 4
         if curl --noproxy '*' -fsS "http://127.0.0.1:${BACKEND_PORT}/api/navigation/map/metadata" >/dev/null 2>&1; then

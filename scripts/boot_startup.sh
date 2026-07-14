@@ -84,8 +84,27 @@ fi
 echo "[6/6] Starting navigation support..."
 
 if [[ "${QHXD_BOOT_START_NAV_FRONTEND:-true}" =~ ^(1|true|yes|on)$ ]]; then
+    NAV_BOOT_MIN_UPTIME_SECONDS="${QHXD_NAV_BOOT_MIN_UPTIME_SECONDS:-90}"
+    CURRENT_UPTIME_SECONDS="$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)"
+    if [[ "${NAV_BOOT_MIN_UPTIME_SECONDS}" =~ ^[0-9]+$ ]] && (( CURRENT_UPTIME_SECONDS < NAV_BOOT_MIN_UPTIME_SECONDS )); then
+        NAV_SETTLE_WAIT_SECONDS=$((NAV_BOOT_MIN_UPTIME_SECONDS - CURRENT_UPTIME_SECONDS))
+        echo "  Waiting ${NAV_SETTLE_WAIT_SECONDS}s for MID360 and network interfaces to settle..."
+        sleep "${NAV_SETTLE_WAIT_SECONDS}"
+    fi
     "${SCRIPT_DIR}/ensure_livox_route.sh" || true
-    "${SCRIPT_DIR}/start_navigation_frontend_detached.sh" || echo "Navigation front-end start failed."
+    NAV_FRONTEND_STARTED=false
+    for attempt in 1 2 3; do
+        echo "  Navigation front-end attempt ${attempt}/3..."
+        if "${SCRIPT_DIR}/start_navigation_frontend_detached.sh"; then
+            NAV_FRONTEND_STARTED=true
+            break
+        fi
+        echo "  Navigation front-end attempt ${attempt} failed; retrying..."
+        sleep 5
+    done
+    if [[ "${NAV_FRONTEND_STARTED}" != true ]]; then
+        echo "  WARNING: navigation front-end did not become healthy after 3 attempts."
+    fi
 else
     echo "  Navigation front-end autostart skipped by QHXD_BOOT_START_NAV_FRONTEND=${QHXD_BOOT_START_NAV_FRONTEND:-false}."
 fi
@@ -101,6 +120,10 @@ if [[ "${QHXD_BOOT_START_NAV_WEB_BRIDGE:-true}" =~ ^(1|true|yes|on)$ ]]; then
     "${SCRIPT_DIR}/start_navigation_web_bridge.sh" || echo "Navigation web bridge start failed."
 else
     echo "  Navigation web bridge autostart skipped by QHXD_BOOT_START_NAV_WEB_BRIDGE=${QHXD_BOOT_START_NAV_WEB_BRIDGE:-false}."
+fi
+
+if [[ "${NAV_MODE}" =~ ^(bringup|localization|amcl)$ ]]; then
+    "${SCRIPT_DIR}/start_navigation_initial_pose.sh" || echo "Navigation initial pose watchdog start failed."
 fi
 
 # Final: save ALSA state

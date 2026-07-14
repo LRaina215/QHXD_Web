@@ -25,7 +25,7 @@ orphan="$(pgrep -f '^/home/robomaster/QHXD/install/navigation_web_bridge/lib/nav
 if [[ -n "$orphan" ]]; then
   kill -TERM "$orphan" 2>/dev/null || true
 fi
-if [[ -f "$MAP_WATCHDOG_PID_FILE" ]]; then
+if [[ ! "${QHXD_NAV_WEB_BRIDGE_KEEP_MAP_WATCHDOG:-false}" =~ ^(1|true|yes|on)$ ]] && [[ -f "$MAP_WATCHDOG_PID_FILE" ]]; then
   watchdog_pid="$(cat "$MAP_WATCHDOG_PID_FILE" 2>/dev/null || true)"
   if [[ -n "$watchdog_pid" ]] && kill -0 "$watchdog_pid" 2>/dev/null; then
     kill "$watchdog_pid" 2>/dev/null || true

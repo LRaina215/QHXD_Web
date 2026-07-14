@@ -10,7 +10,7 @@ Group=robomaster
 WorkingDirectory=/home/robomaster/QHXD
 ExecStart=/home/robomaster/QHXD/scripts/boot_startup.sh
 RemainAfterExit=yes
-TimeoutStartSec=120
+TimeoutStartSec=360
 SyslogIdentifier=qhxd-boot
 
 [Install]

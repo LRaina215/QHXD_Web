@@ -4,7 +4,7 @@ QHXD 是琼海芯动车载机器人的 RK3588 中台工程。当前已打通公�
 
 安全原则：视觉和 LLM 不直接控制底盘；移动类指令必须二次确认；公网写接口需要 Token，mission 控制还受 `PUBLIC_CONTROL_ENABLED` 开关限制。
 
-## 当前进度（2026-07-08）
+## 当前进度（2026-07-14）
 
 - 公网前端在云服务器，Cloud Gateway 反代到 RK3588 backend；`https://lingxunrobot.cn`、`https://api.lingxunrobot.cn`、`/api/*` 与 `/ws/*` 当前可用。
 - 云服务器只运行 Nginx、静态前端、Cloud Gateway 和 MediaMTX；完整 QHXD backend 仍在 RK3588 上，因为 ASR、TTS、YOLO、相机、ROS 2、C 板和导航都依赖本体环境。
@@ -13,7 +13,7 @@ QHXD 是琼海芯动车载机器人的 RK3588 中台工程。当前已打通公�
 - IMU 后端桥已切到 C++ `imu_backend_bridge_node`，`/api/imu/latest` 已实测 `source=rk3588_cboard_ros2`，Cloud Gateway 也能转发公网 IMU API。
 - 导航本体在 `/home/robomaster/livox_ws`（QHXD_NAV），不是 QHXD 主仓库的一部分。当前使用 MID360 + Point-LIO 提供 `odom -> base_link`，再接 slam_toolbox/AMCL/Nav2/Omni PID Pursuit。
 - Phase 10 F1 已接入 `qhxd-nav-mission.service`：`/api/mission/* -> FastAPI MissionGateway -> 127.0.0.1:9101 Nav2 Mission Executor -> NavigateToPose -> 状态回写`。
-- 网页端导航可视化由 QHXD 内的 `navigation_web_bridge` 只读桥接 `/map`、`map -> base_link`、`/plan`、`/local_plan` 和 `/odometry`。桥接已加入 `/map` watchdog：ROS 已有地图但后端地图缓存为空时，会自动重启一次桥接恢复网页地图。
+- 网页端导航可视化由 QHXD 内的 `navigation_web_bridge` 只读桥接 `/map`、`map -> base_link`、`/plan`、`/local_plan` 和 `/odometry`。导航前端、`bringup`、网页桥和 AMCL 初始位姿现已统一接入 `qhxd-boot.service`；桥接仍保留 `/map` watchdog，ROS 已有地图但后端地图缓存为空时会自动恢复。
 - 点位 `wp_001`、`wp_002`、`wp_201`、`home` 当前已经在 `backend/app/config/waypoints.json` 配置真实 pose；仍建议现场复核 yaw、通道安全和地图版本一致性。
 - Phase 10 F2 已把文本、网页麦克风和车载麦克风统一进 smart assistant；移动类任务仍需二次确认。天气、前方视觉/导航状态查询由结构化上下文和 LLM 综合回答，不直接控制底盘。
 - Hik/USB 相机、RKNN YOLO26、视觉事件持久化、视频健康接口、H.264 推流和 WebRTC/HLS/MJPEG 回退已经接入。`/api/perception/video_health` 会识别 stale PID，旧 PID 不再被误判为 YOLO 正在运行。
@@ -32,7 +32,7 @@ cd /home/robomaster/QHXD
 RK3588 已启用：
 
 - `qhxd-backend.service`：完整 FastAPI 后端的正常开机入口，异常退出时由 systemd 管理。
-- `qhxd-boot.service`：backend 就绪后切换 `real` 模式，启动 C 板通信、YOLO 相机、导航前置六窗格和导航 Web 桥接。
+- `qhxd-boot.service`：backend 就绪后切换 `real` 模式，启动 C 板通信、YOLO 相机、导航前置六窗格、AMCL/Nav2 `bringup`、导航 Web 桥和固定开机位姿初始化。
 - `qhxd-nav-mission.service`：Nav2 Mission Executor，只监听本机 `127.0.0.1:9101`，等待 backend 转发任务。
 
 `qhxd-boot` 中的 C 板通信默认使用 Point-LIO 导航配置：
@@ -125,7 +125,8 @@ source ~/livox_ws/install/setup.bash
 ros2 launch rk3588_navigation bringup.launch.py
 ```
 
-`start_navigation_frontend_detached.sh` 会分阶段等待健康信号：
+`start_navigation_frontend_detached.sh` 会先等待 MID360 真实出数，然后将 Point-LIO、
+静态 TF、导航接口和 LaserScan 全部拉起：
 
 ```text
 MID360 -> /livox/lidar
@@ -134,14 +135,21 @@ interfaces -> /sensor_scan
 LaserScan -> /scan
 ```
 
-如果任一阶段超时，后续阶段不会硬启动。此时先看对应 tmux 窗格和
-`ip route get 192.168.1.3`，不要直接反复启动 `bringup.launch.py`。
+在 RK3588 开机高负载期，Point-LIO 到 `/aft_mapped_to_init` 可能需要数分钟，
+所以后三窗不再被 90 秒硬超时截断，它们会异步等待上游话题。
+重试前脚本会等待旧 Livox 进程完全退出并释放 UDP 端口，避免新旧驱动交接时假成功。
+如果 MID360 本身无数据，脚本仍会失败并由 `qhxd-boot` 重试；此时先检查
+`ip route get 192.168.1.3` 和雷达供电。
 
 导航开机行为由 `~/QHXD/.env` 控制：
 
 ```env
 # 开机启动前置 1-6：C 板日志/MID360/Point-LIO/静态 TF/LIO interfaces/LaserScan
 QHXD_BOOT_START_NAV_FRONTEND=true
+
+# 只影响真实开机时；系统已运行超过该时间后手动重启服务不会再等待
+# 避免 MID360 在网口和雷达尚未稳定时被过早初始化
+QHXD_NAV_BOOT_MIN_UPTIME_SECONDS=90
 
 # 开机启动导航 Web 只读桥，给公网 Dashboard 的 /ws/navigation 提供数据
 QHXD_BOOT_START_NAV_WEB_BRIDGE=true
@@ -151,21 +159,52 @@ QHXD_BOOT_START_NAV_WEB_BRIDGE=true
 QHXD_NAV_WEB_BRIDGE_MAP_WATCHDOG=true
 QHXD_NAV_WEB_BRIDGE_MAP_WAIT_SECONDS=600
 
-# 默认不替用户选择建图或导航，避免 slam_toolbox 与 AMCL 同时拥有 map -> odom
-QHXD_BOOT_NAV_MODE=none
+# 开机直接进入已有地图的 AMCL + Nav2 导航待命模式
+QHXD_BOOT_NAV_MODE=bringup
 
 # 可选：mapping | localization | navigation | bringup | none
 # mapping      = 前置 1-6 + slam_toolbox
 # localization = 前置 1-6 + AMCL/map_server
 # navigation   = 只启动 Nav2 规划控制，要求 localization 已经启动
 # bringup      = AMCL/map_server + Nav2 合并启动
+
+# AMCL 固定开机位姿，当前与 waypoints.json 的 home 点一致
+# 只有车体实际停在该位置和朝向时才应启用
+QHXD_NAV_INITIAL_POSE_ENABLED=true
+QHXD_NAV_INITIAL_POSE_X=-1.05
+QHXD_NAV_INITIAL_POSE_Y=4.54
+QHXD_NAV_INITIAL_POSE_YAW=0.0
+QHXD_NAV_INITIAL_POSE_WAIT_SECONDS=600
 ```
 
-如果你希望机器人开机后直接进入导航待命，设置：
+当前生产配置已使用：
 
 ```env
 QHXD_BOOT_NAV_MODE=bringup
 ```
+
+`start_navigation_initial_pose.sh` 会等待 AMCL 创建 `/initialpose` 订阅后发布初始位姿，
+并以网页导航桥回传的真实 pose（备选 `/amcl_pose`）作为受理验证。它是低频的一次性守护进程，完成后会自动退出。如果机器人开机时不在 `home` 点，应先设为 `QHXD_NAV_INITIAL_POSE_ENABLED=false`，再从 RViz 手动设置实际初始位姿。
+
+开机导航的实际时序为：
+
+```text
+qhxd-backend / qhxd-nav-mission
+  -> C 板与相机
+  -> 等待系统 uptime 达到 90 秒
+  -> MID360 + Point-LIO + 导航接口 + LaserScan
+  -> map_server + AMCL + Nav2 bringup
+  -> navigation_web_bridge
+  -> /initialpose -> localized
+  -> 网页地图与车体位姿
+```
+
+因此真实重启后 `qhxd-boot.service` 可能在约 1--2 分钟内显示
+`activating`，这是 MID360 稳定等待，不是启动故障。等待结束后应变为
+`active (exited)`，同时 `nav_frontend` 和 `nav_mode/bringup` 两个 tmux 会话应存在。
+如果日志前段在 `eth1` 尚未取得 `192.168.1.50` 时出现一次
+`Invalid prefsrc address`，以 90 秒等待后导航阶段的最终路由结果为准；后续出现
+`Livox route OK: 192.168.1.3 -> eth1 src 192.168.1.50` 即表示已恢复。如果最终仍没有该行，才需要检查 `eth1`、雷达供电和 sudo 路由权限。
 
 如果要现场建图，设置：
 
@@ -746,7 +785,7 @@ cd ~/livox_ws
 bash ~/livox_ws/scripts/start_navigation_frontend.sh --status
 ```
 
-建图/定位/导航模式由用户选择，QHXD 不会默认同时启动互斥模式：
+建图/定位/导航模式仍可由用户手动切换，QHXD 不会同时启动互斥模式：
 
 ```bash
 cd ~/QHXD
@@ -763,11 +802,14 @@ cd ~/QHXD
 ```text
 QHXD_BOOT_START_NAV_FRONTEND=true
 QHXD_BOOT_START_NAV_WEB_BRIDGE=true
-QHXD_BOOT_NAV_MODE=none
+QHXD_BOOT_NAV_MODE=bringup
+QHXD_NAV_BOOT_MIN_UPTIME_SECONDS=90
+QHXD_NAV_INITIAL_POSE_ENABLED=true
 ```
 
-也就是说，默认开机会准备好前置链路和网页可视化桥，但不会替用户决定建图还是导航。
-如果需要开机直接进入导航待命，可在 `~/QHXD/.env` 设置 `QHXD_BOOT_NAV_MODE=bringup`。
+也就是说，默认开机会使用已保存的 `sentinel_map`进入导航待命并向网页提供地图。
+需要建图时，先执行 `./scripts/stop_navigation_mode.sh`，再执行
+`./scripts/start_navigation_mode.sh mapping`，避免 slam_toolbox 与 AMCL 同时发布 `map -> odom`。
 
 已完成 Point-LIO 方向/稳定性、2D 建图与地图保存、AMCL/Nav2 软件链路、
 全向平移控制与 C 板旋转指令验收。导航运行、建图、定位、地图保存、
@@ -907,6 +949,11 @@ curl https://lingxunrobot.cn/api/state/latest
 cd /home/robomaster/QHXD
 ./scripts/start_navigation_frontend_detached.sh --status
 ./scripts/status_public_robot.sh
+systemctl status qhxd-boot.service --no-pager
+
+tail -n 120 logs/boot_startup.log
+tail -n 80 logs/navigation_initial_pose.log
+tail -n 80 logs/navigation_web_bridge_map_watchdog.log
 
 source /opt/ros/humble/setup.bash
 source /home/robomaster/livox_ws/install/setup.bash
@@ -919,7 +966,18 @@ curl https://lingxunrobot.cn/api/navigation/map/metadata
 curl https://lingxunrobot.cn/api/navigation/latest
 ```
 
-预期：metadata 返回 `width/height/resolution/image_url`，latest 返回 `map_version` 与 `pose`。如果 metadata 为 404，先执行 `./scripts/start_navigation_web_bridge.sh`，脚本会启动地图 watchdog 自动恢复一次。
+最终预期：
+
+- `status_public_robot.sh` 显示 `navigation mode tmux: running (nav_mode/bringup)`。
+- 显示 `navigation initial pose: applied` 和 `navigation web map: available`。
+- metadata 返回 `width/height/resolution/image_url`，当前 `sentinel_map` 为 `209 x 261`、`0.05 m/cell`。
+- latest 返回非空 `map_version`、`pose` 和 `nav_state=localized`。
+- `https://lingxunrobot.cn/api/navigation/map/image` 返回 HTTP 200 和 `image/png`。
+
+如果启动时第一次 MID360 探测超时，`qhxd-boot` 会自动重试；重试前会停止旧驱动并等待 UDP 端口释放。只要后续日志出现
+`MID360 lidar is ready`、`Started six navigation front-end panes` 并最终定位成功，该次自动恢复即为正常。
+
+如果 metadata 为 404，先执行 `./scripts/start_navigation_web_bridge.sh`。脚本的地图 watchdog 会在 ROS `/map` 已存在但后端缓存为空时重启桥接，且不会再在重启过程中误杀自身。
 
 ### 音频设备
 

@@ -50,6 +50,43 @@ stop_frontend_processes() {
   for pattern in "${patterns[@]}"; do
     pkill -f "${pattern}" 2>/dev/null || true
   done
+
+  # Livox owns several UDP ports. Starting a replacement before the old
+  # process has fully exited can yield one frame and then a silent data stall.
+  local attempt
+  local process_left
+  for attempt in $(seq 1 20); do
+    process_left=false
+    for pattern in "${patterns[@]}"; do
+      if pgrep -f "${pattern}" >/dev/null 2>&1; then
+        process_left=true
+        break
+      fi
+    done
+    if [[ "${process_left}" == false ]]; then
+      sleep 2
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  echo "navigation front-end processes did not stop cleanly; forcing cleanup"
+  for pattern in "${patterns[@]}"; do
+    pkill -KILL -f "${pattern}" 2>/dev/null || true
+  done
+  sleep 2
+}
+
+navigation_frontend_healthy() {
+  local topic
+  local ros_setup="unset LD_LIBRARY_PATH; source /opt/ros/humble/setup.bash; source ${WORKSPACE}/install/setup.bash"
+  for topic in /livox/lidar /aft_mapped_to_init /sensor_scan /scan; do
+    if ! bash -lc "${ros_setup}; ROS2CLI_DISABLE_DAEMON=1 timeout 5 ros2 topic echo '${topic}' --once >/dev/null 2>&1"; then
+      echo "navigation front-end health check failed: ${topic} has no live data"
+      return 1
+    fi
+  done
+  return 0
 }
 
 if [[ "${mode}" == "status" ]]; then
@@ -88,8 +125,14 @@ fi
 
 if tmux has-session -t "${SESSION}" 2>/dev/null; then
   "${SCRIPT_DIR}/ensure_livox_route.sh" || true
-  echo "navigation front-end tmux '${SESSION}' already running"
-  exit 0
+  if navigation_frontend_healthy; then
+    echo "navigation front-end tmux '${SESSION}' is already running and healthy"
+    exit 0
+  fi
+  echo "navigation front-end tmux '${SESSION}' is incomplete; rebuilding all six panes"
+  tmux kill-session -t "${SESSION}" 2>/dev/null || true
+  stop_frontend_processes
+  sleep 2
 fi
 
 for required in \
@@ -171,16 +214,12 @@ wait_for_topic_once "/livox/lidar" "MID360 lidar" "${NAV_FRONTEND_WAIT_LIVOX_SEC
 
 send_pane_command "${panes[2]}" "${commands[2]}"
 send_pane_command "${panes[3]}" "${commands[3]}"
-wait_for_topic_once "/aft_mapped_to_init" "Point-LIO odometry" "${NAV_FRONTEND_WAIT_LIO_SECONDS:-90}"
-
 send_pane_command "${panes[4]}" "${commands[4]}"
-wait_for_topic_once "/sensor_scan" "Point-LIO navigation scan cloud" "${NAV_FRONTEND_WAIT_SENSOR_SCAN_SECONDS:-45}"
-
 send_pane_command "${panes[5]}" "${commands[5]}"
-wait_for_topic_once "/scan" "LaserScan" "${NAV_FRONTEND_WAIT_SCAN_SECONDS:-35}"
 
 tmux select-layout -t "${SESSION}:frontend" tiled >/dev/null
 tmux select-pane -t "${panes[0]}"
 
 echo "Started six navigation front-end panes in tmux session '${SESSION}'."
+echo "Point-LIO and scan topics may take several minutes to become ready; startup continues asynchronously."
 echo "Attach with: tmux attach -t ${SESSION}"
