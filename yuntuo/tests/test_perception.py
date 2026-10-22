@@ -111,3 +111,27 @@ def test_full_rate_only_while_a_target_task_is_active():
     assert not task_is_target({"task_type": "search_target", "state": "succeeded"})
     assert not task_is_target({"task_type": "go_to_waypoint", "state": "running"})
     assert not task_is_target({"task_type": "placeholder", "state": "idle"})
+
+
+def test_int8_split_head_outputs_decode_like_the_fp32_model():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "experiments" / "rknn_yolo"))
+    import infer_image as ii
+
+    labels = [str(i) for i in range(80)]
+    boxes = np.zeros((1, 4, 8400), np.float32)
+    scores = np.zeros((1, 80, 8400), np.float32)
+    boxes[0, :, 5] = [200, 275, 200, 150]          # cx, cy, w, h（640x640 输入图）
+    scores[0, 39, 5] = 0.9
+    boxes[0, :, 6] = [205, 275, 200, 150]          # 同一目标的重复框，应被 NMS 去掉
+    scores[0, 39, 6] = 0.8
+    scores[0, 0, 7] = 0.1                          # 低于阈值
+    meta = ii.ImageMeta(original_width=640, original_height=480)
+    objs, _ = ii._parse_outputs_with_stats([scores, boxes], labels, 0.25, 0.45, meta, "xyxy_score_class", 20, np)
+    assert objs == [{"class_name": "39", "confidence": 0.9, "bbox_xyxy": [100.0, 150.0, 300.0, 262.5]}]
+    e2e = np.zeros((1, 300, 6), np.float32)
+    e2e[0, 0] = [100, 200, 300, 350, 0.8, 39]
+    assert ii._parse_outputs_with_stats([e2e], labels, 0.25, 0.45, meta, "xyxy_score_class", 20, np)[0][0]["bbox_xyxy"] \
+        == [100.0, 150.0, 300.0, 262.5]

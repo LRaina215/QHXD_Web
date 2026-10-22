@@ -171,6 +171,7 @@ class RknnYoloRunner:
         self.np = None
         self.rknn_cls = None
         self.rknn = None
+        self.input_uint8 = False
 
     @property
     def model_name(self) -> str:
@@ -195,6 +196,7 @@ class RknnYoloRunner:
         labels = _load_labels(self.labels_path)
         if not labels:
             raise RuntimeError(f"标签文件为空：{self.labels_path}")
+        self.input_uint8 = _model_meta(self.model_path).get("input") == "uint8_rgb"
 
         rknn = RKNNLite()
         try:
@@ -225,7 +227,9 @@ class RknnYoloRunner:
     def infer_frame_with_stats(self, frame: Any, *, color_order: str = "bgr") -> tuple[list[dict[str, Any]], DetectionPipelineStats]:
         if self.rknn is None or self.np is None:
             raise RuntimeError("RKNN YOLO runner 尚未 load()")
-        input_tensor, image_meta = _preprocess_frame_array(frame, self.np, color_order=color_order)
+        input_tensor, image_meta = _preprocess_frame_array(
+            frame, self.np, color_order=color_order, as_uint8=self.input_uint8
+        )
         with _capture_native_stdout_to_stderr():
             outputs = self.rknn.inference(inputs=[input_tensor])
         return _parse_outputs_with_stats(
@@ -339,7 +343,18 @@ def _load_and_preprocess_with_pillow(image_path: Path, np) -> tuple[Any, ImageMe
     return _preprocess_frame_array(np.asarray(image), np, color_order="rgb")
 
 
-def _preprocess_frame_array(frame: Any, np, *, color_order: str = "bgr") -> tuple[Any, ImageMeta]:
+def _model_meta(model_path: Path) -> dict[str, Any]:
+    """模型旁的 <name>.json（INT8 转换脚本写的）：input=uint8_rgb 表示 /255 已放进模型，直接喂 uint8。"""
+    meta_path = model_path.with_suffix(".json")
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _preprocess_frame_array(frame: Any, np, *, color_order: str = "bgr", as_uint8: bool = False) -> tuple[Any, ImageMeta]:
     array = np.asarray(frame)
     if array.ndim != 3 or array.shape[2] < 3:
         raise RuntimeError(f"图像帧格式不支持：shape={array.shape}")
@@ -355,6 +370,8 @@ def _preprocess_frame_array(frame: Any, np, *, color_order: str = "bgr") -> tupl
 
     rgb_image = np.ascontiguousarray(rgb_image)
     resized = _resize_rgb_image(rgb_image, np)
+    if as_uint8:
+        return np.expand_dims(np.ascontiguousarray(resized, dtype=np.uint8), axis=0), ImageMeta(original_width=width, original_height=height)
     input_tensor = np.expand_dims(resized.astype(np.float32) / 255.0, axis=0)
     return input_tensor, ImageMeta(original_width=width, original_height=height)
 
@@ -539,19 +556,66 @@ def _parse_outputs_with_stats(
     if not outputs or max_det == 0:
         return [], stats
 
-    for output in outputs:
-        for matrix in _output_to_prediction_matrices(output, labels, np):
-            decoded, matrix_stats = _decode_prediction_matrix_with_stats(
-                matrix, labels, conf_threshold, image_meta, output_layout, np
-            )
-            candidates.extend(decoded)
-            stats.add(matrix_stats)
+    split = _split_head_outputs(outputs, labels, np)
+    if split is not None:
+        candidates, stats = _decode_split_head(split[0], split[1], labels, conf_threshold, image_meta, np)
+    else:
+        for output in outputs:
+            for matrix in _output_to_prediction_matrices(output, labels, np):
+                decoded, matrix_stats = _decode_prediction_matrix_with_stats(
+                    matrix, labels, conf_threshold, image_meta, output_layout, np
+                )
+                candidates.extend(decoded)
+                stats.add(matrix_stats)
 
     nms_objects = _nms(candidates, iou_threshold)
     stats.nms_passed_count = len(nms_objects)
     final_objects = nms_objects[:max_det]
     stats.final_detection_count = len(final_objects)
     return final_objects, stats
+
+
+SPLIT_HEAD_TOPK = 300
+
+
+def _split_head_outputs(outputs: Any, labels: list[str], np):
+    """INT8 模型的两路输出：boxes [1,4,N]（输入图像素 cx,cy,w,h）+ scores [1,C,N]（sigmoid 后）。
+    这样切是为了不让像素坐标和 0~1 置信度共用一个 int8 量化尺度（见 models/README.md）。"""
+    if len(outputs) != 2:
+        return None
+    a, b = (np.asarray(item) for item in outputs)
+    a = a.reshape(a.shape[-2:]) if a.ndim == 3 and a.shape[0] == 1 else a
+    b = b.reshape(b.shape[-2:]) if b.ndim == 3 and b.shape[0] == 1 else b
+    if a.ndim != 2 or b.ndim != 2:
+        return None
+    if a.shape[0] == len(labels) and b.shape[0] == 4:
+        a, b = b, a
+    if a.shape[0] == 4 and b.shape[0] == len(labels) and a.shape[1] == b.shape[1]:
+        return a, b
+    return None
+
+
+def _decode_split_head(boxes, scores, labels: list[str], conf_threshold: float, image_meta: ImageMeta, np):
+    stats = DetectionPipelineStats(raw_candidate_count=int(scores.shape[1]))
+    confidences = scores.max(axis=0)
+    keep = np.nonzero(confidences >= conf_threshold)[0]
+    stats.confidence_passed_count = int(keep.size)
+    keep = keep[np.argsort(-confidences[keep])][:SPLIT_HEAD_TOPK]
+    class_ids = np.zeros(scores.shape[1], dtype=np.int64)
+    class_ids[keep] = scores[:, keep].argmax(axis=0)
+    detections: list[dict[str, Any]] = []
+    for index in keep:
+        bbox_xyxy = _convert_bbox(boxes[:, index], image_meta, assume_xywh=True)
+        if bbox_xyxy is None:
+            continue
+        detections.append(
+            {
+                "class_name": labels[int(class_ids[index])],
+                "confidence": round(float(confidences[index]), 4),
+                "bbox_xyxy": [round(float(value), 2) for value in bbox_xyxy],
+            }
+        )
+    return detections, stats
 
 
 def _output_to_prediction_matrices(output: Any, labels: list[str], np) -> list[Any]:

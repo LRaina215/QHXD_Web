@@ -127,9 +127,11 @@ def main() -> int:
     ap.add_argument("--openni-redist", default=os.getenv("OPENNI2_REDIST") or default_redist)
     ap.add_argument("--no-depth", action="store_true")
     ap.add_argument("--detector", default=os.getenv("YUNTUO_DETECTOR", "rknn"))
-    ap.add_argument("--model", default=str(RKNN_DIR / "models/yolo26n_fp32.rknn"))
+    ap.add_argument("--model", default=os.getenv("YUNTUO_RKNN_MODEL", str(RKNN_DIR / "models/yolo26n_fp32.rknn")),
+                    help="fp32 端到端输出或 int8 两路输出（boxes + scores）都能直接用，见 experiments/rknn_yolo/models/README.md")
     ap.add_argument("--labels", default=str(RKNN_DIR / "models/labels.txt"))
-    ap.add_argument("--conf", type=float, default=0.35)
+    ap.add_argument("--conf", type=float, default=float(os.getenv("YUNTUO_DETECT_CONF", "0.35")),
+                    help="上报阈值；int8 模型建议 0.40（coco128 上与 fp32@0.35 的精度 / 召回相当，见 models/README.md）")
     ap.add_argument("--mount", default=os.getenv("YUNTUO_CAMERA_MOUNT", "0.20,0,0.30,10,0,0"),
                     help="相机在机身系的 x,y,z(m),pitch,yaw,roll(度，pitch 向下为正)")
     ap.add_argument("--fps", type=float, default=15.0, help="找物 / 跟随任务进行中的检测帧率上限")
