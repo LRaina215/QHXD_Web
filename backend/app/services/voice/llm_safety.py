@@ -12,6 +12,16 @@ _CLASS_ALIASES = {"水瓶": "bottle", "瓶子": "bottle", "杯子": "cup", "水�
                   "球": "sports ball", "ball": "sports ball", "椅子": "chair", "背包": "backpack", "书包": "backpack"}
 _COLOR_ALIASES = {"红": "red", "红色": "red", "绿": "green", "绿色": "green", "蓝": "blue", "蓝色": "blue",
                   "黄": "yellow", "黄色": "yellow", "白": "white", "白色": "white", "黑": "black", "黑色": "black"}
+_CLASS_CN = {"bottle": "水瓶", "cup": "杯子", "person": "人", "sports ball": "球", "chair": "椅子", "backpack": "背包"}
+_COLOR_CN = {"red": "红色", "green": "绿色", "blue": "蓝色", "yellow": "黄色", "white": "白色", "black": "黑色"}
+
+
+def target_label(label: str | None, target_class: str, color: str | None) -> str:
+    """界面与播报用的中文目标名：模型没给或给的是英文类别名时，用颜色 + 类别拼一个。"""
+    text = (label or "").strip()
+    if not text or normalize_class(text) == target_class or text.isascii():
+        text = f"{_COLOR_CN.get(color or '', '')}{_CLASS_CN.get(target_class, target_class)}"
+    return text[:32]
 
 
 def normalize_class(value: str) -> str:
@@ -100,7 +110,7 @@ class LLMSafetyValidator:
             payload["target_class"] = target_class
             if color:
                 payload["color"] = color
-            payload["label"] = (result.target_label or target_class)[:32]
+            payload["label"] = target_label(result.target_label, target_class, color)
 
         need_confirm = bool(result.need_confirm)
         if command in MOTION_COMMANDS and _require_confirm_for_motion():

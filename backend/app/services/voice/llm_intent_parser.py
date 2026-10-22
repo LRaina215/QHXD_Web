@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 
 from app.services.intent_parser import ParsedIntent, intent_parser
 from app.services.voice.llm_client import llm_client
 from app.services.voice.llm_prompt import build_prompts, prompt_style
 from app.services.voice.llm_schema import LLMIntent
-from app.services.voice.llm_safety import _threshold as confidence_threshold, llm_safety_validator
+from app.services.voice.llm_safety import _threshold as confidence_threshold, llm_safety_validator, normalize_class
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -60,7 +61,7 @@ class LLMIntentParser:
                 llm_raw_output=client_response.content if self._debug_raw() else None,
             )
 
-        safe = llm_safety_validator.validate(llm_result)
+        safe = llm_safety_validator.validate(self._fill_target_slots(llm_result, rule_result))
         if not safe.ok:
             # 板载小模型常漏掉 confidence（解析成 0）：规则有把握时用规则结果；模型明确判 unknown 且有把握时仍以模型为准
             if self._rule_can_back_up(rule_result) and llm_result.confidence < confidence_threshold():
@@ -101,6 +102,21 @@ class LLMIntentParser:
         if rule_result.need_confirm or rule_result.confidence < 0.75:
             return True
         return self._looks_complex(text)
+
+    @staticmethod
+    def _fill_target_slots(llm_result: LLMIntent, rule_result: ParsedIntent) -> LLMIntent:
+        """找物 / 跟随：模型和规则认的是同一类目标时，模型漏掉的颜色、称呼用规则从原话里抽出来的补上。"""
+        if llm_result.intent not in {"search_target", "follow_target"} or rule_result.intent != llm_result.intent:
+            return llm_result
+        rule_class = rule_result.payload.get("target_class")
+        if not rule_class or normalize_class(llm_result.target_class or rule_class) != rule_class:
+            return llm_result
+        return replace(
+            llm_result,
+            target_class=llm_result.target_class or str(rule_class),
+            target_color=llm_result.target_color or (str(rule_result.payload["color"]) if rule_result.payload.get("color") else None),
+            target_label=llm_result.target_label or (str(rule_result.payload["label"]) if rule_result.payload.get("label") else None),
+        )
 
     @staticmethod
     def _rule_can_back_up(rule_result: ParsedIntent) -> bool:

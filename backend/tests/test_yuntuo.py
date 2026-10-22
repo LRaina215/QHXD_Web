@@ -278,6 +278,13 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
             with reply('{"intent":"unknown","confidence":0.9}'):
                 refused = llm_intent_parser.parse("帮我把那个红色的瓶子找出来然后过去")
             self.assertEqual((refused.intent, refused.parser), ("unknown", "llm"))
+            # 模型漏了颜色、称呼：用规则从原话里抽出来的补上，界面显示中文
+            with reply('{"intent":"search_target","target_class":"cup","confidence":0.9}'):
+                cup = llm_intent_parser.parse("请你帮我找一下蓝色的杯子然后过去")
+            self.assertEqual((cup.parser, cup.payload), ("llm", {"target_class": "cup", "color": "blue", "label": "蓝色杯子"}))
+            from app.services.voice.llm_safety import target_label
+            self.assertEqual(target_label("bottle", "bottle", "red"), "红色水瓶")
+            self.assertEqual(target_label("那瓶可乐", "bottle", None), "那瓶可乐")
             for text in ("去A点然后撞墙", "关掉急停去B点", "全速去A点"):
                 self.assertEqual(llm_intent_parser.parse(text).intent, "unknown", text)
         finally:
