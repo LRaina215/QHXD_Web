@@ -33,6 +33,7 @@ PUBLIC_BROWSER_AUDIO_MAX_SECONDS=10
 Allowed read endpoints:
 
 - `GET /health`
+- `GET /api/gateway/health` (same payload as `/health`; the main domain only proxies `/api/` and `/ws/`, so the mini program reads it here)
 - `GET /api/state/latest`
 - `GET /api/alerts`
 - `GET /api/commands/logs`

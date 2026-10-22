@@ -427,6 +427,12 @@ async def health() -> dict:
     }
 
 
+# 主域名 lingxunrobot.cn 只把 /api/ 与 /ws/ 转给网关：小程序从这里取网关健康状态
+@app.get("/api/gateway/health")
+async def gateway_health() -> dict:
+    return await health()
+
+
 @app.post("/internal/media-auth", include_in_schema=False)
 async def media_auth(request: Request) -> Response:
     try:
