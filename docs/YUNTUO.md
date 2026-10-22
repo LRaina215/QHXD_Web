@@ -144,7 +144,8 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 - 任务类命令（去点位、找物、跟随、巡检、返航、暂停 / 继续）的回复按校验后的任务生成，不用模型自己写的话；只有闲聊用模型回复。
 - 智能语音接口只解析一次（以前同一句话会调两次大模型），语音 / 大模型 / 合成都在线程池里跑，推理期间急停等接口照常响应（实测最大 41 ms）。
 - NPU 由感知和大模型共用：没有找物 / 跟随任务时感知降到 5 fps（`YUNTUO_PERCEPTION_IDLE_FPS`）；librknnrt 会把感知线程调到 nice −19，
-  感知节点启动后调回 0（`YUNTUO_PERCEPTION_NICE`）。感知全速时大模型约慢 50%，换 int8 量化的 YOLO 可进一步缓解。
+  感知节点启动后调回 0（`YUNTUO_PERCEPTION_NICE`）。2026-10-23 起感知用 INT8 模型（见下），NPU 占用从约 30% 降到约 15%，
+  同一句意图解析从 2.9 s 降到 2.3 s。
 - 端到端（文字进、语音出，含合成）：去点位 3.6 s、闲聊 4.7 s、拒绝危险指令 2.0 s、规则命中的查询 < 0.5 s。
 - 试过但没用：vits-melo-tts-zh_en int8（RTF≈3.3，太慢）；matcha-icefall-zh-baker（只认中文，"B 点"会吞掉字母）。
 - NPU 驱动是 0.9.6，rknn-llm 1.3.1 提示建议 0.9.7，实测可用。
@@ -172,7 +173,7 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 | 控制遥测串口 | 若和 FPGA 串口同为 CH34x / CH910x，按序列号或口路径改 udev；`YUNTUO_CONTROL_TELEMETRY=serial:/dev/yuntuo-ctl@230400` |
 | 相机安装 | 装车后量 `YUNTUO_CAMERA_MOUNT`（x,y,z,pitch,yaw,roll，机身系） |
 | 目标三维精度 | 红瓶放在 1.0 / 2.0 / 3.0 m，看网页距离与实测差；颜色判定在场地灯光下复查 |
-| 检测帧率 | fp32 模型约 8 fps；换 int8 量化模型可提速并给大模型让出 NPU（TARGET 链路已满足时延要求，非必须） |
+| 检测精度（INT8） | 已换 `~/models/yolo/yolo26n_int8.rknn`（阈值 0.40）：单帧约为 fp32 的一半，coco128 上 6 类精度 0.84 / 召回 0.39（fp32@0.35 为 0.90 / 0.41），实拍 20 帧与 fp32 的检测对上 24/28。场地里对红瓶、杯子再复查；不满意就去掉 `.env` 的 `YUNTUO_RKNN_MODEL` 回到 fp32。数据与转换方法见 `experiments/rknn_yolo/models/README.md` |
 | 场地点位 | 实测场地后改 `backend/app/config/yuntuo/waypoints.json`（m，起点为里程计原点） |
 | 车载麦克风 | 现场对着麦克风说一句，看识别结果；音量在 `.env` 的 `AUDIO_CAPTURE_VOLUME` |
-| 云端低延迟视频 | 旧栈的 RTMP 推流来自旧相机服务，云拓感知节点不推流；网页相机窗口走 latest_frame / MJPEG 正常。需要 HLS 时再给感知节点加推流 |
+| 云端低延迟视频 | 旧栈的 RTMP 推流来自旧相机服务，云拓感知节点不推流；网页相机窗口走 MJPEG 检测画面。2026-10-23 修了保存 Token 后相机窗口每隔几秒黑一下（后台重连低延迟视频时把检测画面撤了），现在重连在后台进行、间隔退避到 60 s。需要 HLS 时再给感知节点加推流 |
