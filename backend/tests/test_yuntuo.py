@@ -240,6 +240,20 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
             {"intent": "open_chat", "confidence": 0.9, "reply_text": "你好"}))
         self.assertEqual(chat.detail, "你好")
 
+    def test_smart_command_parses_each_utterance_once(self) -> None:
+        from unittest import mock
+
+        from app.schemas import SmartCommandRequest
+        from app.services.smart_voice_service import smart_voice_service
+        from app.services.voice.llm_intent_parser import llm_intent_parser
+
+        real_parse = llm_intent_parser.parse
+        with mock.patch.object(llm_intent_parser, "parse", side_effect=real_parse) as parse:
+            result, _ = smart_voice_service.handle(SmartCommandRequest(text="找到红色水瓶并移动到其附近", source="test"))
+        self.assertEqual(parse.call_count, 1)
+        self.assertEqual(result.intent, "search_target")
+        self.assertIsNotNone(result.pending_command_id)
+
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
         self.assertEqual(request.source, "miniprogram")

@@ -63,8 +63,12 @@ class VoiceEntryService:
     def __init__(self) -> None:
         self._pending: dict[str, PendingVoiceCommand] = {}
 
-    def handle_text_command(self, request: VoiceTextCommandRequest) -> tuple[VoiceCommandResult, RobotState | None]:
-        parsed = llm_intent_parser.parse(request.text, use_llm=request.use_llm)
+    def handle_text_command(
+        self, request: VoiceTextCommandRequest, *, parsed: ParsedIntent | None = None
+    ) -> tuple[VoiceCommandResult, RobotState | None]:
+        """parsed：调用方已解析过就传进来，避免同一句话再调一次大模型（板载模型一次要几秒，且两次结果可能不同）。"""
+        if parsed is None:
+            parsed = llm_intent_parser.parse(request.text, use_llm=request.use_llm)
 
         if parsed.intent is None or parsed.intent == "unknown":
             return self._result(False, parsed, None, parsed.detail), None

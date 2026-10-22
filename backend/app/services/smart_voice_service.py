@@ -73,7 +73,7 @@ class SmartVoiceService:
             return result, None
 
         voice_result, state = voice_entry_service.handle_text_command(
-            request.model_copy(update={"source": request.source or "smart-command"})
+            request.model_copy(update={"source": request.source or "smart-command"}), parsed=parsed
         )
 
         mission_candidate = None
