@@ -77,7 +77,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", default=os.getenv("YUNTUO_CAMERA_SOURCE", "astra"))
     ap.add_argument("--color-device", default=os.getenv("YUNTUO_COLOR_DEVICE", "/dev/video0"))
-    ap.add_argument("--openni-redist", default=os.getenv("OPENNI2_REDIST") or None)
+    default_redist = "/opt/OpenNI2/Redist" if Path("/opt/OpenNI2/Redist/libOpenNI2.so").exists() else None
+    # 系统自带 libopenni2 不认 Orbbec 设备，缺省用 scripts/install_orbbec_openni2.sh 装的那份
+    ap.add_argument("--openni-redist", default=os.getenv("OPENNI2_REDIST") or default_redist)
     ap.add_argument("--no-depth", action="store_true")
     ap.add_argument("--detector", default=os.getenv("YUNTUO_DETECTOR", "rknn"))
     ap.add_argument("--model", default=str(RKNN_DIR / "models/yolo26n_fp32.rknn"))

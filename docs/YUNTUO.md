@@ -100,8 +100,9 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 
 ## 6. 上 RK3588
 
-1. 代码：`git fetch && git checkout yuntuo-fpga`（目录仍是 `/home/robomaster/QHXD`），`pip install -r backend/requirements.txt pyserial`；
-   感知另需 `numpy opencv-python openni`（RKNN Lite 已装）与 Orbbec OpenNI2 SDK（`OPENNI2_REDIST` 指向含 `libOpenNI2.so` 的目录）。
+1. 代码：`git fetch && git checkout yuntuo-fpga`（目录仍是 `/home/robomaster/QHXD`），`pip install --user -r backend/requirements.txt`；
+   相机：`./scripts/install_orbbec_openni2.sh`（Orbbec 版 OpenNI2 装到 `/opt/OpenNI2/Redist`、udev 规则、`yuntuo/requirements.txt`）。
+   Ubuntu 自带的 `libopenni2` 不认 Orbbec 设备（VID 2bc5），不要用它。numpy / opencv / RKNN Lite 用板上已有的。
 2. `.env`：以新的 `.env.example` 为模板重写（旧 `.env` 里的 Nav2 / C 板 / IMU 桥配置已无用，密钥照搬）；
    点位配置路径指向 `backend/app/config/yuntuo/`。
 3. `./scripts/install_yuntuo_services.sh`：udev 规则、停用 RK3588 上已安装的 `qhxd-nav-mission`、启用 `yuntuo-fpga-bridge` 与
@@ -123,15 +124,28 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
   或 Piper 中文模型；生成 wav 后沿用原来的本机播放（`TTS_AUTO_PLAY_LOCAL=true`、`TTS_PLAYER_CMD`）。
 - 资源：导航已不在 RK3588 上跑，NPU 留给 YOLO（单核即可）+ RKLLM，CPU 留给 FunASR / TTS；上机后实测内存与延迟再定模型大小。
 
-## 8. 上机后要核对的事项（目前都只在模拟器上验证过）
+## 8. 上机核对
+
+2026-10-22 实机结果（RK3588 `hky`，Astra Pro Plus：彩色 UVC `2bc5:050f`、深度 `2bc5:060f`）：
+
+| 项 | 结果 |
+|---|---|
+| 深度流 | Orbbec OpenNI2 驱动下 640×480@30（另有 160×120、320×240、1280×1024@7），室内有效像素约 65–70% |
+| 彩色流 | `/dev/yuntuo-astra-color` → video0；MJPG 640×480 约 20 fps（YUYV 只有约 12 fps） |
+| 出厂标定 | 设备属性 14 可读：彩色 fx = fy = 543.47、cx 316.36、cy 242.65；深度 fx 575.90；基线约 25 mm。感知节点自动读取 |
+| 深度配准到彩色 | `IMAGE_REGISTRATION_DEPTH_TO_COLOR` 生效，深度边缘与彩色轮廓对齐良好 |
+| 感知链路 | RKNN YOLO（fp32 模型）+ 颜色 + 三维 + 跟踪约 8 fps，采图到结果 p50 约 134 ms（< 400 ms 门限） |
+| 端到端（模拟 FPGA） | 真相机看到人 → 跟随任务 → fpga_bridge 发 TARGET → 模拟 FPGA 进入跟踪、目标落在地图上 |
+
+仍待核对：
 
 | 项 | 怎么核对 |
 |---|---|
 | FPGA 串口设备 | `lsusb` 看 CH9102 VID:PID 是否 1a86:55d4；`ls -l /dev/yuntuo-fpga`；`curl 127.0.0.1:9101/health` 的 `status_age_s` < 0.5 |
 | 板载串口链路 | bridge 读 `SYS_ID` 校验 0x4E415630；STATUS 应约 5 Hz（网页 FPGA 平台卡右上角） |
 | 控制遥测串口 | 若和 FPGA 串口同为 CH34x / CH910x，按序列号或口路径改 udev；`YUNTUO_CONTROL_TELEMETRY=serial:/dev/yuntuo-ctl@230400` |
-| Astra Pro Plus | `pip install openni` 后能 `openni2.initialize()`；深度 640×480；彩色设备号；D2C 配准是否生效（不生效时按视角映射，见 `pipeline.color_bbox_to_depth`） |
-| 相机内参与安装 | 用标定或 camera_info 替换 `ASTRA_COLOR_640 / ASTRA_DEPTH_640` 占位值；量 `YUNTUO_CAMERA_MOUNT`（x,y,z,pitch,yaw,roll） |
+| 相机安装 | 装车后量 `YUNTUO_CAMERA_MOUNT`（x,y,z,pitch,yaw,roll，机身系） |
 | 目标三维精度 | 红瓶放在 1.0 / 2.0 / 3.0 m，看网页距离与实测差；颜色判定在场地灯光下复查 |
+| 检测帧率 | fp32 模型约 8 fps；换 int8 量化模型或多 NPU 核可提速（TARGET 链路已满足时延要求，非必须） |
 | 场地点位 | 实测场地后改 `backend/app/config/yuntuo/waypoints.json`（m，起点为里程计原点） |
 | 云端上线 | 同步前端与网关属于生产变更：先备份，确认后再做；不要把 Token / .env 提交进仓库 |

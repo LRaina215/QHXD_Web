@@ -1,0 +1,3 @@
+# fpga_bridge 与感知节点在 RK3588 系统 Python（3.10）上的额外依赖；numpy / opencv / rknnlite 用板上已有的
+pyserial>=3.5
+openni==2.3.0
