@@ -145,6 +145,8 @@ def main() -> int:
     ap.add_argument("--save-hz", type=float, default=5.0)
     ap.add_argument("--nice", type=int, default=int(os.getenv("YUNTUO_PERCEPTION_NICE", "0")),
                     help="librknnrt 初始化时会把所有线程调到 nice -19，压过板上大模型 / 语音合成 / 后端；这里调回该值")
+    ap.add_argument("--stall-exit-s", type=float, default=float(os.getenv("YUNTUO_CAMERA_STALL_EXIT_S", "5")),
+                    help="这么久没有新画面就退出（相机重新插拔后设备要重开），由 systemd 自动重启；0 关闭")
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -175,12 +177,17 @@ def main() -> int:
     log.info("感知节点启动：来源 %s，检测器 %s，发往 fpga_bridge %s（%d 个线程 nice 调回 %d）",
              args.source, model_name, bridge_addr, changed, args.nice)
     next_nice = time.monotonic() + 5.0
+    last_frame_at = time.monotonic()
     try:
         while True:
             t0 = time.monotonic()
             frame = source.read()
             if frame is None:
+                if args.stall_exit_s > 0 and time.monotonic() - last_frame_at > args.stall_exit_s:
+                    log.error("相机 %.0f s 没有新画面（可能被拔插过），退出等 systemd 重启", time.monotonic() - last_frame_at)
+                    return 3
                 continue
+            last_frame_at = time.monotonic()
             seq += 1
             dets = pipeline.process(frame)
             sock.sendto(json.dumps(bridge_message(dets, frame, seq)).encode("utf-8"), bridge_addr)

@@ -51,9 +51,11 @@ class _LatestReader(threading.Thread):
                 self.error = str(exc)
                 time.sleep(0.5)
                 continue
-            if value is not None:
-                with self.lock:
-                    self.value, self.stamp = value, time.monotonic()
+            if value is None:          # 读失败（例如相机被拔掉）立即返回，不歇一下会把一个核跑满
+                time.sleep(0.02)
+                continue
+            with self.lock:
+                self.value, self.stamp = value, time.monotonic()
 
     def latest(self) -> tuple[Any, float]:
         with self.lock:
