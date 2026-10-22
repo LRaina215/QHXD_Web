@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="云拓">
+  <!-- 云拓小程序头像：手绘几何字形（不依赖字体文件）。
+       「拓」比「云」高一级台阶，脚下是琥珀色台阶地形线：轮腿机器人迈上复杂地形；
+       「石」里的「口」画成带轮毂的车轮。主体落在中心半径约 420 的圆内（头像会被裁成圆形）。 -->
+  <rect width="1024" height="1024" fill="#2f5bff"/>
+  <g fill="none" stroke="#fff" stroke-width="54" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 云 -->
+    <path d="M264 378H414"/>
+    <path d="M204 472H472"/>
+    <path d="M330 482 244 642 410 628"/>
+    <!-- 拓：扌 + 石 -->
+    <g transform="translate(0 -48)">
+      <path d="M546 446H640"/>
+      <path d="M598 362V654L568 628"/>
+      <path d="M544 592 642 540"/>
+      <path d="M690 396H842"/>
+      <path d="M762 402 700 546"/>
+      <circle cx="782" cy="598" r="64"/>
+    </g>
+  </g>
+  <circle cx="446" cy="560" r="31" fill="#fff"/>
+  <circle cx="782" cy="550" r="17" fill="#fff"/>
+  <!-- 台阶地形 -->
+  <path d="M168 742H506V694H860" fill="none" stroke="#ffb020" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
