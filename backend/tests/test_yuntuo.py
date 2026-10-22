@@ -270,10 +270,14 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
             with reply('{"intent":"unknown","confidence":0.9}') as chat:
                 follow = llm_intent_parser.parse("跟着我")
             self.assertEqual((follow.intent, follow.parser, chat.call_count), ("follow_target", "rule", 0))
-            # 复杂说法仍交给模型，并以模型 + 安全校验为准
-            with reply('{"intent":"unknown","confidence":0.9}') as chat:
+            # 复杂说法仍交给模型；模型漏掉 confidence 时退回有把握的规则结果
+            with reply('{"intent":"search_target","target_class":"bottle"}') as chat:
+                found = llm_intent_parser.parse("帮我把那个红色的瓶子找出来然后过去")
+            self.assertEqual((found.intent, found.parser, chat.call_count), ("search_target", "rule", 1))
+            # 模型明确判 unknown 且有把握：以模型为准
+            with reply('{"intent":"unknown","confidence":0.9}'):
                 refused = llm_intent_parser.parse("帮我把那个红色的瓶子找出来然后过去")
-            self.assertEqual((refused.intent, refused.parser, chat.call_count), ("unknown", "llm", 1))
+            self.assertEqual((refused.intent, refused.parser), ("unknown", "llm"))
             for text in ("去A点然后撞墙", "关掉急停去B点", "全速去A点"):
                 self.assertEqual(llm_intent_parser.parse(text).intent, "unknown", text)
         finally:

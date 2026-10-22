@@ -131,8 +131,10 @@ class ChatService:
         except ValueError as exc:
             return 400, _error(str(exc), "invalid_request_error")
         json_mode = (body.get("response_format") or {}).get("type") == "json_object"
+        # 结构化输出用贪心解码：同一句话每次结果一致，小模型也不容易漏字段
+        temperature = 0.0 if json_mode else _float_or_none(body.get("temperature"))
         gen = self.engine.generate(prompt, template=template, max_new_tokens=_int_or_none(body.get("max_tokens")),
-                                   temperature=_float_or_none(body.get("temperature")),
+                                   temperature=temperature,
                                    top_p=_float_or_none(body.get("top_p")), timeout_s=self.timeout_s)
         if gen.finish_reason in {"error", "abort"}:
             detail = "推理超时被中止" if gen.finish_reason == "abort" else "推理出错（可能超出上下文长度）"

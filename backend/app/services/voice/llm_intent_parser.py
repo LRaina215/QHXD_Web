@@ -7,7 +7,7 @@ from app.services.intent_parser import ParsedIntent, intent_parser
 from app.services.voice.llm_client import llm_client
 from app.services.voice.llm_prompt import build_prompts, prompt_style
 from app.services.voice.llm_schema import LLMIntent
-from app.services.voice.llm_safety import llm_safety_validator
+from app.services.voice.llm_safety import _threshold as confidence_threshold, llm_safety_validator
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -47,6 +47,8 @@ class LLMIntentParser:
             data = json.loads(self._strip_json_fence(client_response.content))
             llm_result = LLMIntent.from_dict(data)
         except (json.JSONDecodeError, TypeError, ValueError):
+            if self._rule_can_back_up(rule_result):
+                return rule_result
             return ParsedIntent(
                 intent=None,
                 confidence=0.0,
@@ -60,6 +62,9 @@ class LLMIntentParser:
 
         safe = llm_safety_validator.validate(llm_result)
         if not safe.ok:
+            # 板载小模型常漏掉 confidence（解析成 0）：规则有把握时用规则结果；模型明确判 unknown 且有把握时仍以模型为准
+            if self._rule_can_back_up(rule_result) and llm_result.confidence < confidence_threshold():
+                return rule_result
             return ParsedIntent(
                 intent="unknown",
                 confidence=safe.confidence,
@@ -96,6 +101,10 @@ class LLMIntentParser:
         if rule_result.need_confirm or rule_result.confidence < 0.75:
             return True
         return self._looks_complex(text)
+
+    @staticmethod
+    def _rule_can_back_up(rule_result: ParsedIntent) -> bool:
+        return rule_result.intent not in {None, "unknown"} and rule_result.confidence >= 0.9
 
     def _rule_is_confident(self, text: str, rule_result: ParsedIntent) -> bool:
         """规则解析有把握（≥0.9）且句子不复杂：常用短句（跟着我、去 A 点、返航…）不必再等几秒大模型。

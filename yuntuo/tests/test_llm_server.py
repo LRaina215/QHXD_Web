@@ -15,7 +15,8 @@ class FakeEngine:
         self.calls = []
 
     def generate(self, prompt, *, template, max_new_tokens=None, temperature=None, top_p=None, timeout_s=60.0):
-        self.calls.append({"prompt": prompt, "template": template, "max_new_tokens": max_new_tokens})
+        self.calls.append({"prompt": prompt, "template": template, "max_new_tokens": max_new_tokens,
+                           "temperature": temperature})
         return rkllm.Generation(text=self.text, finish_reason=self.finish, prompt_tokens=12, completion_tokens=8,
                                 prefill_ms=10.0, generate_ms=50.0, memory_mb=1700.0, wall_ms=61.0)
 
@@ -57,6 +58,7 @@ def test_chat_service_json_mode_and_errors():
     assert json.loads(body["choices"][0]["message"]["content"]) == {"intent": "pause_task", "confidence": 0.9}
     assert body["usage"]["total_tokens"] == 20
     assert engine.calls[0]["max_new_tokens"] == 64
+    assert engine.calls[0]["temperature"] == 0.0          # json_object 强制贪心解码
     assert service.health()["last"]["ok"] is True
 
     assert service.chat({"messages": [], "stream": True})[0] == 400
