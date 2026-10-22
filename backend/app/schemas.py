@@ -620,6 +620,7 @@ class VoiceConfirmCommandRequest(ContractModel):
     pending_command_id: str = Field(min_length=1, description="待确认命令 ID")
     confirmed: bool = Field(description="true 执行，false 取消")
     requested_by: str | None = Field(default="operator", description="确认操作人")
+    source: str | None = Field(default=None, description="确认来源（可选；网页 / 小程序统一带 source，这里只接受不使用）")
 
 
 class VoiceConfirmCommandResponse(ContractModel):

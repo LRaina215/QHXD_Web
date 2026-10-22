@@ -107,11 +107,22 @@ async def _mock_state_loop() -> None:
 
 
 async def _real_health_loop() -> None:
+    last_heartbeat = 0.0
     while True:
         state = mode_manager.poll_real_health()
         if state is not None:
             await ws_manager.broadcast_state(state)
+        if time.monotonic() - last_heartbeat >= _ws_heartbeat_seconds():
+            last_heartbeat = time.monotonic()
+            await ws_manager.broadcast_heartbeat(datetime.now(timezone.utc).isoformat())
         await asyncio.sleep(1)
+
+
+def _ws_heartbeat_seconds() -> float:
+    try:
+        return max(1.0, float(os.getenv("WS_HEARTBEAT_SECONDS", "5")))
+    except ValueError:
+        return 5.0
 
 
 async def _speak_mission_event(event_type: str, detail: str, event_key: str | None = None) -> None:

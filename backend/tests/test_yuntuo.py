@@ -139,6 +139,32 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(response.data.accepted)
         self.assertEqual(persistence.list_command_logs()[0].command, "estop")
 
+    def test_confirm_request_accepts_miniprogram_source(self) -> None:
+        request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
+        self.assertEqual(request.source, "miniprogram")
+
+    async def test_heartbeat_reaches_every_channel_and_drops_dead_sockets(self) -> None:
+        from app.services.ws_manager import WebSocketManager
+
+        class FakeSocket:
+            def __init__(self, fail: bool = False) -> None:
+                self.fail = fail
+                self.sent: list[dict] = []
+
+            async def send_json(self, payload: dict) -> None:
+                if self.fail:
+                    raise RuntimeError("closed")
+                self.sent.append(payload)
+
+        manager = WebSocketManager()
+        state_ws, nav_ws, dead_ws = FakeSocket(), FakeSocket(), FakeSocket(fail=True)
+        manager._connections.update({state_ws, dead_ws})
+        manager._navigation_connections.add(nav_ws)
+        await manager.broadcast_heartbeat("2026-10-23T00:00:00+00:00")
+        self.assertEqual(state_ws.sent[0]["type"], "heartbeat")
+        self.assertEqual(nav_ws.sent[0]["data"]["timestamp"], "2026-10-23T00:00:00+00:00")
+        self.assertNotIn(dead_ws, manager._connections)
+
 
 if __name__ == "__main__":
     unittest.main()

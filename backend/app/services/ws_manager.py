@@ -100,5 +100,18 @@ class WebSocketManager:
         for connection in stale_connections:
             self.disconnect(connection)
 
+    async def broadcast_heartbeat(self, timestamp: str) -> None:
+        """所有通道定时发一条心跳：小程序 15 s 收不到任何消息会判断断线重连，导航通道在 FPGA 离线时本来是静默的。
+        客户端按 type 分发，不认识的 heartbeat 会被忽略。"""
+        payload = {"type": "heartbeat", "data": {"timestamp": timestamp}}
+        stale_connections: list[WebSocket] = []
+        for connection in list(self._connections | self._imu_connections | self._navigation_connections):
+            try:
+                await asyncio.wait_for(connection.send_json(payload), timeout=_WS_SEND_TIMEOUT)
+            except Exception:
+                stale_connections.append(connection)
+        for connection in stale_connections:
+            self.disconnect(connection)
+
 
 ws_manager = WebSocketManager()
