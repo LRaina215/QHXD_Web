@@ -70,18 +70,18 @@ export const COLOR_SWATCH: Record<string, string> = {
 }
 
 export function taskTone(state: string | undefined): Tone {
-  if (state === 'running' || state === 'pending') return 'info'
+  if (state === 'running' || state === 'pending') return 'run'
   if (state === 'completed') return 'ok'
-  if (state === 'failed') return 'danger'
-  if (state === 'paused' || state === 'cancelled') return 'warn'
-  return 'muted'
+  if (state === 'failed') return 'bad'
+  if (state === 'paused') return 'wait'
+  return 'off'
 }
 
 export function linkTone(link: string | undefined | null): Tone {
   if (link === 'online') return 'ok'
-  if (link === 'mock') return 'info'
-  if (link === 'offline') return 'danger'
-  return 'muted'
+  if (link === 'mock') return 'mock'
+  if (link === 'offline') return 'bad'
+  return 'off'
 }
 
 export function linkLabel(link: string | undefined | null): string {
@@ -90,10 +90,11 @@ export function linkLabel(link: string | undefined | null): string {
 
 export function levelTone(level: string | undefined): Tone {
   const v = (level ?? '').toLowerCase()
-  if (['error', 'critical', 'danger', 'failed'].some((k) => v.includes(k))) return 'danger'
-  if (['warn', 'blocked', 'paused', 'cancelled'].some((k) => v.includes(k))) return 'warn'
-  if (['completed', 'arrived', 'ok'].some((k) => v.includes(k))) return 'ok'
-  return 'info'
+  if (['error', 'critical', 'danger', 'failed'].some((k) => v.includes(k))) return 'bad'
+  if (['warn', 'blocked'].some((k) => v.includes(k))) return 'warn'
+  if (['paused', 'cancelled', 'lost'].some((k) => v.includes(k))) return 'wait'
+  if (['completed', 'arrived', 'found', 'ok'].some((k) => v.includes(k))) return 'ok'
+  return 'run'
 }
 
 export function fmt(value: number | null | undefined, digits = 2, suffix = ''): string {

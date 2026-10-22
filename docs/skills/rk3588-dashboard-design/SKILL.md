@@ -1,124 +1,49 @@
 ---
 name: rk3588-dashboard-design
-description: Project-specific frontend design rules for the QHXD RK3588 robot dashboard. Read before changing frontend Dashboard UI.
+description: 云拓（yuntuo-fpga 分支）控制台前端的设计规则。改动 frontend/ 的界面前先读。
 ---
 
-# RK3588 Dashboard Design Skill
+# 云拓控制台设计规则
 
-## Project Positioning
+## 定位
 
-This frontend is the QHXD RK3588 vehicle robot middleware Dashboard. It is used for competition presentation and real integration work for a delivery and inspection sentinel robot.
+比赛展示与实车联调共用的机器人控制台：评委第一眼要看懂"机器人在做什么、在哪、看到了什么"，操作者要能一键下任务和急停。
+不是通用后台模板，也不是大屏动画。
 
-It is not a generic admin template, not a decorative big-screen animation page, and not a raw debug page. The design goal is a clean robot control console: clear status hierarchy, reliable operation entry points, readable alerts, and enough visual polish for formal demonstration.
+## 视觉语言（frontend/src/style.css 里的令牌）
 
-## Non-Breakable Business Functions
+- 浅色仪器盘：暖白画布 `--canvas` + 白色卡片 `--surface`，层级靠留白、字号和轻阴影，不靠描边和渐变。
+- 唯一品牌色 `--brand`（钴蓝 #2f5bff）只用于主操作按钮、当前选中、进度；其他颜色只表达状态。
+- 场地图与相机放在深色舞台 `--stage` 上（画面类内容在深底上更清晰），这是页面里唯一的深色区域。
+- 状态色语义固定：`ok` 绿（在线 / 完成）、`run` 蓝（执行中）、`wait` 黄（暂停 / 待确认）、`warn` 橙（受阻）、
+  `bad` 红（故障 / 急停 / 失败）、`off` 灰（离线 / 未接入）、`mock` 紫灰（模拟）。用 `.tag.<tone>`，不要在组件里自造颜色。
+- 字体：Inter Variable（随包打包，离线可用）负责数字与拉丁字符，中文回落系统字体；数值一律 `.num`（等宽数字）。
+- 图标：lucide-vue-next（版本锁定），线宽默认，尺寸 16–22。
+- 圆角 16 / 12 / 8，按钮高 44（小按钮 34），间距 8 的倍数。
 
-Never remove or hide these capabilities:
+## 信息架构（App.vue 的网格）
 
-- Mock / Real mode display and switch entry.
-- NUC online/offline state and RK3588 backend/WebSocket state.
-- Current task, `task_status`, `nav_status`, `robot_pose`, device state, alerts, and faults.
-- Mission command feedback and existing mission API calls.
-- Text command entry and RK3588 board-side recording entry.
-- `/api/voice/record_command` behavior and FunASR result fields.
-- LLM parsing result, `need_confirm`, `pending_command_id`, and movement confirmation dialog.
-- `/api/voice/confirm_command` confirm/cancel flow.
-- YOLO `detection_status`, model/source, objects, events, visual alerts, and latest frame display if already present.
-- Navigation visualization placeholder and future replacement point for `NavMapCanvas`.
+1. 头部：品牌、四条链路（RK3588 / FPGA 导航 / FPGA 控制 / 视觉）、模拟 / 实车、Token、时钟、急停。
+2. 当前任务横幅 `MissionHero`：任务名用大字号，进度、剩余距离、暂停 / 继续 / 取消 / 返航。
+3. 舞台 `StageCard`：场地图（`FieldMap` 画布）与相机二选一做主视图，另一个画中画，左下角速度 / 位姿 / 定位 HUD。
+4. 右栏：`CommandCard`（视觉任务 / 定点 / 巡检）+ `VoiceCard`（对话式语音助手）。
+5. 下排：`TelemetryCard`（FPGA 平台）、`ObjectsCard`（视觉目标 + 视野俯视图）、`ActivityCard`（动态）。
+6. 底部：`ArchitecturePanel` 分层架构（答辩讲解用，链路在线时点亮）。
 
-Do not modify backend API paths, WebSocket protocol, mission behavior, voice behavior, LLM safety rules, YOLO data structure, or navigation business logic while doing visual work.
+手机（≤ 960 px）单列；≤ 560 px 头部不再吸顶，急停改为右下角常驻悬浮按钮。
 
-## Dashboard Information Architecture
+## 不能破坏的功能
 
-Use this structure by default:
+- 急停任何时候可见、一键可达；运动类语音命令必须经 `VoiceConfirmDialog` 确认（`/api/voice/confirm_command`）。
+- 模拟 / 实车切换（`/api/system/mode/switch`）、任务接口 `/api/mission/*`、急停 `/api/platform/estop`。
+- 智能语音：文字 `/api/voice/smart_command`、网页麦克风 `/api/voice/browser_smart_command`（云端网关转码）、
+  车载麦克风 `/api/robot/voice/onboard_smart_command`。
+- 实时数据走 `/ws/state`、`/ws/navigation`；状态 / 告警 / 任务事件有 HTTP 兜底轮询。
+- 视频：`CloudVideoPlayer`（公网 WebRTC → HLS → 本机 MJPEG 回退），不要改它的会话与回退逻辑。
+- 不改后端接口路径、WS 协议和任务 / 语音 / LLM 安全行为；纯视觉改动只动 frontend/。
 
-1. Top command header: system name, mode, NUC state, RK3588 state, clock, critical alert summary, Mock/Real switch.
-2. Readiness strip: current task, robot online/health, battery/emergency/fault, latest alert, perception state.
-3. Main operation grid: navigation visualization placeholder on the left; voice/LLM and YOLO on the right.
-4. Mission control stays close to navigation because both affect robot movement.
-5. Bottom observability: recent voice, LLM, YOLO, mission, runtime, and alert events.
+## 自检
 
-The first screen must show the most important system state without requiring scrolling on a normal laptop display.
-
-## Visual Style
-
-Preferred direction:
-
-- Clean technical blue/white style.
-- Light surface with restrained deep-blue header accents.
-- Card-based but dense enough for operations.
-- No noisy neon, no excessive gradients, no decorative animation that reduces readability.
-- Use an 8px spacing rhythm and stable grid tracks.
-- Cards should use consistent 8px radius, border, header typography, and content spacing.
-- Text must never overlap or overflow controls; long values should wrap inside their cell.
-
-## Status Colors
-
-Use unified status semantics:
-
-- `online` / `normal`: green.
-- `running` / `navigating`: blue.
-- `pending` / `need_confirm`: yellow.
-- `warning` / `alert`: orange.
-- `fault` / `emergency_stop`: red.
-- `offline` / `unknown`: gray.
-- `mock`: muted gray-purple or gray.
-- `real`: blue or green.
-
-Use existing `.status-badge` and `.tone-*` classes, or equivalent project-local status components. Do not invent unrelated colors in each card.
-
-## Component Rules
-
-- Header: compact, status-first, with visible active mode and clock.
-- Cards: one clear heading, one primary value, supporting metadata, status badge where useful.
-- Buttons: 44px touch target, one primary action per group, secondary and warning actions visually distinct.
-- Forms: visible labels above inputs; no placeholder-only fields.
-- Lists: align time, source, level, and message consistently; wrap long messages.
-- Empty states: quiet dashed container with operational text, not blank space.
-- Modals: show close, cancel, confirm; risk note must be visible for robot movement.
-
-## Navigation Placeholder Rules
-
-`NavMapPlaceholder.vue` is a reserved operational region, not a decorative illustration. It must display:
-
-- Current pose.
-- Current goal.
-- Navigation state.
-- Frame/path metadata when available.
-- A clear message that NUC navigation real-time stream is pending.
-
-Keep props compatible for future `NavMapCanvas` replacement:
-
-```ts
-robotPose
-currentGoal
-globalPath
-navState
-```
-
-Do not directly connect ROS2 topics from the frontend in this phase.
-
-## Dialog And Dangerous Operation Rules
-
-Movement commands produced by LLM parsing must remain gated by confirmation:
-
-- `need_confirm=true` opens the movement confirmation dialog.
-- Confirm calls `/api/voice/confirm_command` with `confirmed=true`.
-- Cancel calls `/api/voice/confirm_command` with `confirmed=false` and must not trigger mission execution.
-- Expired pending commands must show an error.
-- Unknown commands must not trigger mission behavior.
-
-The dialog must clearly display recognized text, intent, command, waypoint, parser/LLM info, confidence, and detail.
-
-## Self-Check Before Finishing Frontend Changes
-
-- Dashboard opens without blank screen.
-- Mock / Real switch is still visible and calls the original endpoint.
-- Board-side recording button is still visible and calls `/api/voice/record_command`.
-- Text command entry still calls `/api/voice/text_command`.
-- Movement confirmation dialog still appears and calls `/api/voice/confirm_command`.
-- YOLO card still displays `detection_status` and latest frame if available.
-- Navigation placeholder still shows pose, goal, state, and future stream notice.
-- Alerts and runtime events are readable.
-- No backend API path or WebSocket route has changed.
-- Layout is checked around 375px, 768px, 1440px, and wide desktop widths.
+- 1600×1000、1366×768、390×844 三种宽度截图：无横向滚动、无文字重叠、首屏能看到任务横幅与舞台。
+- 后端 + `scripts/start_yuntuo_sim.sh` 跑起来后，"寻找红色水瓶"从输入到确认到完成全流程走一遍。
+- `npm run build`（含 vue-tsc 类型检查）通过。

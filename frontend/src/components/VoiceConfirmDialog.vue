@@ -46,7 +46,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       </dl>
       <p v-if="error" class="err">{{ error }}</p>
       <footer>
-        <button type="button" class="btn ghost" :disabled="loading" @click="emit('cancel')">取消任务</button>
+        <button type="button" class="btn" :disabled="loading" @click="emit('cancel')">取消任务</button>
         <button ref="confirmButton" type="button" class="btn primary" :disabled="loading" @click="emit('confirm')">
           {{ loading ? '处理中…' : '确认执行' }}
         </button>
@@ -56,21 +56,22 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
-.backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(2, 5, 8, 0.7); backdrop-filter: blur(6px); }
-.dialog { width: min(560px, 100%); padding: 22px; border-radius: 16px; background: var(--panel-solid); border: 1px solid var(--line-strong); border-top: 4px solid var(--warn); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); }
-.kicker { margin: 0 0 4px; color: var(--warn); font-size: 12px; letter-spacing: 0.12em; }
-h2 { margin: 0; font-size: 20px; }
-.note { margin: 12px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; color: var(--text-2); background: rgba(255, 181, 71, 0.08); border: 1px solid rgba(255, 181, 71, 0.25); }
-dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; }
-dl > div { padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); min-width: 0; }
+.backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(21, 23, 26, 0.36); backdrop-filter: blur(6px); }
+.dialog { width: min(560px, 100%); padding: 26px; border-radius: 20px; background: var(--surface); box-shadow: 0 24px 80px rgba(21, 23, 26, 0.28); }
+.kicker { margin: 0 0 6px; color: var(--wait); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; }
+h2 { margin: 0; font-size: 22px; font-weight: 720; letter-spacing: -0.02em; }
+.note { margin: 14px 0; padding: 12px 14px; border-radius: 12px; font-size: 13px; color: var(--ink-2); background: var(--wait-soft); }
+dl { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin: 0; }
+dl > div { min-width: 0; }
 .wide { grid-column: 1 / -1; }
-dt { font-size: 11px; color: var(--text-3); margin-bottom: 3px; }
+dt { font-size: 12px; color: var(--ink-3); font-weight: 600; margin-bottom: 2px; }
 dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-.err { color: var(--danger); font-size: 13px; }
-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
-footer .btn { min-height: 42px; min-width: 110px; }
+.err { color: var(--bad); font-size: 13px; }
+footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+footer .btn { min-width: 120px; }
 @media (max-width: 560px) {
   .backdrop { place-items: end center; padding: 10px; }
+  .dialog { padding: 20px; }
   dl { grid-template-columns: 1fr; }
   footer .btn { flex: 1; }
 }

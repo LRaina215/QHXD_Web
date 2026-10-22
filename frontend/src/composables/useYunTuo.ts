@@ -56,6 +56,8 @@ export function useYunTuo() {
   const voiceStatus = ref('空闲')
   const confirmError = ref('')
   const lastMessage = ref('等待命令')
+  const toast = ref<{ id: number; text: string; tone: Tone } | null>(null)
+  let toastTimer = 0
 
   const platform = computed(() => state.value?.platform_status ?? null)
   const isMock = computed(() => state.value?.system_mode.mode !== 'real')
@@ -66,8 +68,11 @@ export function useYunTuo() {
   let timers: number[] = []
   let running = false
 
-  function log(text: string, tone: Tone = 'info', source = '控制台') {
+  function log(text: string, tone: Tone = 'run', source = '控制台') {
     lastMessage.value = text
+    toast.value = { id: Date.now(), text, tone }
+    window.clearTimeout(toastTimer)
+    toastTimer = window.setTimeout(() => { toast.value = null }, 4200)
     logs.value = [{ id: `${Date.now()}-${Math.random()}`, time: new Date().toISOString(), tone, source, text },
       ...logs.value].slice(0, 40)
   }
@@ -193,7 +198,7 @@ export function useYunTuo() {
       log(payload.data.detail, payload.data.accepted ? 'ok' : 'warn', '任务')
       await Promise.all([loadState(), loadTaskEvents()])
     } catch (error) {
-      log(error instanceof Error ? error.message : '任务发送失败', 'danger', '任务')
+      log(error instanceof Error ? error.message : '任务发送失败', 'bad', '任务')
     } finally {
       busy.mission = false
     }
@@ -216,9 +221,9 @@ export function useYunTuo() {
     try {
       const payload = await post<MissionResponse>('/api/platform/estop',
         { engage, source: 'web', requested_by: 'dashboard' }, '急停接口调用失败')
-      log(payload.data.detail, payload.data.accepted ? (engage ? 'danger' : 'ok') : 'warn', '急停')
+      log(payload.data.detail, payload.data.accepted ? (engage ? 'bad' : 'ok') : 'warn', '急停')
     } catch (error) {
-      log(error instanceof Error ? error.message : '急停发送失败', 'danger', '急停')
+      log(error instanceof Error ? error.message : '急停发送失败', 'bad', '急停')
     } finally {
       busy.estop = false
     }
@@ -229,11 +234,11 @@ export function useYunTuo() {
     try {
       const payload = await post<MissionResponse>('/api/system/mode/switch',
         { mode, source: 'web', requested_by: 'dashboard' }, '模式切换失败')
-      log(payload.data.detail, 'info', '系统')
+      log(payload.data.detail, 'run', '系统')
       trail.value = []
       await Promise.all([loadState(), loadAlerts(), loadMapMeta()])
     } catch (error) {
-      log(error instanceof Error ? error.message : '模式切换失败', 'danger', '系统')
+      log(error instanceof Error ? error.message : '模式切换失败', 'bad', '系统')
     } finally {
       busy.mode = false
     }
@@ -243,7 +248,7 @@ export function useYunTuo() {
     token.value = value.trim()
     if (token.value) window.localStorage.setItem(TOKEN_KEY, token.value)
     else window.localStorage.removeItem(TOKEN_KEY)
-    log(token.value ? '访问 Token 已保存' : '访问 Token 已清除', 'info', '系统')
+    log(token.value ? '访问 Token 已保存' : '访问 Token 已清除', 'run', '系统')
   }
 
   // ------------------------------------------------------------ 语音 / 智能助手
@@ -253,13 +258,13 @@ export function useYunTuo() {
     if (!payload.success || !payload.data) {
       const message = payload.detail || payload.error || payload.data?.error_reason || fallback
       voiceStatus.value = '失败'
-      log(message, 'danger', '语音')
+      log(message, 'bad', '语音')
       return
     }
     const data = payload.data
     smart.value = data
     voiceStatus.value = '已处理'
-    log(data.reply_text || data.error_reason || '智能助手已处理', data.error_reason ? 'warn' : 'info', '语音')
+    log(data.reply_text || data.error_reason || '智能助手已处理', data.error_reason ? 'warn' : 'run', '语音')
     const candidate = data.mission_candidate
     if (candidate?.pending_command_id) {
       confirmError.value = ''
@@ -283,7 +288,7 @@ export function useYunTuo() {
       handleSmart(payload, '智能助手调用失败')
     } catch (error) {
       voiceStatus.value = '失败'
-      log(error instanceof Error ? error.message : '文本命令发送失败', 'danger', '语音')
+      log(error instanceof Error ? error.message : '文本命令发送失败', 'bad', '语音')
     } finally {
       busy.voice = false
     }
@@ -328,7 +333,7 @@ export function useYunTuo() {
     } catch (error) {
       const message = error instanceof Error ? error.message : '网页麦克风识别失败'
       voiceStatus.value = '失败'
-      log(/denied|Permission/.test(message) ? '浏览器麦克风权限被拒绝' : message, 'danger', '语音')
+      log(/denied|Permission/.test(message) ? '浏览器麦克风权限被拒绝' : message, 'bad', '语音')
     } finally {
       stream?.getTracks().forEach((t) => t.stop())
       busy.voice = false
@@ -345,7 +350,7 @@ export function useYunTuo() {
       handleSmart(payload, '车载麦克风识别失败')
     } catch (error) {
       voiceStatus.value = '失败'
-      log(error instanceof Error ? error.message : '车载麦克风识别失败', 'danger', '语音')
+      log(error instanceof Error ? error.message : '车载麦克风识别失败', 'bad', '语音')
     } finally {
       busy.voice = false
     }
@@ -384,7 +389,7 @@ export function useYunTuo() {
 
   return {
     state, nav, mapMeta, mapImageVersion, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
-    voiceStatus, confirmError, lastMessage, platform, isMock, detections, timeline,
+    voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline,
     start, stop, mission, goTo, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
     recordOnboard, confirm, log,
   }

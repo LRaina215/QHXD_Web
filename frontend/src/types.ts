@@ -1,4 +1,4 @@
-export type Tone = 'ok' | 'info' | 'warn' | 'danger' | 'muted'
+export type Tone = 'ok' | 'run' | 'wait' | 'warn' | 'bad' | 'off' | 'mock'
 
 export type DetectionObject = {
   class_name: string
