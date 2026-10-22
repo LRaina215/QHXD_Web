@@ -228,11 +228,14 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([round(float(s), 3) for s in samples], [0.25, -0.5])
 
     def test_llm_task_reply_comes_from_validated_payload_not_model_text(self) -> None:
+        from app.services.waypoint_resolver import waypoint_resolver
+
+        waypoint = waypoint_resolver.list_waypoints()[0]
         result = llm_safety_validator.validate(LLMIntent.from_dict(
-            {"intent": "go_to_waypoint", "waypoint_id": "wp_b", "confidence": 0.9, "reply_text": "好的，前往 A 点"}))
+            {"intent": "go_to_waypoint", "waypoint_id": waypoint["waypoint_id"], "confidence": 0.9,
+             "reply_text": "好的，前往火星"}))
         self.assertTrue(result.ok)
-        self.assertIn("B 点", result.detail)
-        self.assertNotIn("A 点", result.detail)
+        self.assertEqual(result.detail, f"已解析为前往{waypoint.get('name') or waypoint['waypoint_id']}任务。")
         chat = llm_safety_validator.validate(LLMIntent.from_dict(
             {"intent": "open_chat", "confidence": 0.9, "reply_text": "你好"}))
         self.assertEqual(chat.detail, "你好")
