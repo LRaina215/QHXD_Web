@@ -18,8 +18,8 @@ Astra Pro Plus ─► 感知节点（RKNN 检测 + 深度 + 颜色 + 跟踪）
 
 | 路径 | 内容 |
 |---|---|
-| `backend/` | FastAPI 后端：状态 / WebSocket / SQLite、任务预检与转发、语音（FunASR、规则 + LLM 解析、TTS）、平台状态 |
-| `yuntuo/` | `fpga_link`（NV 报文、串口 / UDP 链路、控制遥测、先验地图包）、`bridge`（fpga_bridge）、`perception`（RGB-D 感知）、`mock_fpga` 模拟器 |
+| `backend/` | FastAPI 后端：状态 / WebSocket / SQLite、任务预检与转发、语音（SenseVoice 识别、规则 + 大模型解析、语音合成）、平台状态 |
+| `yuntuo/` | `fpga_link`（NV 报文、串口 / UDP 链路、控制遥测、先验地图包）、`bridge`（fpga_bridge）、`perception`（RGB-D 感知）、`llm`（板载 rknn-llm 大模型服务）、`tts`（板载 sherpa-onnx 语音合成服务）、`mock_fpga` 模拟器 |
 | `frontend/` | Vue 3 控制台（设计规则见 `docs/skills/rk3588-dashboard-design/SKILL.md`） |
 | `experiments/rknn_yolo/` | RKNN YOLO 推理与后处理（感知节点复用）、H.264 推流 |
 | `cloud_gateway/` · `streaming/` | 云服务器上的公网网关与 MediaMTX 视频中继 |
@@ -41,12 +41,13 @@ cd frontend && npm ci && npm run dev     # http://127.0.0.1:5173
 ```bash
 cp .env.example .env                      # 按实机修改：FPGA 串口、相机、点位、离线 LLM / TTS
 ./scripts/install_backend_service.sh      # qhxd-backend.service
-./scripts/install_yuntuo_services.sh      # udev 规则、yuntuo-fpga-bridge、yuntuo-perception（同时停用旧的 Nav2 执行器）
-sudo install -m 0644 systemd/qhxd-boot.service /etc/systemd/system/ && sudo systemctl enable qhxd-boot.service
+./scripts/install_rkllm_runtime.sh        # 板载大模型运行库（/opt/rkllm/1.3.1）
+./scripts/install_yuntuo_services.sh --mock-fpga --with-llm --with-tts
+                                          # udev、fpga_bridge、感知、模拟 FPGA、大模型、语音合成、qhxd-boot（同时停用旧的 Nav2 执行器）
 ./scripts/status_public_robot.sh
 ```
 
-上机核对清单见 `docs/YUNTUO.md` 第 8 节（串口设备号、Astra 内参与安装、场地点位等）。
+模型下载位置、服务端口、回滚方法见 `docs/YUNTUO.md` 第 6、7 节；上机核对清单见第 8 节（串口设备号、Astra 内参与安装、场地点位等）。
 
 ## 测试
 

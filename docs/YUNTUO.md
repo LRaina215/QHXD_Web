@@ -96,33 +96,58 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 打开网页，右上角切到"实车"：链路显示"模拟"，地图上能看到车、点位与轨迹，视觉窗口是合成画面（SIMULATION）。
 可直接试"寻找红色水瓶""跟随我""前往 B 点""巡检"、急停。虚拟场景：红瓶 (3.6, 1.3)、蓝瓶 (1.6, −1.7)、绕圈走动的人。
 
-测试：`python -m pytest yuntuo/tests`（29 项，含 bridge + 模拟器闭环）；`cd backend && python -m pytest`（42 项）。
+测试：`python -m pytest yuntuo/tests`（38 项，含 bridge + 模拟器闭环、大模型 / 语音合成服务）；`cd backend && python -m pytest`（48 项）。
 
-## 6. 上 RK3588
+## 6. 上 RK3588（2026-10-23 已切换完成）
 
-1. 代码：`git fetch && git checkout yuntuo-fpga`（目录仍是 `/home/robomaster/QHXD`），`pip install --user -r backend/requirements.txt`；
-   相机：`./scripts/install_orbbec_openni2.sh`（Orbbec 版 OpenNI2 装到 `/opt/OpenNI2/Redist`、udev 规则、`yuntuo/requirements.txt`）。
-   Ubuntu 自带的 `libopenni2` 不认 Orbbec 设备（VID 2bc5），不要用它。numpy / opencv / RKNN Lite 用板上已有的。
-2. `.env`：以新的 `.env.example` 为模板重写（旧 `.env` 里的 Nav2 / C 板 / IMU 桥配置已无用，密钥照搬）；
-   点位配置路径指向 `backend/app/config/yuntuo/`。
-3. `./scripts/install_yuntuo_services.sh`：udev 规则、停用 RK3588 上已安装的 `qhxd-nav-mission`、启用 `yuntuo-fpga-bridge` 与
-   `yuntuo-perception`；再重装 `systemd/qhxd-boot.service`（它不再依赖 Nav2 执行器）。
-4. 前端：本机访问用 `scripts/start_frontend.sh`（vite dev，:5173）；公网仍走云端静态站 + 网关，`npm run build` 后把 `frontend/dist` 同步到云服务器
-   （上线前确认，见第 8 节）。
-5. 现场无网络：RK3588 开热点，手机 / 电脑连上后访问 `http://<RK3588 热点 IP>:5173`；ASR（FunASR SenseVoice）本来就是离线的，
-   LLM / TTS 按下一节切到本地。
+板上 `/home/robomaster/QHXD` 已切到 `yuntuo-fpga`，旧 Nav2 / C 板 / Point-LIO 栈已停用，开机自启的服务：
 
-## 7. 离线大模型与 TTS（RK3588 本机）
+| 服务 | 作用 | 端口 |
+|---|---|---|
+| `qhxd-backend` | 后端 + 网页静态文件 | 0.0.0.0:8000 |
+| `qhxd-boot` | 开机初始化音频、切实车模式 | — |
+| `yuntuo-fpga-bridge` | 任务层 ↔ FPGA（`.env` 的 `YUNTUO_FPGA_LINK`） | 127.0.0.1:9101 |
+| `yuntuo-mock-fpga` | FPGA 未烧录期间扮演 FPGA 导航 + 控制遥测 | UDP 127.0.0.1:9000 → :9104 |
+| `yuntuo-perception` | Astra Pro Plus + RKNN YOLO + 三维 / 颜色 / 跟踪 | UDP → :9102 |
+| `yuntuo-llm` | 离线大模型（rknn-llm，NPU） | 127.0.0.1:8080 |
+| `yuntuo-tts` | 离线语音合成（sherpa-onnx，CPU） | 127.0.0.1:8081 |
 
-宣讲要求优先离线，联网可能扣分。后端已支持：
+重装或换机的步骤：
 
-- **LLM**：`LLM_BACKEND=local`、`LLM_ENABLE=true`，后端请求 `LLM_LOCAL_BASE_URL` 的 OpenAI 兼容 `/v1/chat/completions`，不需要 Key。
-  RK3588 上可用 Rockchip RKLLM（NPU）跑 Qwen2.5-1.5B/3B-Instruct w8a8，外面套一个 OpenAI 兼容服务；或 llama.cpp server（CPU，GGUF Q4）。
-  模型只做意图解析，输出照旧经过本地白名单 + 置信度 + 运动类必须确认三道校验；本地服务不支持 `response_format` 时设 `LLM_LOCAL_JSON_MODE=false`。
-  规则解析器本身已覆盖"找红色水瓶""跟着我""去 A 点"等常用说法，LLM 只处理复杂说法；模型挂了也不影响基本任务。
-- **TTS**：`TTS_BACKEND=local` + `TTS_LOCAL_CMD` 命令模板（不经 shell，`{text}`、`{out}` 替换），推荐 sherpa-onnx 的中文 VITS / MeloTTS 模型，
-  或 Piper 中文模型；生成 wav 后沿用原来的本机播放（`TTS_AUTO_PLAY_LOCAL=true`、`TTS_PLAYER_CMD`）。
-- 资源：导航已不在 RK3588 上跑，NPU 留给 YOLO（单核即可）+ RKLLM，CPU 留给 FunASR / TTS；上机后实测内存与延迟再定模型大小。
+1. 代码：`git fetch && git checkout yuntuo-fpga`，`pip install --user -r backend/requirements.txt sherpa-onnx==1.13.8`；
+   相机：`./scripts/install_orbbec_openni2.sh`（Ubuntu 自带的 `libopenni2` 不认 Orbbec 设备 VID 2bc5，不要用它）；
+   大模型运行库：`./scripts/install_rkllm_runtime.sh [librkllmrt.so]`（装到 `/opt/rkllm/1.3.1/`，不动 `/usr/lib` 里已有的旧版）。
+2. 模型（都不进仓库，放 `~/models`）：见第 7 节表格。
+3. `.env`：以 `.env.example` 为模板重写，密钥 / 音频设备 / 天气照搬旧 `.env`；点位指向 `backend/app/config/yuntuo/`。
+   FPGA 未烧录时 `YUNTUO_FPGA_LINK=udp:127.0.0.1:9000`、`YUNTUO_FPGA_IS_MOCK=true`、`YUNTUO_CONTROL_TELEMETRY=udp:127.0.0.1:9104`。
+4. `./scripts/install_yuntuo_services.sh --mock-fpga --with-llm --with-tts`（无终端时 `SUDO="sudo -A"` + `SUDO_ASKPASS`）。
+   接真 FPGA 后改 `.env` 的链路，再不带 `--mock-fpga` 跑一遍，脚本会停掉模拟器。
+5. 回滚到旧栈：`git checkout master`，恢复 `~/backups/qhxd_pre_yuntuo_*/env.master` 为 `.env`、恢复其中的 `qhxd-*.service`，
+   `systemctl disable --now yuntuo-*`、`systemctl enable --now qhxd-nav-mission`，重启。
+6. 现场无网络：RK3588 开热点，手机 / 电脑访问 `http://<RK3588 热点 IP>:8000`；语音识别、大模型、语音合成全部在板上。
+
+## 7. 离线语音（RK3588 本机，已部署）
+
+一句话的流程：麦克风 / 网页 / 小程序录音 → SenseVoice 识别 → 规则解析（常用说法直接命中）→ 复杂说法交给板载 Qwen2.5-1.5B →
+白名单 + 置信度 + 运动类必须确认 → 回复文字 → 板载语音合成 → 喇叭播放。全程不联网。
+
+| 环节 | 实现 | 模型（`~/models`） | 板上实测 |
+|---|---|---|---|
+| 识别 | `ASR_BACKEND=sherpa`，sherpa-onnx 版 SenseVoice int8 | `asr/sherpa-onnx-sense-voice-zh-2024-07-17`（hf-mirror csukuangfj/…） | 加载 3 s，一句 0.15–0.2 s |
+| 大模型 | `yuntuo-llm`：自写 ctypes 绑定 `librkllmrt.so` 1.3.1 + OpenAI 兼容子集；`LLM_BACKEND=local` | `llm/qwen2.5-1.5b-instruct-w8a8/Qwen2.5-1.5B-Instruct.rkllm`（ModelScope RKNNAI，toolkit 1.2.4，上下文 1024） | 加载 6 s，内存 1.7 GB；意图 JSON 约 2–4 s |
+| 合成 | `yuntuo-tts`：sherpa-onnx 常驻服务；`TTS_BACKEND=local` + `TTS_LOCAL_URL` | `tts/matcha-icefall-zh-en` + `tts/vocoders/vocos-16khz-univ.onnx` | 加载 3.4 s，一句 0.5–0.7 s（RTF≈0.16），中英混读 |
+
+要点：
+
+- 板载模型上下文只有 1K，`LLM_BACKEND=local` 时自动用精简提示（约 540 token，`LLM_PROMPT_STYLE` 可强制 full / compact）；
+  系统提示由 rknn-llm 缓存，之后每句只需预填十几个 token。
+- 任务类命令（去点位、找物、跟随、巡检、返航、暂停 / 继续）的回复按校验后的任务生成，不用模型自己写的话；只有闲聊用模型回复。
+- 智能语音接口只解析一次（以前同一句话会调两次大模型），语音 / 大模型 / 合成都在线程池里跑，推理期间急停等接口照常响应（实测最大 41 ms）。
+- NPU 由感知和大模型共用：没有找物 / 跟随任务时感知降到 5 fps（`YUNTUO_PERCEPTION_IDLE_FPS`）；librknnrt 会把感知线程调到 nice −19，
+  感知节点启动后调回 0（`YUNTUO_PERCEPTION_NICE`）。感知全速时大模型约慢 50%，换 int8 量化的 YOLO 可进一步缓解。
+- 端到端（文字进、语音出，含合成）：去点位 3.6 s、闲聊 4.7 s、拒绝危险指令 2.0 s、规则命中的查询 < 0.5 s。
+- 试过但没用：vits-melo-tts-zh_en int8（RTF≈3.3，太慢）；matcha-icefall-zh-baker（只认中文，"B 点"会吞掉字母）。
+- NPU 驱动是 0.9.6，rknn-llm 1.3.1 提示建议 0.9.7，实测可用。
 
 ## 8. 上机核对
 
@@ -136,6 +161,7 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 | 深度配准到彩色 | `IMAGE_REGISTRATION_DEPTH_TO_COLOR` 生效，深度边缘与彩色轮廓对齐良好 |
 | 感知链路 | RKNN YOLO（fp32 模型）+ 颜色 + 三维 + 跟踪约 8 fps，采图到结果 p50 约 134 ms（< 400 ms 门限） |
 | 端到端（模拟 FPGA） | 真相机看到人 → 跟随任务 → fpga_bridge 发 TARGET → 模拟 FPGA 进入跟踪、目标落在地图上 |
+| 云端（2026-10-23） | 公网 lingxunrobot.cn 已换云拓前端，备案号与公安备案图标照常由 nginx 注入；网关加了 `/api/platform/*` 与 `/api/gateway/health`；小程序只读冒烟全过 |
 
 仍待核对：
 
@@ -146,6 +172,7 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 | 控制遥测串口 | 若和 FPGA 串口同为 CH34x / CH910x，按序列号或口路径改 udev；`YUNTUO_CONTROL_TELEMETRY=serial:/dev/yuntuo-ctl@230400` |
 | 相机安装 | 装车后量 `YUNTUO_CAMERA_MOUNT`（x,y,z,pitch,yaw,roll，机身系） |
 | 目标三维精度 | 红瓶放在 1.0 / 2.0 / 3.0 m，看网页距离与实测差；颜色判定在场地灯光下复查 |
-| 检测帧率 | fp32 模型约 8 fps；换 int8 量化模型或多 NPU 核可提速（TARGET 链路已满足时延要求，非必须） |
+| 检测帧率 | fp32 模型约 8 fps；换 int8 量化模型可提速并给大模型让出 NPU（TARGET 链路已满足时延要求，非必须） |
 | 场地点位 | 实测场地后改 `backend/app/config/yuntuo/waypoints.json`（m，起点为里程计原点） |
-| 云端上线 | 同步前端与网关属于生产变更：先备份，确认后再做；不要把 Token / .env 提交进仓库 |
+| 车载麦克风 | 现场对着麦克风说一句，看识别结果；音量在 `.env` 的 `AUDIO_CAPTURE_VOLUME` |
+| 云端低延迟视频 | 旧栈的 RTMP 推流来自旧相机服务，云拓感知节点不推流；网页相机窗口走 latest_frame / MJPEG 正常。需要 HLS 时再给感知节点加推流 |
