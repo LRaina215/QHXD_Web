@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Footprints, House, MapPin, Pause, Play, Route, ScanSearch, Square, Bot } from 'lucide-vue-next'
+import BrandMark from './BrandMark.vue'
 import { PHASE_LABELS, TASK_STATE_LABELS, fmt, taskTone } from '../labels'
 import type { YunTuo } from '../composables/useYunTuo'
 
@@ -41,7 +42,8 @@ const busy = computed(() => props.yt.busy.mission)
 
 <template>
   <section class="hero card" :class="taskTone(task?.state)" aria-live="polite">
-    <div class="icon"><component :is="icon" :size="26" :stroke-width="2" /></div>
+    <BrandMark v-if="idle" :size="56" :rounded="16" />
+    <div v-else class="icon"><component :is="icon" :size="26" :stroke-width="2" /></div>
     <div class="main">
       <div class="meta">
         <span class="eyebrow">当前任务</span>

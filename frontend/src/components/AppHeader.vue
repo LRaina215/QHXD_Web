@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { KeyRound, OctagonX } from 'lucide-vue-next'
+import BrandMark from './BrandMark.vue'
 import { linkLabel, linkTone } from '../labels'
 import type { YunTuo } from '../composables/useYunTuo'
 
@@ -31,12 +32,7 @@ function saveToken() {
 <template>
   <header class="hdr">
     <div class="brand">
-      <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
-        <rect width="40" height="40" rx="11" fill="#15171a" />
-        <path d="M8 25.5 14.5 17l5 5.2L25.8 12 32 25.5" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
-        <circle cx="14" cy="29.5" r="2.6" fill="#2f5bff" />
-        <circle cx="26" cy="29.5" r="2.6" fill="#2f5bff" />
-      </svg>
+      <BrandMark :size="40" :rounded="11" />
       <div class="name">
         <strong>云拓</strong>
         <span>多模态复杂地形轮腿机器人</span>
@@ -89,7 +85,6 @@ function saveToken() {
   border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 12px; flex: none; }
-.mark { width: 38px; height: 38px; }
 .name { display: flex; flex-direction: column; line-height: 1.15; }
 .name strong { font-size: 18px; font-weight: 750; letter-spacing: 0.02em; }
 .name span { font-size: 12px; color: var(--ink-3); font-weight: 500; }

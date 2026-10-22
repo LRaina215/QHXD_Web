@@ -19,6 +19,10 @@ description: 云拓（yuntuo-fpga 分支）控制台前端的设计规则。改�
   `bad` 红（故障 / 急停 / 失败）、`off` 灰（离线 / 未接入）、`mock` 紫灰（模拟）。用 `.tag.<tone>`，不要在组件里自造颜色。
 - 字体：Inter Variable（随包打包，离线可用）负责数字与拉丁字符，中文回落系统字体；数值一律 `.num`（等宽数字）。
 - 图标：lucide-vue-next（版本锁定），线宽默认，尺寸 16–22。
+- 品牌图形：`frontend/public/brand/yuntuo-avatar.svg`（轮腿机器人迈上台阶，面罩双镜头 = RGB-D 相机，钴蓝底白图形）。
+  小程序头像、网页图标、头部 logo、语音助手头像都用它；页面内用 `BrandMark.vue`（同一图形内联）。
+  导出图：`yuntuo-avatar-1024/512/144.png`、`apple-touch-icon.png`、`favicon-32.png`，改图形后要一并重新导出。
+  主体须落在中心约 82% 直径的圆内（头像会被裁成圆形）。
 - 圆角 16 / 12 / 8，按钮高 44（小按钮 34），间距 8 的倍数。
 
 ## 信息架构（App.vue 的网格）

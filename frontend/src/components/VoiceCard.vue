@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { AudioLines, Mic, Radio, Send, Sparkles } from 'lucide-vue-next'
+import BrandMark from './BrandMark.vue'
 import type { YunTuo } from '../composables/useYunTuo'
 
 const props = defineProps<{ yt: YunTuo }>()
@@ -28,13 +29,16 @@ function send(value = text.value) {
       <div class="chat" aria-live="polite">
         <template v-if="reply">
           <p class="me">{{ reply.recognized_text || '…' }}</p>
-          <div class="bot">
-            <p>{{ reply.reply_text || reply.error_reason }}</p>
-            <span class="meta num">{{ reply.intent ?? 'unknown' }} · {{ reply.parser }}{{ reply.llm_model ? ` · ${reply.llm_model}` : '' }} · {{ reply.confidence.toFixed(2) }}</span>
+          <div class="bot-row">
+            <BrandMark :size="30" :rounded="15" />
+            <div class="bot">
+              <p>{{ reply.reply_text || reply.error_reason }}</p>
+              <span class="meta num">{{ reply.intent ?? 'unknown' }} · {{ reply.parser }}{{ reply.llm_model ? ` · ${reply.llm_model}` : '' }} · {{ reply.confidence.toFixed(2) }}</span>
+            </div>
           </div>
         </template>
         <div v-else class="hello">
-          <AudioLines :size="22" />
+          <div class="hello-head"><BrandMark :size="30" :rounded="15" /><AudioLines :size="20" /></div>
           <p>直接说出任务，运动类命令会先请你确认。</p>
           <div class="ex">
             <button v-for="e in examples" :key="e" type="button" @click="send(e)">{{ e }}</button>
@@ -63,7 +67,9 @@ function send(value = text.value) {
 <style scoped>
 .chat { min-height: 132px; display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
 .me { align-self: flex-end; max-width: 85%; margin: 0; padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: var(--ink); color: #fff; font-size: 14px; }
-.bot { align-self: flex-start; max-width: 92%; padding: 10px 14px; border-radius: 16px 16px 16px 4px; background: var(--surface-2); }
+.bot-row { display: flex; align-items: flex-end; gap: 8px; max-width: 96%; }
+.bot { min-width: 0; padding: 10px 14px; border-radius: 16px 16px 16px 4px; background: var(--surface-2); }
+.hello-head { display: flex; align-items: center; gap: 10px; }
 .bot p { margin: 0; font-size: 14px; line-height: 1.55; }
 .meta { display: block; margin-top: 6px; font-size: 11px; color: var(--ink-3); }
 .hello { display: grid; justify-items: start; gap: 8px; padding: 14px; border-radius: 14px; background: var(--surface-2); color: var(--ink-3); }
