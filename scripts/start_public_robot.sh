@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
+# 云拓公网运行：后端（systemd 优先）+ fpga_bridge + 感知；公网网页由云端静态站 + 网关提供。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-SERVICE_NAME="qhxd-backend.service"
-
-service_installed() {
-  systemctl list-unit-files "${SERVICE_NAME}" >/dev/null 2>&1
+unit_installed() {
+  systemctl list-unit-files "$1" >/dev/null 2>&1
 }
 
-echo "starting public robot runtime..."
+echo "starting YunTuo robot runtime..."
 
-if service_installed; then
-  echo "starting backend via systemd: ${SERVICE_NAME}"
-  sudo systemctl start "${SERVICE_NAME}"
+if unit_installed qhxd-backend.service; then
+  echo "starting backend via systemd: qhxd-backend.service"
+  sudo systemctl start qhxd-backend.service
 else
-  echo "systemd backend service is not installed; falling back to scripts/start_backend.sh"
+  echo "qhxd-backend.service not installed; falling back to scripts/start_backend.sh"
   "${PROJECT_ROOT}/scripts/start_backend.sh"
 fi
 
@@ -25,33 +24,19 @@ if command -v curl >/dev/null 2>&1; then
   echo "backend health OK: http://127.0.0.1:${BACKEND_PORT}/health"
 fi
 
+for unit in yuntuo-fpga-bridge.service yuntuo-perception.service; do
+  if unit_installed "${unit}"; then
+    sudo systemctl start "${unit}"
+    echo "started ${unit}"
+  else
+    echo "${unit} not installed; run scripts/install_yuntuo_services.sh"
+  fi
+done
+
 if [[ "${PUBLIC_ROBOT_START_FRONTEND:-false}" == "true" ]]; then
   "${PROJECT_ROOT}/scripts/start_frontend.sh"
 else
   echo "local frontend dev server skipped; public web is served by cloud static frontend."
-fi
-
-if [[ "${PUBLIC_ROBOT_START_YOLO:-false}" == "true" ]]; then
-  case "${PUBLIC_ROBOT_YOLO_MODE:-usb}" in
-    hik)
-      "${PROJECT_ROOT}/scripts/start_yolo_hik_camera.sh"
-      ;;
-    usb)
-      "${PROJECT_ROOT}/scripts/start_yolo_camera.sh"
-      ;;
-    *)
-      echo "unknown PUBLIC_ROBOT_YOLO_MODE=${PUBLIC_ROBOT_YOLO_MODE}; expected usb or hik" >&2
-      exit 1
-      ;;
-  esac
-else
-  echo "YOLO camera service skipped; start USB/Hik camera service only when hardware is connected."
-fi
-
-if [[ "${PUBLIC_ROBOT_START_CBOARD:-false}" == "true" ]]; then
-  "${PROJECT_ROOT}/scripts/start_cboard_comm.sh"
-else
-  echo "C board communication skipped; set PUBLIC_ROBOT_START_CBOARD=true when the C board is connected."
 fi
 
 echo

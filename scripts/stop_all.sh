@@ -2,6 +2,6 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
-stop_service yolo_camera
+"${SCRIPT_DIR}/start_yuntuo_sim.sh" stop
 stop_service frontend
 stop_service backend

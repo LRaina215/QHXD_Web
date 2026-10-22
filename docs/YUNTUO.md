@@ -19,7 +19,8 @@ RK3588 只做任务层——视觉、语音、任务编排与 Web 中台。本�
 | 部分 | 处理 |
 |---|---|
 | `scripts/nav2_mission_executor.py`（Nav2 Action） | 由 `yuntuo/fpga_bridge` 替代，同一 :9101 契约，后端 `nav2_mission_adapter` 不用改 |
-| `navigation_web_bridge`、C 板 / IMU 桥、Point-LIO 开机链路 | 不再使用；`.env` 设 `YUNTUO_MODE=true` 后开机脚本跳过 |
+| Nav2 / C 板 / ROS 2 包、IMU 桥、Point-LIO / Livox / 海康启停脚本、`qhxd-nav-mission.service`、阶段过程文档 | 已从本分支删除（master 与 git 历史里仍可查）；开机脚本只做音频初始化与切实车模式 |
+| 旧 YOLO 相机服务（`camera_detect_service.py`） | 由 `yuntuo/perception` 替代，代码留在 `experiments/rknn_yolo/` 供参考与 H.264 推流复用 |
 | 后端状态 / WS / SQLite / 预检 / 语音确认 / LLM 安全校验 | 复用，新增目标任务、平台状态、急停与初始位姿接口 |
 | RKNN YOLO 推理与后处理 | 复用（`experiments/rknn_yolo/infer_image.py`），外面套 RGB-D 感知节点 |
 | 云端网关 `cloud_gateway.py` | 复用，白名单加了 `/api/platform/*`、`/api/perception/events` 等 |
@@ -101,9 +102,10 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 
 1. 代码：`git fetch && git checkout yuntuo-fpga`（目录仍是 `/home/robomaster/QHXD`），`pip install -r backend/requirements.txt pyserial`；
    感知另需 `numpy opencv-python openni`（RKNN Lite 已装）与 Orbbec OpenNI2 SDK（`OPENNI2_REDIST` 指向含 `libOpenNI2.so` 的目录）。
-2. `.env`：按 `.env.example` 的"云拓"段补齐，至少 `YUNTUO_MODE=true`、`QHXD_BOOT_START_NAV_FRONTEND=false`、
-   `QHXD_BOOT_NAV_MODE=none`、`QHXD_BOOT_START_NAV_WEB_BRIDGE=false`、两个点位配置路径指向 `backend/app/config/yuntuo/`。
-3. `./scripts/install_yuntuo_services.sh`：udev 规则、停用 `qhxd-nav-mission`、启用 `yuntuo-fpga-bridge` 与 `yuntuo-perception`。
+2. `.env`：以新的 `.env.example` 为模板重写（旧 `.env` 里的 Nav2 / C 板 / IMU 桥配置已无用，密钥照搬）；
+   点位配置路径指向 `backend/app/config/yuntuo/`。
+3. `./scripts/install_yuntuo_services.sh`：udev 规则、停用 RK3588 上已安装的 `qhxd-nav-mission`、启用 `yuntuo-fpga-bridge` 与
+   `yuntuo-perception`；再重装 `systemd/qhxd-boot.service`（它不再依赖 Nav2 执行器）。
 4. 前端：本机访问用 `scripts/start_frontend.sh`（vite dev，:5173）；公网仍走云端静态站 + 网关，`npm run build` 后把 `frontend/dist` 同步到云服务器
    （上线前确认，见第 8 节）。
 5. 现场无网络：RK3588 开热点，手机 / 电脑连上后访问 `http://<RK3588 热点 IP>:5173`；ASR（FunASR SenseVoice）本来就是离线的，

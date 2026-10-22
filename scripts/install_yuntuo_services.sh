@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 在 RK3588 上把 QHXD 的 Nav2 链路切换成云拓 FPGA 链路：
 #   停用 qhxd-nav-mission（Nav2 任务执行器），安装并启用 yuntuo-fpga-bridge（同一 :9101 契约）与 yuntuo-perception。
-# 后端 qhxd-backend 与开机脚本 qhxd-boot 保留；.env 里需要 YUNTUO_MODE=true，开机脚本才会跳过 C 板 / Nav2 / 旧相机服务。
+# 同时重装 qhxd-boot.service（新版只做音频初始化与切实车模式，不再依赖 Nav2 执行器）；qhxd-backend 不动。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,11 +26,13 @@ sudo install -m 0644 "$ROOT/systemd/yuntuo-fpga-bridge.service" /etc/systemd/sys
 if [[ "$WITH_PERCEPTION" == true ]]; then
   sudo install -m 0644 "$ROOT/systemd/yuntuo-perception.service" /etc/systemd/system/yuntuo-perception.service
 fi
+sudo install -m 0644 "$ROOT/systemd/qhxd-boot.service" /etc/systemd/system/qhxd-boot.service
 sudo systemctl daemon-reload
+sudo systemctl enable qhxd-boot.service
 sudo systemctl enable --now yuntuo-fpga-bridge.service
 [[ "$WITH_PERCEPTION" == true ]] && sudo systemctl enable --now yuntuo-perception.service
 
 echo "[4/4] 检查"
 sleep 3
 curl --noproxy '*' -fsS http://127.0.0.1:9101/health && echo || echo "fpga_bridge /health 未就绪：sudo journalctl -u yuntuo-fpga-bridge -n 80 --no-pager"
-grep -q '^YUNTUO_MODE=true' "$ROOT/.env" 2>/dev/null || echo "提醒：在 $ROOT/.env 中加入 YUNTUO_MODE=true（开机跳过 C 板 / Nav2 / 旧相机），以及 WAYPOINTS_CONFIG_PATH 指向 backend/app/config/yuntuo/。"
+grep -q 'config/yuntuo/waypoints.json' "$ROOT/.env" 2>/dev/null || echo "提醒：$ROOT/.env 请以 .env.example 为模板重写，WAYPOINTS_CONFIG_PATH / PATROL_ROUTES_CONFIG_PATH 指向 backend/app/config/yuntuo/。"
