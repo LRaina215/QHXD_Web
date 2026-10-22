@@ -44,6 +44,8 @@ class ASRService:
             return self._transcribe_mock(audio_path)
         if backend == "funasr":
             return self._transcribe_funasr(audio_path)
+        if backend == "sherpa":
+            return self._transcribe_sherpa(audio_path)
         return ASRResult(
             recognized_text="",
             raw_text=None,
@@ -102,6 +104,79 @@ class ASRService:
                 asr_time_s=round(time.perf_counter() - started_at, 3),
                 model_load_time_s=0.0 if model_was_loaded else self._model_load_time_s,
             )
+
+    def _transcribe_sherpa(self, audio_path: str) -> ASRResult:
+        """sherpa-onnx 版 SenseVoice（int8 ONNX，CPU）：与 FunASR 同一个模型，不依赖 torch，板上常驻约 300 MB。"""
+        started_at = time.perf_counter()
+        model_was_loaded = self._model is not None
+        try:
+            recognizer = self._get_sherpa_recognizer()
+            samples, sample_rate = self._read_wav(audio_path)
+            stream = recognizer.create_stream()
+            stream.accept_waveform(sample_rate, samples)
+            recognizer.decode_stream(stream)
+            raw_text = stream.result.text or ""
+            recognized_text = self._clean_text(raw_text)
+            return ASRResult(
+                recognized_text=recognized_text,
+                raw_text=raw_text,
+                backend="sherpa",
+                success=bool(recognized_text),
+                error=None if recognized_text else "SenseVoice 未识别到有效文本。",
+                asr_time_s=round(time.perf_counter() - started_at, 3),
+                model_load_time_s=0.0 if model_was_loaded else self._model_load_time_s,
+            )
+        except Exception as exc:
+            return ASRResult(
+                recognized_text="",
+                raw_text=None,
+                backend="sherpa",
+                success=False,
+                error=f"SenseVoice（sherpa-onnx）识别失败：{exc}",
+                asr_time_s=round(time.perf_counter() - started_at, 3),
+                model_load_time_s=0.0 if model_was_loaded else self._model_load_time_s,
+            )
+
+    def _get_sherpa_recognizer(self):
+        if self._model is not None:
+            return self._model
+        model_dir = self._required_path("SHERPA_ASR_MODEL_DIR")
+        model = model_dir / "model.int8.onnx"
+        if not model.is_file():
+            model = model_dir / "model.onnx"
+        tokens = model_dir / "tokens.txt"
+        if not model.is_file() or not tokens.is_file():
+            raise RuntimeError(f"{model_dir} 下缺少 model(.int8).onnx 或 tokens.txt")
+        started_at = time.perf_counter()
+        try:
+            import sherpa_onnx
+        except Exception as exc:
+            raise RuntimeError("ASR_BACKEND=sherpa 但当前 Python 环境未安装 sherpa-onnx。") from exc
+        self._model = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            model=str(model),
+            tokens=str(tokens),
+            num_threads=int(os.getenv("SHERPA_ASR_THREADS", "4")),
+            language=os.getenv("FUNASR_LANGUAGE", "zh"),
+            use_itn=self._env_bool("FUNASR_USE_ITN", True),
+        )
+        self._model_load_time_s = round(time.perf_counter() - started_at, 3)
+        return self._model
+
+    @staticmethod
+    def _read_wav(audio_path: str) -> tuple[Any, int]:
+        import wave
+
+        import numpy as np
+
+        with wave.open(audio_path, "rb") as w:
+            channels, width, rate = w.getnchannels(), w.getsampwidth(), w.getframerate()
+            frames = w.readframes(w.getnframes())
+        if width != 2:
+            raise RuntimeError(f"只支持 16 bit PCM wav，收到 {width * 8} bit")
+        samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+        if channels > 1:
+            samples = samples.reshape(-1, channels).mean(axis=1)
+        return samples, rate
 
     def _get_funasr_model(self):
         if self._model is not None:

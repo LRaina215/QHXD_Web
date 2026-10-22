@@ -1,0 +1,18 @@
+[Unit]
+Description=YunTuo mock FPGA (stands in for FPGA navigation until the bitstream is flashed)
+Before=yuntuo-fpga-bridge.service
+
+[Service]
+Type=simple
+User=robomaster
+Group=robomaster
+WorkingDirectory=/home/robomaster/QHXD
+ExecStart=/home/robomaster/QHXD/scripts/run_mock_fpga.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillSignal=SIGINT
+SyslogIdentifier=yuntuo-mock-fpga
+
+[Install]
+WantedBy=multi-user.target

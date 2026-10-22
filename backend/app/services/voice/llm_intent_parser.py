@@ -5,7 +5,7 @@ import os
 
 from app.services.intent_parser import ParsedIntent, intent_parser
 from app.services.voice.llm_client import llm_client
-from app.services.voice.llm_prompt import build_prompts
+from app.services.voice.llm_prompt import build_prompts, prompt_style
 from app.services.voice.llm_schema import LLMIntent
 from app.services.voice.llm_safety import llm_safety_validator
 
@@ -23,7 +23,8 @@ class LLMIntentParser:
         if not self._should_try_llm(text, rule_result, use_llm):
             return rule_result
 
-        system_prompt, user_prompt = build_prompts(text)
+        style = prompt_style(llm_client.config(force_enable=use_llm).backend)
+        system_prompt, user_prompt = build_prompts(text, style=style)
         client_response = llm_client.chat_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,

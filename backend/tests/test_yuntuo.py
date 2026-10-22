@@ -139,6 +139,94 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(response.data.accepted)
         self.assertEqual(persistence.list_command_logs()[0].command, "estop")
 
+    def test_local_backend_uses_compact_prompt_that_fits_1k_context(self) -> None:
+        from app.services.voice.llm_prompt import build_prompts, prompt_style
+
+        saved = os.environ.pop("LLM_PROMPT_STYLE", None)
+        try:
+            self.assertEqual(prompt_style("local"), "compact")
+            self.assertEqual(prompt_style("deepseek"), "full")
+            os.environ["LLM_PROMPT_STYLE"] = "full"
+            self.assertEqual(prompt_style("local"), "full")
+        finally:
+            os.environ.pop("LLM_PROMPT_STYLE", None)
+            if saved is not None:
+                os.environ["LLM_PROMPT_STYLE"] = saved
+        system_prompt, user_prompt = build_prompts("去斜坡那边", style="compact")
+        self.assertIn("只输出 JSON", system_prompt)
+        self.assertTrue(user_prompt.endswith("用户：去斜坡那边"))
+        from app.services.waypoint_resolver import waypoint_resolver
+
+        for waypoint in waypoint_resolver.list_waypoints():
+            self.assertIn(f"{waypoint['waypoint_id']}=", user_prompt)
+        # Qwen2.5 分词下中文约 1 字 1 token：板上实测这套提示约 600 token，留出输出余量
+        self.assertLess(len(system_prompt) + len(user_prompt), 1700)
+
+    def test_local_tts_url_posts_text_and_stores_wav(self) -> None:
+        import io
+        import json as jsonlib
+        import threading
+        import wave
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        from app.services.tts_service import TTSService
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(22050)
+            w.writeframes(bytes(441))
+        received: list[str] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                body = jsonlib.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                received.append(body["text"])
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.end_headers()
+                self.wfile.write(buf.getvalue())
+
+            def log_message(self, *args) -> None:
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        keys = ("TTS_BACKEND", "TTS_LOCAL_URL", "TTS_LOCAL_CMD", "TTS_AUDIO_DIR", "TTS_AUTO_PLAY_LOCAL")
+        saved = {k: os.environ.get(k) for k in keys}
+        try:
+            os.environ.update(TTS_BACKEND="local", TTS_LOCAL_URL=f"http://127.0.0.1:{server.server_address[1]}/tts",
+                              TTS_AUDIO_DIR=str(Path(self._temp_dir.name) / "tts"), TTS_AUTO_PLAY_LOCAL="false")
+            os.environ.pop("TTS_LOCAL_CMD", None)
+            status = TTSService().speak("已到达 B 点")
+            self.assertEqual(status.status, "generated", status.error_reason)
+            self.assertEqual(received, ["已到达 B 点"])
+            self.assertEqual(Path(status.audio_path).read_bytes(), buf.getvalue())
+        finally:
+            server.shutdown()
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_sherpa_asr_reads_stereo_wav_as_mono_float(self) -> None:
+        import struct
+        import wave
+
+        from app.services.asr_service import ASRService
+
+        path = Path(self._temp_dir.name) / "stereo.wav"
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(struct.pack("<4h", 16384, 0, -16384, -16384))
+        samples, rate = ASRService._read_wav(str(path))
+        self.assertEqual(rate, 16000)
+        self.assertEqual([round(float(s), 3) for s in samples], [0.25, -0.5])
+
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
         self.assertEqual(request.source, "miniprogram")

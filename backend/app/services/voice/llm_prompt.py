@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from app.services.voice.llm_schema import ALLOWED_INTENTS
 from app.services.waypoint_resolver import waypoint_resolver
@@ -33,7 +34,66 @@ JSON_SCHEMA = {
 }
 
 
-def build_prompts(recognized_text: str) -> tuple[str, str]:
+COMPACT_SYSTEM_PROMPT = """你是云拓轮腿机器人的语音助手。把用户的话解析成一个 JSON 对象，只输出 JSON，不要输出其他文字。
+字段：intent, waypoint_id, target_class, target_color, target_label, confidence, need_confirm, reply_text。
+intent 取值：
+- go_to_waypoint 去某个点位，waypoint_id 只能从点位表里选
+- start_patrol 巡逻；pause_task 暂停；resume_task 继续；return_home 返航回家
+- search_target 找到某个物体并靠近；follow_target 跟随某人，target_class=person
+- query_robot_status 本体状态；query_task_status 任务进度；query_battery 电量；query_emergency_stop 急停状态
+- query_perception_status 看到了什么；query_front_status 前方情况；query_navigation_safety 前方是否安全
+- query_self_identity 你是谁；query_capability 你能做什么；query_weather 天气
+- open_chat 闲聊或常识问答，简短中文回答写进 reply_text，不能包含任务
+- unknown 无法确定，或要求关急停、忽略故障、高速冲、撞东西、写代码、删文件等
+target_class 只能是 bottle、cup、person、sports ball、chair、backpack；target_color 只能是 red、green、blue、yellow、white、black 或 null。
+go_to_waypoint、start_patrol、return_home、search_target、follow_target 的 need_confirm=true，其余为 false。confidence 是 0 到 1 的把握程度。"""
+
+
+def prompt_style(backend: str) -> str:
+    """板载小模型（local）上下文只有 1K token，用精简提示；云端模型用完整提示。LLM_PROMPT_STYLE 可强制指定。"""
+    style = os.getenv("LLM_PROMPT_STYLE", "").strip().lower()
+    if style in {"compact", "full"}:
+        return style
+    return "compact" if backend == "local" else "full"
+
+
+def build_compact_prompts(recognized_text: str) -> tuple[str, str]:
+    waypoints = [item for item in waypoint_resolver.list_waypoints() if item.get("waypoint_id")]
+
+    def _row(item: dict) -> str:
+        name = item.get("name") or item["waypoint_id"]
+        seen = {"".join(name.lower().split())}
+        aliases = []
+        for alias in item.get("aliases") or []:
+            key = "".join(str(alias).lower().split())
+            if key and not any(key in s for s in seen):
+                seen.add(key)
+                aliases.append(str(alias))
+        return f"{item['waypoint_id']}={name}" + (f"（也叫{'、'.join(aliases[:3])}）" if aliases else "")
+
+    table = "；".join(_row(item) for item in waypoints)
+    sample = next((item for item in waypoints if item["waypoint_id"] != "home"), None)
+    examples = []
+    if sample is not None:
+        alias = (sample.get("aliases") or [sample.get("name") or sample["waypoint_id"]])[0]
+        examples.append((f"去{alias}看看", {
+            "intent": "go_to_waypoint", "waypoint_id": sample["waypoint_id"], "confidence": 0.9,
+            "need_confirm": True, "reply_text": f"好的，准备前往{sample.get('name') or sample['waypoint_id']}。"}))
+    examples.append(("帮我找一下蓝色的杯子", {
+        "intent": "search_target", "target_class": "cup", "target_color": "blue", "target_label": "蓝色杯子",
+        "confidence": 0.9, "need_confirm": True, "reply_text": "好的，开始寻找蓝色杯子。"}))
+    examples.append(("太阳为什么是热的", {
+        "intent": "open_chat", "confidence": 0.9, "need_confirm": False,
+        "reply_text": "太阳内部一直在发生核聚变，释放出大量的光和热。"}))
+    shots = "\n".join(f"用户：{q}\n{json.dumps(a, ensure_ascii=False, separators=(',', ':'))}" for q, a in examples)
+    system_prompt = f"{COMPACT_SYSTEM_PROMPT}\n示例：\n{shots}"
+    user_prompt = f"点位表：{table or '无'}\n用户：{recognized_text}"
+    return system_prompt, user_prompt
+
+
+def build_prompts(recognized_text: str, *, style: str = "full") -> tuple[str, str]:
+    if style == "compact":
+        return build_compact_prompts(recognized_text)
     waypoints = waypoint_resolver.list_waypoints()
     compact_waypoints = [
         {

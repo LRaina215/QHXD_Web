@@ -181,21 +181,25 @@ class TTSService:
         return status
 
     def _call_local_tts(self, text: str) -> tuple[bytes | None, str | None]:
-        """离线 TTS。TTS_LOCAL_CMD 是命令模板（不经过 shell）：{text} 替换为待合成文本（作为单个参数），
-        {out} 替换为输出 wav 路径。例如 sherpa-onnx：
-        sherpa-onnx-offline-tts --vits-model=/opt/tts/model.onnx --vits-tokens=/opt/tts/tokens.txt
-        --vits-lexicon=/opt/tts/lexicon.txt --output-filename={out} {text}"""
-        template = os.getenv("TTS_LOCAL_CMD", "").strip()
-        if not template:
-            return None, "TTS_LOCAL_CMD 未配置"
-        tts_dir = _tts_dir()
-        tts_dir.mkdir(parents=True, exist_ok=True)
-        out = tts_dir / f"local_{uuid.uuid4().hex[:12]}.wav"
-        args = [part.replace("{out}", str(out)).replace("{text}", text) for part in shlex.split(template)]
+        """离线 TTS，两种接法（TTS_LOCAL_URL 优先）：
+        - TTS_LOCAL_URL：常驻合成服务（yuntuo.tts_server，POST {"text"} 返回 wav），模型不用每句重新加载；
+        - TTS_LOCAL_CMD：命令模板（不经过 shell）：{text} 替换为待合成文本（作为单个参数），{out} 替换为输出 wav 路径。
+          例如 sherpa-onnx：sherpa-onnx-offline-tts --vits-model=/opt/tts/model.onnx --vits-tokens=/opt/tts/tokens.txt
+          --vits-lexicon=/opt/tts/lexicon.txt --output-filename={out} {text}"""
         try:
             timeout = float(os.getenv("TTS_LOCAL_TIMEOUT", "20"))
         except ValueError:
             timeout = 20.0
+        url = os.getenv("TTS_LOCAL_URL", "").strip()
+        if url:
+            return self._call_local_tts_http(url, text, timeout)
+        template = os.getenv("TTS_LOCAL_CMD", "").strip()
+        if not template:
+            return None, "TTS_LOCAL_URL / TTS_LOCAL_CMD 都未配置"
+        tts_dir = _tts_dir()
+        tts_dir.mkdir(parents=True, exist_ok=True)
+        out = tts_dir / f"local_{uuid.uuid4().hex[:12]}.wav"
+        args = [part.replace("{out}", str(out)).replace("{text}", text) for part in shlex.split(template)]
         try:
             completed = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -206,6 +210,20 @@ class TTSService:
             return None, f"local-tts-exit-{completed.returncode}: {completed.stderr.strip()[:200]}"
         data = out.read_bytes()
         out.unlink(missing_ok=True)
+        return data, None
+
+    @staticmethod
+    def _call_local_tts_http(url: str, text: str, timeout: float) -> tuple[bytes | None, str | None]:
+        try:
+            with httpx.Client(timeout=timeout, trust_env=False) as client:
+                response = client.post(url, json={"text": text})
+        except httpx.HTTPError as exc:
+            return None, f"local-tts-unreachable: {type(exc).__name__}"
+        if response.status_code != 200:
+            return None, f"local-tts-http-{response.status_code}: {response.text[:200]}"
+        data = response.content
+        if not data.startswith(b"RIFF"):
+            return None, "local-tts-not-wav"
         return data, None
 
     def _call_mimo_tts(self, text: str) -> tuple[bytes | None, str | None]:

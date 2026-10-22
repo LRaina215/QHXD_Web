@@ -1,0 +1,19 @@
+[Unit]
+Description=YunTuo on-board LLM (rknn-llm on NPU, OpenAI-compatible API on 127.0.0.1:8080)
+Before=qhxd-backend.service
+
+[Service]
+Type=simple
+User=robomaster
+Group=robomaster
+SupplementaryGroups=video render
+WorkingDirectory=/home/robomaster/QHXD
+ExecStart=/home/robomaster/QHXD/scripts/run_yuntuo_llm.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGINT
+SyslogIdentifier=yuntuo-llm
+
+[Install]
+WantedBy=multi-user.target
