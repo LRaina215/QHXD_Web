@@ -101,3 +101,13 @@ def test_detection_status_is_valid_backend_contract():
              "position": [2.0, 0.5, 0.8]}]
     DetectionStatus.model_validate(detection_status(dets, model_name="m"))
     assert pydantic
+
+
+def test_full_rate_only_while_a_target_task_is_active():
+    from yuntuo.perception.node import task_is_target
+
+    assert task_is_target({"task_type": "search_target", "state": "running"})
+    assert task_is_target({"task_type": "follow_target", "state": "paused"})
+    assert not task_is_target({"task_type": "search_target", "state": "succeeded"})
+    assert not task_is_target({"task_type": "go_to_waypoint", "state": "running"})
+    assert not task_is_target({"task_type": "placeholder", "state": "idle"})

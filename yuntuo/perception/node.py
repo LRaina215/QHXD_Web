@@ -73,6 +73,34 @@ def parse_mount(text: str) -> Mount:
     return Mount(x, y, z, pitch, yaw, roll)
 
 
+TARGET_TASK_TYPES = {"search_target", "follow_target"}
+TARGET_TASK_STATES = {"pending", "running", "paused"}
+
+
+class TargetTaskWatcher(threading.Thread):
+    """每秒看一眼 fpga_bridge 当前任务：找物 / 跟随进行中 active=True。查不到时按 active 处理，宁可多算不漏目标。"""
+
+    def __init__(self, url: str, interval_s: float = 1.0) -> None:
+        super().__init__(daemon=True)
+        self.url, self.interval_s = url, interval_s
+        self.active = True
+
+    def run(self) -> None:
+        opener = request.build_opener(request.ProxyHandler({}))
+        while True:
+            try:
+                with opener.open(self.url, timeout=1.0) as resp:
+                    task = (json.loads(resp.read()) or {}).get("task") or {}
+                self.active = task_is_target(task)
+            except Exception:  # noqa: BLE001
+                self.active = True
+            time.sleep(self.interval_s)
+
+
+def task_is_target(task: dict) -> bool:
+    return task.get("task_type") in TARGET_TASK_TYPES and task.get("state") in TARGET_TASK_STATES
+
+
 def reset_thread_nice(value: int) -> int:
     """Linux 的 nice 是按线程的：逐个把本进程线程的 nice 调到 value（只调低优先级，不需要特权），返回改动数。"""
     task_dir = Path("/proc/self/task")
@@ -104,7 +132,10 @@ def main() -> int:
     ap.add_argument("--conf", type=float, default=0.35)
     ap.add_argument("--mount", default=os.getenv("YUNTUO_CAMERA_MOUNT", "0.20,0,0.30,10,0,0"),
                     help="相机在机身系的 x,y,z(m),pitch,yaw,roll(度，pitch 向下为正)")
-    ap.add_argument("--fps", type=float, default=15.0)
+    ap.add_argument("--fps", type=float, default=15.0, help="找物 / 跟随任务进行中的检测帧率上限")
+    ap.add_argument("--idle-fps", type=float, default=float(os.getenv("YUNTUO_PERCEPTION_IDLE_FPS", "5")),
+                    help="没有视觉目标任务时的帧率：NPU 与板上大模型共用，实测全速检测会让大模型慢约一倍")
+    ap.add_argument("--bridge-health", default=os.getenv("YUNTUO_BRIDGE_HEALTH_URL", "http://127.0.0.1:9101/health"))
     ap.add_argument("--bridge-udp", default=os.getenv("YUNTUO_PERCEPTION_UDP", "127.0.0.1:9102"))
     ap.add_argument("--backend", default=os.getenv("YUNTUO_BACKEND_URL", "http://127.0.0.1:8000"))
     ap.add_argument("--status-hz", type=float, default=2.0)
@@ -134,7 +165,10 @@ def main() -> int:
     poster.start()
     save_path = Path(args.save_latest)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    seq, next_status, next_save, period = 0, 0.0, 0.0, 1.0 / max(1.0, args.fps)
+    seq, next_status, next_save = 0, 0.0, 0.0
+    busy_period, idle_period = 1.0 / max(1.0, args.fps), 1.0 / max(0.5, min(args.idle_fps, args.fps))
+    target_task = TargetTaskWatcher(args.bridge_health)
+    target_task.start()
     changed = reset_thread_nice(args.nice)
     log.info("感知节点启动：来源 %s，检测器 %s，发往 fpga_bridge %s（%d 个线程 nice 调回 %d）",
              args.source, model_name, bridge_addr, changed, args.nice)
@@ -158,6 +192,7 @@ def main() -> int:
             if now >= next_save:
                 next_save = now + 1.0 / args.save_hz
                 save_annotated(frame.color, dets, save_path)
+            period = busy_period if target_task.active else idle_period
             time.sleep(max(0.0, period - (time.monotonic() - t0)))
     except KeyboardInterrupt:
         pass
