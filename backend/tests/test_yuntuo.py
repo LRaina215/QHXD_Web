@@ -227,6 +227,16 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rate, 16000)
         self.assertEqual([round(float(s), 3) for s in samples], [0.25, -0.5])
 
+    def test_llm_task_reply_comes_from_validated_payload_not_model_text(self) -> None:
+        result = llm_safety_validator.validate(LLMIntent.from_dict(
+            {"intent": "go_to_waypoint", "waypoint_id": "wp_b", "confidence": 0.9, "reply_text": "好的，前往 A 点"}))
+        self.assertTrue(result.ok)
+        self.assertIn("B 点", result.detail)
+        self.assertNotIn("A 点", result.detail)
+        chat = llm_safety_validator.validate(LLMIntent.from_dict(
+            {"intent": "open_chat", "confidence": 0.9, "reply_text": "你好"}))
+        self.assertEqual(chat.detail, "你好")
+
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
         self.assertEqual(request.source, "miniprogram")

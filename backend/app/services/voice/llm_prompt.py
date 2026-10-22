@@ -35,7 +35,7 @@ JSON_SCHEMA = {
 
 
 COMPACT_SYSTEM_PROMPT = """你是云拓轮腿机器人的语音助手。把用户的话解析成一个 JSON 对象，只输出 JSON，不要输出其他文字。
-字段：intent, waypoint_id, target_class, target_color, target_label, confidence, need_confirm, reply_text。
+字段：intent, waypoint_id, target_class, target_color, target_label, confidence；只有 open_chat 才写 reply_text。
 intent 取值：
 - go_to_waypoint 去某个点位，waypoint_id 只能从点位表里选
 - start_patrol 巡逻；pause_task 暂停；resume_task 继续；return_home 返航回家
@@ -45,8 +45,8 @@ intent 取值：
 - query_self_identity 你是谁；query_capability 你能做什么；query_weather 天气
 - open_chat 闲聊或常识问答，简短中文回答写进 reply_text，不能包含任务
 - unknown 无法确定，或要求关急停、忽略故障、高速冲、撞东西、写代码、删文件等
-target_class 只能是 bottle、cup、person、sports ball、chair、backpack；target_color 只能是 red、green、blue、yellow、white、black 或 null。
-go_to_waypoint、start_patrol、return_home、search_target、follow_target 的 need_confirm=true，其余为 false。confidence 是 0 到 1 的把握程度。"""
+target_class 只能是 bottle、cup、person、sports ball、chair、backpack；target_color 只能是 red、green、blue、yellow、white、black，没有就不写。
+用不到的字段不要输出。confidence 是 0 到 1 的把握程度。"""
 
 
 def prompt_style(backend: str) -> str:
@@ -76,15 +76,13 @@ def build_compact_prompts(recognized_text: str) -> tuple[str, str]:
     examples = []
     if sample is not None:
         alias = (sample.get("aliases") or [sample.get("name") or sample["waypoint_id"]])[0]
-        examples.append((f"去{alias}看看", {
-            "intent": "go_to_waypoint", "waypoint_id": sample["waypoint_id"], "confidence": 0.9,
-            "need_confirm": True, "reply_text": f"好的，准备前往{sample.get('name') or sample['waypoint_id']}。"}))
+        examples.append((f"去{alias}看看", {"intent": "go_to_waypoint", "waypoint_id": sample["waypoint_id"],
+                                             "confidence": 0.9}))
     examples.append(("帮我找一下蓝色的杯子", {
         "intent": "search_target", "target_class": "cup", "target_color": "blue", "target_label": "蓝色杯子",
-        "confidence": 0.9, "need_confirm": True, "reply_text": "好的，开始寻找蓝色杯子。"}))
-    examples.append(("太阳为什么是热的", {
-        "intent": "open_chat", "confidence": 0.9, "need_confirm": False,
-        "reply_text": "太阳内部一直在发生核聚变，释放出大量的光和热。"}))
+        "confidence": 0.9}))
+    examples.append(("太阳为什么是热的", {"intent": "open_chat", "confidence": 0.9,
+                                         "reply_text": "太阳内部一直在发生核聚变，释放出大量的光和热。"}))
     shots = "\n".join(f"用户：{q}\n{json.dumps(a, ensure_ascii=False, separators=(',', ':'))}" for q, a in examples)
     system_prompt = f"{COMPACT_SYSTEM_PROMPT}\n示例：\n{shots}"
     user_prompt = f"点位表：{table or '无'}\n用户：{recognized_text}"

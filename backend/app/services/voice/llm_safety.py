@@ -115,7 +115,8 @@ class LLMSafetyValidator:
             payload=payload,
             confidence=result.confidence,
             need_confirm=need_confirm,
-            detail=result.reply_text or result.reason or "LLM 语义解析通过本地安全校验。",
+            detail=_task_detail(command, payload) or result.reply_text or result.reason
+            or "LLM 语义解析通过本地安全校验。",
         )
 
     @staticmethod
@@ -131,3 +132,26 @@ class LLMSafetyValidator:
 
 
 llm_safety_validator = LLMSafetyValidator()
+
+
+def _task_detail(command: str, payload: dict[str, str]) -> str | None:
+    """任务类命令的回复按校验后的 payload 生成（与规则解析同样的说法），不用大模型自己写的 reply_text：
+    小模型可能说错目标，而用户确认的应该是真正要执行的那个任务。"""
+    if command == "pause_task":
+        return "已解析为暂停当前任务。"
+    if command == "resume_task":
+        return "已解析为恢复当前任务。"
+    if command == "go_to_waypoint":
+        waypoint_id = payload.get("waypoint_id")
+        name = next((str(item.get("name")) for item in waypoint_resolver.list_waypoints()
+                     if item.get("waypoint_id") == waypoint_id and item.get("name")), waypoint_id)
+        return f"已解析为前往{name}任务。"
+    if command == "start_patrol":
+        return "已解析为开始巡检任务。"
+    if command == "return_home":
+        return "已解析为返回起点任务。"
+    if command == "search_target":
+        return f"已解析为寻找「{payload.get('label') or payload.get('target_class')}」并移动到其附近的任务。"
+    if command == "follow_target":
+        return "已解析为跟随人员任务。" if payload.get("target_class") == "person"             else f"已解析为跟随「{payload.get('label') or payload.get('target_class')}」的任务。"
+    return None
