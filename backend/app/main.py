@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.schemas import (
     AlertsResponse,
@@ -1235,3 +1236,17 @@ async def navigation_stream(websocket: WebSocket) -> None:
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
+
+
+def _frontend_dist_dir() -> Path | None:
+    if os.getenv("SERVE_FRONTEND", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        return None
+    configured = os.getenv("FRONTEND_DIST_DIR")
+    path = Path(configured).expanduser() if configured else PROJECT_ROOT / "frontend" / "dist"
+    return path if (path / "index.html").is_file() else None
+
+
+_FRONTEND_DIST = _frontend_dist_dir()
+if _FRONTEND_DIST is not None:
+    # 本机 / 热点直连时由后端直接提供控制台（http://<RK3588>:8000/）；必须最后挂载，API 与 WS 路由优先匹配
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")

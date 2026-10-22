@@ -17,8 +17,10 @@ import numpy as np
 
 from yuntuo.perception.geometry import ASTRA_DEPTH_640, Intrinsics
 
-# Astra Pro Plus 彩色 640×480 视场的占位值（水平 66.1°，竖直按 4:3 推算）；上机后用标定 / camera_info 覆盖
-ASTRA_COLOR_640 = Intrinsics.from_fov(640, 480, 66.1, 51.0)
+# Astra Pro Plus 出厂标定（640×480 基准；2026-10-22 从实机 OBEXTENSION_ID_CAM_PARAMS 读出）。
+# 运行时优先读设备自己的标定，读不到才用这组值。彩色 fx 543.5 → 水平视场约 60.9°。
+ASTRA_COLOR_640 = Intrinsics(543.467, 543.467, 316.355, 242.649, 640, 480)
+OB_PROP_CAM_PARAMS = 14   # Orbbec OpenNI2 扩展：OBCameraParams（l = 深度/IR，r = 彩色，fx fy cx cy）
 
 
 @dataclass
@@ -65,13 +67,17 @@ class AstraSource:
 
         self.cap = cv2.VideoCapture(color_device, cv2.CAP_V4L2) if color_device.startswith("/dev/") \
             else cv2.VideoCapture(int(color_device) if color_device.isdigit() else color_device)
+        # MJPG：同分辨率下实测 20 fps，YUYV 只有约 12 fps（USB 2.0 带宽）
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.cap.set(cv2.CAP_PROP_FPS, fps)
         if not self.cap.isOpened():
             raise RuntimeError(f"彩色相机 {color_device} 打不开")
+        self.width, self.height = width, height
         self.k_color = ASTRA_COLOR_640.scaled(width, height)
         self.k_depth = ASTRA_DEPTH_640
+        self.calibration_source = "default"
         self.registered = False
         self.color_reader = _LatestReader(self._read_color, "astra-color")
         self.depth_reader = None
@@ -93,6 +99,7 @@ class AstraSource:
         self.depth.set_video_mode(c_api.OniVideoMode(
             pixelFormat=c_api.OniPixelFormat.ONI_PIXEL_FORMAT_DEPTH_1_MM, resolutionX=640, resolutionY=480, fps=30))
         self.depth.set_mirroring_enabled(False)
+        self._read_factory_calibration(c_api)
         if registration:
             try:
                 self.device.set_image_registration_mode(openni2.IMAGE_REGISTRATION_DEPTH_TO_COLOR)
@@ -107,6 +114,27 @@ class AstraSource:
 
         self.depth_reader = _LatestReader(read_depth, "astra-depth")
         self.depth_reader.start()
+
+    def _read_factory_calibration(self, c_api) -> None:
+        import ctypes
+
+        class OBCameraParams(ctypes.Structure):
+            _fields_ = [("l_intr_p", ctypes.c_float * 4), ("r_intr_p", ctypes.c_float * 4),
+                        ("r2l_r", ctypes.c_float * 9), ("r2l_t", ctypes.c_float * 3),
+                        ("l_k", ctypes.c_float * 5), ("r_k", ctypes.c_float * 5)]
+
+        params = OBCameraParams()
+        size = ctypes.c_int(ctypes.sizeof(params))
+        try:
+            rc = c_api.oniDeviceGetProperty(self.device._handle, OB_PROP_CAM_PARAMS, ctypes.byref(params),
+                                            ctypes.byref(size))
+        except Exception:
+            return
+        if rc != c_api.OniStatus.ONI_STATUS_OK or params.r_intr_p[0] <= 0 or params.l_intr_p[0] <= 0:
+            return
+        self.k_color = Intrinsics(*params.r_intr_p, 640, 480).scaled(self.width, self.height)
+        self.k_depth = Intrinsics(*params.l_intr_p, 640, 480)
+        self.calibration_source = "factory"
 
     def read(self, timeout: float = 1.0) -> RgbdFrame | None:
         deadline = time.monotonic() + timeout

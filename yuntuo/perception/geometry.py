@@ -32,8 +32,8 @@ class Intrinsics:
         return cls(fx, fy, (width - 1) / 2, (height - 1) / 2, width, height)
 
 
-# Astra Pro Plus 深度 640×480，标称视场 58.4° × 45.5°（以 OpenNI2 / camera_info 实测值为准）
-ASTRA_DEPTH_640 = Intrinsics.from_fov(640, 480, 58.4, 45.5)
+# Astra Pro Plus 深度（IR）640×480 出厂标定，2026-10-22 实机读出；对应视场约 58.1° × 45.3°
+ASTRA_DEPTH_640 = Intrinsics(575.904, 575.904, 316.898, 244.005, 640, 480)
 
 
 @dataclass(frozen=True)
