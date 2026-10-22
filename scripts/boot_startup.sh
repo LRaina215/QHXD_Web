@@ -40,7 +40,7 @@ curl -s -X POST "http://127.0.0.1:${BACKEND_PORT}/api/system/mode/switch" \
     -d '{"mode":"real","source":"boot-startup"}' >/dev/null 2>&1 || true
 echo "Real mode switch sent."
 
-sudo alsactl store 2>/dev/null || true
+sudo -n alsactl store 2>/dev/null || true
 
 echo "========================================"
 echo "YunTuo Boot Startup Complete - $(date)"
