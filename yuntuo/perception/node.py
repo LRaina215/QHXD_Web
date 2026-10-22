@@ -73,6 +73,23 @@ def parse_mount(text: str) -> Mount:
     return Mount(x, y, z, pitch, yaw, roll)
 
 
+def reset_thread_nice(value: int) -> int:
+    """Linux 的 nice 是按线程的：逐个把本进程线程的 nice 调到 value（只调低优先级，不需要特权），返回改动数。"""
+    task_dir = Path("/proc/self/task")
+    if not task_dir.is_dir():
+        return 0
+    changed = 0
+    for entry in task_dir.iterdir():
+        try:
+            tid = int(entry.name)
+            if os.getpriority(os.PRIO_PROCESS, tid) < value:
+                os.setpriority(os.PRIO_PROCESS, tid, value)
+                changed += 1
+        except (ValueError, OSError):
+            continue
+    return changed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", default=os.getenv("YUNTUO_CAMERA_SOURCE", "astra"))
@@ -93,6 +110,8 @@ def main() -> int:
     ap.add_argument("--status-hz", type=float, default=2.0)
     ap.add_argument("--save-latest", default=str(RKNN_DIR / "outputs/latest_camera_detection.jpg"))
     ap.add_argument("--save-hz", type=float, default=5.0)
+    ap.add_argument("--nice", type=int, default=int(os.getenv("YUNTUO_PERCEPTION_NICE", "0")),
+                    help="librknnrt 初始化时会把所有线程调到 nice -19，压过板上大模型 / 语音合成 / 后端；这里调回该值")
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -116,7 +135,10 @@ def main() -> int:
     save_path = Path(args.save_latest)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     seq, next_status, next_save, period = 0, 0.0, 0.0, 1.0 / max(1.0, args.fps)
-    log.info("感知节点启动：来源 %s，检测器 %s，发往 fpga_bridge %s", args.source, model_name, bridge_addr)
+    changed = reset_thread_nice(args.nice)
+    log.info("感知节点启动：来源 %s，检测器 %s，发往 fpga_bridge %s（%d 个线程 nice 调回 %d）",
+             args.source, model_name, bridge_addr, changed, args.nice)
+    next_nice = time.monotonic() + 5.0
     try:
         while True:
             t0 = time.monotonic()
@@ -127,6 +149,9 @@ def main() -> int:
             dets = pipeline.process(frame)
             sock.sendto(json.dumps(bridge_message(dets, frame, seq)).encode("utf-8"), bridge_addr)
             now = time.monotonic()
+            if now >= next_nice:                      # 运行库后建的线程同样会被调高优先级
+                next_nice = now + 5.0
+                reset_thread_nice(args.nice)
             if now >= next_status:
                 next_status = now + 1.0 / args.status_hz
                 poster.put(detection_status(dets, model_name=model_name))
