@@ -26,12 +26,18 @@ const videoElement = ref<HTMLVideoElement | null>(null)
 const mode = ref<'connecting' | 'webrtc' | 'hls' | 'mjpeg' | 'offline'>('connecting')
 const detail = ref('正在建立低延迟视频链路')
 const fallbackImageFailed = ref(false)
+const fallbackReload = ref(0)
 let peerConnection: RTCPeerConnection | null = null
 let hls: HlsType | null = null
 let whepSessionUrl = ''
 let fallbackTimer: number | null = null
 let retryTimer: number | null = null
+let fallbackReloadTimer: number | null = null
 let connectionGeneration = 0
+// 云端没有推流时不要每 5 秒重试一次：5 s 起步，翻倍到 60 s，连上后复位
+const RETRY_MIN_MS = 5000
+const RETRY_MAX_MS = 60000
+let retryDelayMs = RETRY_MIN_MS
 
 const modeLabel = computed(() => ({
   connecting: 'CONNECTING',
@@ -41,14 +47,33 @@ const modeLabel = computed(() => ({
   offline: 'OFFLINE',
 })[mode.value])
 
+// 低延迟链路连上之前（包括后台重试期间）一直显示检测画面，重连时不黑屏
 const showFallbackImage = computed(() => (
-  mode.value === 'mjpeg' && props.fallbackAvailable && props.fallbackUrl && !fallbackImageFailed.value
+  (mode.value === 'mjpeg' || mode.value === 'connecting')
+  && props.fallbackAvailable && !!props.fallbackUrl && !fallbackImageFailed.value
 ))
 
+const fallbackSrc = computed(() => {
+  if (!fallbackReload.value) {
+    return props.fallbackUrl
+  }
+  return `${props.fallbackUrl}${props.fallbackUrl.includes('?') ? '&' : '?'}r=${fallbackReload.value}`
+})
+
 function setMode(nextMode: typeof mode.value, nextDetail: string) {
+  if (nextMode === 'webrtc' || nextMode === 'hls') {
+    retryDelayMs = RETRY_MIN_MS
+  }
   mode.value = nextMode
   detail.value = nextDetail
   emit('modeChange', nextMode)
+}
+
+// 已经在显示检测画面时，重连在后台进行，界面保持 MJPEG 状态
+function setConnecting(nextDetail: string) {
+  if (mode.value !== 'mjpeg') {
+    setMode('connecting', nextDetail)
+  }
 }
 
 async function createVideoSession() {
@@ -147,7 +172,7 @@ async function startHlsFallback(generation: number) {
     startMjpegFallback()
     return
   }
-  setMode('connecting', 'WebRTC 不可用，正在切换稳定视频')
+  setConnecting('WebRTC 不可用，正在切换稳定视频')
 
   const { default: Hls } = await import('hls.js')
   if (generation !== connectionGeneration) {
@@ -171,7 +196,6 @@ async function startHlsFallback(generation: number) {
       }
       setMode('hls', 'WebRTC 不可用，当前使用 HLS 稳定模式')
       void video.play().catch(() => undefined)
-      scheduleRetry(15000)
     })
     hls.on(Hls.Events.ERROR, (_event, data) => {
       if (generation === connectionGeneration && data.fatal) {
@@ -190,7 +214,6 @@ async function startHlsFallback(generation: number) {
       if (generation === connectionGeneration) {
         setMode('hls', 'WebRTC 不可用，当前使用 HLS 稳定模式')
         void video.play().catch(() => undefined)
-        scheduleRetry(15000)
       }
     }
     video.onerror = () => startMjpegFallback()
@@ -213,7 +236,7 @@ async function connectCloudVideo() {
     startMjpegFallback('检测画面（公网访问保存 Token 后启用低延迟视频）')
     return
   }
-  setMode('connecting', '正在建立低延迟视频链路')
+  setConnecting('正在建立低延迟视频链路')
   try {
     const session = await createVideoSession()
     if (generation !== connectionGeneration) {
@@ -244,18 +267,35 @@ function startMjpegFallback(message = '云端视频暂不可用，当前显示�
 
 function handleFallbackImageError() {
   fallbackImageFailed.value = true
-  setMode('offline', '云端视频与检测画面均不可用')
+  if (mode.value === 'mjpeg' || mode.value === 'connecting') {
+    setMode('offline', '检测画面暂不可用，正在重试')
+  }
+  // 检测画面断开（网关重启、RK3588 短暂离线）后 3 秒自动重新拉流，不必等云端视频重试
+  if (fallbackReloadTimer === null) {
+    fallbackReloadTimer = window.setTimeout(() => {
+      fallbackReloadTimer = null
+      fallbackImageFailed.value = false
+      fallbackReload.value += 1
+      if (mode.value === 'offline' && props.fallbackAvailable && props.fallbackUrl) {
+        setMode('mjpeg', '云端视频暂不可用，当前显示检测画面')
+      }
+    }, 3000)
+  }
   scheduleRetry()
 }
 
-function scheduleRetry(delayMs = 5000) {
+function scheduleRetry(delayMs?: number) {
   if (!props.apiToken.trim() || retryTimer !== null) {
     return
+  }
+  const wait = delayMs ?? retryDelayMs
+  if (delayMs === undefined) {
+    retryDelayMs = Math.min(retryDelayMs * 2, RETRY_MAX_MS)
   }
   retryTimer = window.setTimeout(() => {
     retryTimer = null
     void connectCloudVideo()
-  }, delayMs)
+  }, wait)
 }
 
 function clearFallbackTimer() {
@@ -294,7 +334,10 @@ function handleVisibilityChange() {
   }
 }
 
-watch(() => props.apiToken, () => void connectCloudVideo())
+watch(() => props.apiToken, () => {
+  retryDelayMs = RETRY_MIN_MS
+  void connectCloudVideo()
+})
 watch(() => [props.fallbackAvailable, props.fallbackUrl], () => {
   fallbackImageFailed.value = false
   if (mode.value === 'offline' && props.fallbackAvailable) {
@@ -313,6 +356,9 @@ onBeforeUnmount(() => {
   if (retryTimer !== null) {
     window.clearTimeout(retryTimer)
   }
+  if (fallbackReloadTimer !== null) {
+    window.clearTimeout(fallbackReloadTimer)
+  }
   cleanupPlayback()
 })
 </script>
@@ -330,11 +376,11 @@ onBeforeUnmount(() => {
     <img
       v-if="showFallbackImage"
       class="cloud-video-media visible"
-      :src="fallbackUrl"
+      :src="fallbackSrc"
       alt="最新识别画面"
       @error="handleFallbackImageError"
     />
-    <div v-if="mode === 'connecting' || mode === 'offline'" class="cloud-video-placeholder">
+    <div v-if="(mode === 'connecting' && !showFallbackImage) || mode === 'offline'" class="cloud-video-placeholder">
       {{ detail }}
     </div>
     <div class="stream-mode-plate" :data-mode="mode">
