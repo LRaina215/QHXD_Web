@@ -1,5 +1,8 @@
 # QHXD 琼海芯动车载机器人中台
 
+> **yuntuo-fpga 分支**：本分支改为「云拓-多模态复杂地形轮腿机器人」的 RK3588 任务层——导航与运动控制在 FPGA 上，
+> Nav2 / C 板链路由 `yuntuo/fpga_bridge` 替代。说明见 [docs/YUNTUO.md](docs/YUNTUO.md)；下文为 master 的原始说明。
+
 QHXD 是琼海芯动车载机器人的 RK3588 中台工程。当前已打通公网 Dashboard、云端中继、语音/LLM/TTS、Hik/USB 相机、RKNN YOLO26、实时视频与 ROS 2 导航通信入口。
 
 安全原则：视觉和 LLM 不直接控制底盘；移动类指令必须二次确认；公网写接口需要 Token，mission 控制还受 `PUBLIC_CONTROL_ENABLED` 开关限制。

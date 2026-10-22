@@ -1,105 +1,54 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { TASK_TYPE_LABELS, targetLabel } from '../labels'
+import type { PendingCommand } from '../types'
 
-type VoiceConfirmResult = {
-  recognized_text?: string
-  intent?: string | null
-  command?: string | null
-  waypoint_id?: string | null
-  payload?: Record<string, string | number | boolean | null>
-  confidence?: number
-  parser?: string
-  llm_backend?: string | null
-  llm_model?: string | null
-  detail?: string
-  pending_command_id?: string | null
+const props = defineProps<{ result: PendingCommand; loading: boolean; error?: string }>()
+const emit = defineEmits<{ confirm: []; cancel: []; close: [] }>()
+const confirmButton = ref<HTMLButtonElement | null>(null)
+
+const command = computed(() => props.result.command ?? props.result.intent ?? '')
+const targetText = computed(() => {
+  const p = props.result.payload ?? {}
+  if (p.target_class) return String(p.label || targetLabel(String(p.target_class), p.color ? String(p.color) : null))
+  const wp = props.result.waypoint_id ?? p.waypoint_id
+  if (wp) return String(wp)
+  if (command.value === 'return_home') return '起点'
+  if (command.value === 'start_patrol') return String(p.patrol_id ?? '默认巡检路线')
+  return '--'
+})
+const parser = computed(() => [props.result.parser, props.result.llm_model].filter(Boolean).join(' / ') || '--')
+
+function onKey(event: KeyboardEvent) {
+  if (event.key === 'Escape' && !props.loading) emit('close')
 }
-
-const props = defineProps<{
-  result: VoiceConfirmResult
-  loading: boolean
-  error?: string
-}>()
-
-const emit = defineEmits<{
-  confirm: []
-  cancel: []
-  close: []
-}>()
-
-const waypointLabel = computed(() => {
-  const waypoint = props.result.waypoint_id ?? props.result.payload?.waypoint_id
-  return waypoint === null || waypoint === undefined ? '--' : String(waypoint)
+onMounted(() => {
+  window.addEventListener('keydown', onKey)
+  confirmButton.value?.focus()
 })
-
-const confidenceLabel = computed(() => {
-  if (props.result.confidence === null || props.result.confidence === undefined) {
-    return '--'
-  }
-  return props.result.confidence.toFixed(2)
-})
-
-const parserLabel = computed(() => {
-  const parts = [props.result.parser, props.result.llm_backend, props.result.llm_model]
-    .filter((value): value is string => Boolean(value))
-  return parts.length > 0 ? parts.join(' / ') : '--'
-})
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>
-  <div class="voice-confirm-backdrop" role="presentation">
-    <section class="voice-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="voice-confirm-title">
-      <header class="voice-confirm-header">
-        <div>
-          <p class="voice-confirm-kicker">Voice confirmation</p>
-          <h2 id="voice-confirm-title">移动任务确认</h2>
-        </div>
-        <button class="icon-button" type="button" :disabled="loading" aria-label="关闭确认弹窗" @click="emit('close')">
-          ×
-        </button>
+  <div class="backdrop" role="presentation" @click.self="!loading && emit('close')">
+    <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <header>
+        <p class="kicker">运动任务确认</p>
+        <h2 id="confirm-title">{{ TASK_TYPE_LABELS[command] ?? command }}：{{ targetText }}</h2>
       </header>
-
-      <p class="risk-note">该操作将使机器人移动或改变任务流，请确认解析结果无误后再执行。</p>
-
-      <div class="voice-confirm-grid">
-        <div class="voice-confirm-item wide">
-          <span>识别文本</span>
-          <strong>{{ result.recognized_text || '--' }}</strong>
-        </div>
-        <div class="voice-confirm-item">
-          <span>解析意图</span>
-          <strong>{{ result.intent ?? '--' }}</strong>
-        </div>
-        <div class="voice-confirm-item">
-          <span>执行命令</span>
-          <strong>{{ result.command ?? '--' }}</strong>
-        </div>
-        <div class="voice-confirm-item">
-          <span>目标点</span>
-          <strong>{{ waypointLabel }}</strong>
-        </div>
-        <div class="voice-confirm-item">
-          <span>置信度</span>
-          <strong>{{ confidenceLabel }}</strong>
-        </div>
-        <div class="voice-confirm-item wide">
-          <span>解析方式</span>
-          <strong>{{ parserLabel }}</strong>
-        </div>
-        <div class="voice-confirm-item wide">
-          <span>详情</span>
-          <strong>{{ result.detail || '--' }}</strong>
-        </div>
-      </div>
-
-      <p v-if="error" class="voice-confirm-error">{{ error }}</p>
-
-      <footer class="voice-confirm-actions">
-        <button class="cancel-button" type="button" :disabled="loading" @click="emit('cancel')">
-          {{ loading ? '处理中...' : '取消任务' }}
-        </button>
-        <button class="confirm-button" type="button" :disabled="loading" @click="emit('confirm')">
-          {{ loading ? '确认中...' : '确认执行' }}
+      <p class="note">确认后任务交给 FPGA 导航执行，速度由 FPGA 安全限幅；随时可按右上角急停。</p>
+      <dl>
+        <div class="wide"><dt>识别文本</dt><dd>{{ result.recognized_text || '--' }}</dd></div>
+        <div><dt>命令</dt><dd class="num">{{ command || '--' }}</dd></div>
+        <div><dt>置信度</dt><dd class="num">{{ result.confidence != null ? result.confidence.toFixed(2) : '--' }}</dd></div>
+        <div class="wide"><dt>解析方式</dt><dd>{{ parser }}</dd></div>
+        <div class="wide"><dt>说明</dt><dd>{{ result.detail || '--' }}</dd></div>
+      </dl>
+      <p v-if="error" class="err">{{ error }}</p>
+      <footer>
+        <button type="button" class="btn ghost" :disabled="loading" @click="emit('cancel')">取消任务</button>
+        <button ref="confirmButton" type="button" class="btn primary" :disabled="loading" @click="emit('confirm')">
+          {{ loading ? '处理中…' : '确认执行' }}
         </button>
       </footer>
     </section>
@@ -107,182 +56,22 @@ const parserLabel = computed(() => {
 </template>
 
 <style scoped>
-.voice-confirm-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background:
-    linear-gradient(135deg, rgba(21, 19, 15, 0.72), rgba(21, 19, 15, 0.42)),
-    rgba(21, 19, 15, 0.54);
-  backdrop-filter: blur(9px);
-}
-
-.voice-confirm-dialog {
-  width: min(680px, 100%);
-  max-height: min(800px, calc(100vh - 40px));
-  overflow: auto;
-  padding: 22px;
-  border: 1px solid #15130f;
-  border-left: 8px solid #f3ad44;
-  border-radius: 8px;
-  background: #fffaf0;
-  box-shadow: 0 34px 100px rgba(21, 19, 15, 0.38);
-}
-
-.voice-confirm-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
-.voice-confirm-kicker {
-  margin: 0 0 6px;
-  color: #d98218;
-  font-family: "DIN Alternate", "Avenir Next", sans-serif;
-  font-size: 0.75rem;
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.voice-confirm-header h2 {
-  margin: 0;
-  color: #15130f;
-  font-family: "DIN Alternate", "Avenir Next", "Microsoft YaHei", sans-serif;
-  font-size: 1.34rem;
-  font-weight: 900;
-}
-
-.icon-button {
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  border-radius: 8px;
-  border: 1px solid #b8aa97;
-  background: #fffaf0;
-  color: #51483d;
-  box-shadow: none;
-  font-size: 1.2rem;
-  line-height: 1;
-}
-
-.risk-note,
-.voice-confirm-error {
-  margin: 0 0 14px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  line-height: 1.5;
-}
-
-.risk-note {
-  color: #15130f;
-  background: #fff2d9;
-  border: 1px solid rgba(217, 130, 24, 0.34);
-}
-
-.voice-confirm-error {
-  color: #a62b22;
-  background: #fff0ec;
-  border: 1px solid rgba(196, 56, 43, 0.3);
-}
-
-.voice-confirm-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.voice-confirm-item {
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid #e0d4c4;
-  border-radius: 8px;
-  background: rgba(255, 253, 248, 0.72);
-}
-
-.voice-confirm-item.wide {
-  grid-column: 1 / -1;
-}
-
-.voice-confirm-item span {
-  display: block;
-  margin-bottom: 6px;
-  color: #726a5f;
-  font-size: 0.82rem;
-  font-weight: 800;
-}
-
-.voice-confirm-item strong {
-  color: #15130f;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.voice-confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 18px;
-}
-
-.cancel-button,
-.confirm-button {
-  min-height: 44px;
-  border-radius: 8px;
-  font-weight: 900;
-}
-
-.cancel-button {
-  color: #15130f;
-  border: 1px solid #b8aa97;
-  background: #fffaf0;
-  box-shadow: none;
-}
-
-.confirm-button {
-  color: #15130f;
-  border: 1px solid #f3ad44;
-  background: #f3ad44;
-}
-
+.backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(2, 5, 8, 0.7); backdrop-filter: blur(6px); }
+.dialog { width: min(560px, 100%); padding: 22px; border-radius: 16px; background: var(--panel-solid); border: 1px solid var(--line-strong); border-top: 4px solid var(--warn); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); }
+.kicker { margin: 0 0 4px; color: var(--warn); font-size: 12px; letter-spacing: 0.12em; }
+h2 { margin: 0; font-size: 20px; }
+.note { margin: 12px 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; color: var(--text-2); background: rgba(255, 181, 71, 0.08); border: 1px solid rgba(255, 181, 71, 0.25); }
+dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; }
+dl > div { padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); min-width: 0; }
+.wide { grid-column: 1 / -1; }
+dt { font-size: 11px; color: var(--text-3); margin-bottom: 3px; }
+dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.err { color: var(--danger); font-size: 13px; }
+footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+footer .btn { min-height: 42px; min-width: 110px; }
 @media (max-width: 560px) {
-  .voice-confirm-backdrop {
-    place-items: end center;
-    padding: 12px 8px max(8px, env(safe-area-inset-bottom));
-  }
-
-  .voice-confirm-dialog {
-    width: 100%;
-    max-height: calc(100dvh - 20px);
-    padding: 17px 15px calc(15px + env(safe-area-inset-bottom));
-    border-left-width: 1px;
-    border-top: 7px solid #f3ad44;
-  }
-
-  .voice-confirm-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .voice-confirm-actions {
-    position: sticky;
-    bottom: 0;
-    flex-direction: column-reverse;
-    margin: 18px -15px -15px;
-    padding: 12px 15px calc(12px + env(safe-area-inset-bottom));
-    border-top: 1px solid #e0d4c4;
-    background: rgba(255, 250, 240, 0.96);
-    backdrop-filter: blur(10px);
-  }
-
-  .cancel-button,
-  .confirm-button {
-    width: 100%;
-    min-height: 48px;
-  }
+  .backdrop { place-items: end center; padding: 10px; }
+  dl { grid-template-columns: 1fr; }
+  footer .btn { flex: 1; }
 }
 </style>

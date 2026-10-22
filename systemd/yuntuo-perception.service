@@ -1,0 +1,20 @@
+[Unit]
+Description=YunTuo RGB-D perception (Astra Pro Plus + RKNN)
+Wants=yuntuo-fpga-bridge.service
+After=yuntuo-fpga-bridge.service
+
+[Service]
+Type=simple
+User=robomaster
+Group=robomaster
+SupplementaryGroups=video
+WorkingDirectory=/home/robomaster/QHXD
+ExecStart=/home/robomaster/QHXD/scripts/run_yuntuo_perception.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+KillSignal=SIGINT
+SyslogIdentifier=yuntuo-perception
+
+[Install]
+WantedBy=multi-user.target

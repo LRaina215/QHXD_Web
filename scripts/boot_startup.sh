@@ -46,6 +46,17 @@ curl -s -X POST "http://127.0.0.1:${BACKEND_PORT}/api/system/mode/switch" \
     -d '{"mode":"real","source":"boot-startup"}' >/dev/null 2>&1 || true
 echo "Real mode switch sent."
 
+# 云拓：导航与运动控制在 FPGA 上，由 yuntuo-fpga-bridge / yuntuo-perception 两个 systemd 服务负责；
+# 不启动 C 板通信、Nav2 / Point-LIO 链路与旧的 YOLO 相机服务。
+if [[ "${YUNTUO_MODE:-false}" =~ ^(1|true|yes|on)$ ]]; then
+    echo "[4/6] YUNTUO_MODE=true: skip C board, legacy camera service and Nav2 chain."
+    sudo alsactl store 2>/dev/null || true
+    echo "========================================"
+    echo "YunTuo Boot Startup Complete - $(date)"
+    echo "========================================"
+    exit 0
+fi
+
 # Step 4: Start C board communication
 echo "[4/6] Starting C board communication..."
 "${SCRIPT_DIR}/start_cboard_comm.sh" || echo "C board communication start failed (no C board connected?)"

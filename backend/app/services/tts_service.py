@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import os
+import shlex
 import subprocess
 import uuid
 from datetime import datetime, timezone
@@ -65,7 +66,7 @@ class TTSService:
         if backend == "online":
             return self._speak_online(text)
         if backend == "local":
-            return self._speak_online(text)
+            return self._speak_online(text, local=True)
         return self._speak_mock(text)
 
     def speak_with_policy(
@@ -132,10 +133,10 @@ class TTSService:
     # MiMO TTS (OpenAI-compatible chat completions)
     # ------------------------------------------------------------------
 
-    def _speak_online(self, text: str) -> TTSStatus:
+    def _speak_online(self, text: str, local: bool = False) -> TTSStatus:
         now = datetime.now(timezone.utc)
         backend = self._backend()
-        audio_bytes, error_reason = self._call_mimo_tts(text)
+        audio_bytes, error_reason = self._call_local_tts(text) if local else self._call_mimo_tts(text)
 
         if audio_bytes is None:
             status = TTSStatus(
@@ -154,7 +155,7 @@ class TTSService:
         tts_dir.mkdir(parents=True, exist_ok=True)
         request_id = uuid.uuid4().hex[:12]
         timestamp = now.strftime("%Y%m%d_%H%M%S")
-        suffix = self._mimo_audio_format()
+        suffix = "wav" if local else self._mimo_audio_format()
         filename = f"tts_{timestamp}_{request_id}.{suffix}"
         audio_path = tts_dir / filename
 
@@ -178,6 +179,34 @@ class TTSService:
         self._maybe_local_play(audio_path)
 
         return status
+
+    def _call_local_tts(self, text: str) -> tuple[bytes | None, str | None]:
+        """离线 TTS。TTS_LOCAL_CMD 是命令模板（不经过 shell）：{text} 替换为待合成文本（作为单个参数），
+        {out} 替换为输出 wav 路径。例如 sherpa-onnx：
+        sherpa-onnx-offline-tts --vits-model=/opt/tts/model.onnx --vits-tokens=/opt/tts/tokens.txt
+        --vits-lexicon=/opt/tts/lexicon.txt --output-filename={out} {text}"""
+        template = os.getenv("TTS_LOCAL_CMD", "").strip()
+        if not template:
+            return None, "TTS_LOCAL_CMD 未配置"
+        tts_dir = _tts_dir()
+        tts_dir.mkdir(parents=True, exist_ok=True)
+        out = tts_dir / f"local_{uuid.uuid4().hex[:12]}.wav"
+        args = [part.replace("{out}", str(out)).replace("{text}", text) for part in shlex.split(template)]
+        try:
+            timeout = float(os.getenv("TTS_LOCAL_TIMEOUT", "20"))
+        except ValueError:
+            timeout = 20.0
+        try:
+            completed = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            out.unlink(missing_ok=True)
+            return None, f"local-tts-error: {type(exc).__name__}"
+        if completed.returncode != 0 or not out.exists():
+            out.unlink(missing_ok=True)
+            return None, f"local-tts-exit-{completed.returncode}: {completed.stderr.strip()[:200]}"
+        data = out.read_bytes()
+        out.unlink(missing_ok=True)
+        return data, None
 
     def _call_mimo_tts(self, text: str) -> tuple[bytes | None, str | None]:
         api_key = os.getenv("MIMO_API_KEY", "").strip()

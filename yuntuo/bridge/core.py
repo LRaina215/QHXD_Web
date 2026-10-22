@@ -291,7 +291,7 @@ class FpgaBridge:
                     "map": self.map_detail, "task": self.runner.task_status(), "platform": platform,
                     "updated_at": _iso(),
                 }
-        if now - self.last_map_post >= 30.0:
+        if now - self.last_map_post >= 10.0:      # 后端重启后地图缓存会丢，定期重发（10 cm 栅格，十几 KB）
             self.last_map_post = now
             self.poster.post_latest("map", "/api/internal/navigation/map", self.map_payload())
 

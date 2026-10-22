@@ -17,9 +17,12 @@ import json
 import math
 import random
 import socket
+import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from yuntuo import mock_camera
 from yuntuo.fpga_link import nv_proto as nv
 from yuntuo.fpga_link import telemetry as tm
 from yuntuo.fpga_link.nvmp import MapPackageError, parse_package
@@ -329,6 +332,9 @@ def serve(args: argparse.Namespace) -> None:
     last = time.monotonic()
     next_status = next_cam = next_tel = last
     tel_seq = cam_seq = 0
+    frame_out = Path(args.frame_out) if args.frame_out else None
+    if frame_out is not None:
+        frame_out.parent.mkdir(parents=True, exist_ok=True)
     while True:
         now = time.monotonic()
         try:
@@ -355,6 +361,11 @@ def serve(args: argparse.Namespace) -> None:
             msg = {"type": "detections", "source": "mock_camera", "frame_seq": cam_seq,
                    "stamp_mono": now - 0.06, "stamp_wall": time.time() - 0.06, "objects": objs}
             out.sendto(json.dumps(msg).encode(), cam)
+            if args.backend and cam_seq % 5 == 0:
+                status = mock_camera.detection_status(objs)
+                threading.Thread(target=mock_camera.post_status, args=(args.backend, status), daemon=True).start()
+                if frame_out is not None:
+                    mock_camera.render(objs, frame_out)
         if tel and now >= next_tel:
             next_tel = max(next_tel + 0.02, now - 0.01)
             tel_seq += 1
@@ -367,6 +378,8 @@ def main() -> None:
     ap.add_argument("--peer", default=None, help="固定回发地址（缺省：最近一次收到合法报文的源地址）")
     ap.add_argument("--camera-udp", default=None, help="虚拟相机检测结果发往 fpga_bridge 的感知端口")
     ap.add_argument("--telemetry-udp", default=None, help="底盘控制 V2 遥测发往 fpga_bridge 的端口")
+    ap.add_argument("--backend", default=None, help="同时把虚拟相机检测结果上送后端（网页视觉面板用），例如 http://127.0.0.1:8000")
+    ap.add_argument("--frame-out", default=None, help="配合 --backend：渲染合成画面到此 jpg（后端 latest_frame / MJPEG 读取）")
     ap.add_argument("--with-map", action="store_true")
     ap.add_argument("--seed", type=int, default=7)
     try:

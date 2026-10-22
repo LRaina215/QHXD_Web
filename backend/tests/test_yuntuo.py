@@ -106,6 +106,34 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(forwarded.data.accepted)
         self.assertIn("fpga_bridge", forwarded.data.detail)   # 预检通过，转发到不可达的执行器
 
+    def test_local_llm_needs_no_api_key_and_local_tts_runs_command(self) -> None:
+        import sys
+
+        from app.services.tts_service import TTSService
+        from app.services.voice.llm_client import DeepSeekClient
+
+        keys = ("LLM_BACKEND", "LLM_ENABLE", "DEEPSEEK_API_KEY", "TTS_BACKEND", "TTS_LOCAL_CMD", "TTS_AUDIO_DIR")
+        saved = {k: os.environ.get(k) for k in keys}
+        try:
+            os.environ.update(LLM_BACKEND="local", LLM_ENABLE="true")
+            os.environ.pop("DEEPSEEK_API_KEY", None)
+            cfg = DeepSeekClient().config()
+            self.assertTrue(cfg.enabled)
+            self.assertTrue(cfg.base_url.startswith("http://127.0.0.1"))
+            script = "import sys,wave; w=wave.open(sys.argv[1],'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(bytes(320)); w.close()"
+            exe = sys.executable.replace("\\", "/")
+            os.environ.update(TTS_BACKEND="local", TTS_LOCAL_CMD=f'"{exe}" -c "{script}" {{out}}',
+                              TTS_AUDIO_DIR=str(Path(self._temp_dir.name) / "tts"))
+            status = TTSService().speak("你好，我是云拓")
+            self.assertEqual(status.status, "generated", status.error_reason)
+            self.assertTrue(status.audio_url.endswith(".wav"))
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
     async def test_estop_endpoint_in_mock_mode_is_rejected_and_logged(self) -> None:
         response = await main_module.platform_estop(PlatformEstopRequest(engage=True, source="test"))
         self.assertFalse(response.data.accepted)

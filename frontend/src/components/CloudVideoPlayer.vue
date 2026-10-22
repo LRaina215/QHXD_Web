@@ -210,7 +210,7 @@ async function connectCloudVideo() {
   cleanupPlayback()
   currentHlsUrl = ''
   if (!props.apiToken.trim()) {
-    startMjpegFallback('保存公网 Token 后启用低延迟视频')
+    startMjpegFallback('检测画面（公网访问保存 Token 后启用低延迟视频）')
     return
   }
   setMode('connecting', '正在建立低延迟视频链路')
@@ -356,7 +356,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: hidden;
   color: #fff7e8;
-  background: #0f0e0c;
+  background: #05090d;
 }
 
 .cloud-video-media {
@@ -401,9 +401,9 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 247, 232, 0.18);
   border-radius: 6px;
   color: #fff7e8;
-  background: rgba(18, 16, 13, 0.78);
+  background: rgba(6, 10, 14, 0.78);
   backdrop-filter: blur(10px);
-  font: 800 0.65rem/1 "DIN Alternate", "Avenir Next", sans-serif;
+  font: 700 0.65rem/1 var(--mono);
   letter-spacing: 0;
 }
 
@@ -411,13 +411,13 @@ onBeforeUnmount(() => {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #f3ad44;
-  box-shadow: 0 0 0 4px rgba(243, 173, 68, 0.16);
+  background: #ffb547;
+  box-shadow: 0 0 0 4px rgba(255, 181, 71, 0.16);
 }
 
 .stream-mode-plate[data-mode="webrtc"] .stream-live-dot {
-  background: #29c47a;
-  box-shadow: 0 0 0 4px rgba(41, 196, 122, 0.16);
+  background: #3ddc84;
+  box-shadow: 0 0 0 4px rgba(61, 220, 132, 0.16);
 }
 
 .stream-mode-plate[data-mode="offline"] .stream-live-dot {
@@ -444,7 +444,7 @@ onBeforeUnmount(() => {
   padding: 5px 10px;
   border-color: rgba(255, 247, 232, 0.28);
   color: #fff7e8;
-  background: rgba(18, 16, 13, 0.78);
+  background: rgba(6, 10, 14, 0.78);
 }
 
 @media (max-width: 820px) {

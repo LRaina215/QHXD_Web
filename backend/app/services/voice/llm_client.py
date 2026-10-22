@@ -51,9 +51,10 @@ class LLMClientConfig:
 
     @property
     def enabled(self) -> bool:
-        backend_enabled = self.backend == "deepseek"
+        backend_enabled = self.backend in {"deepseek", "local"}
         env_enabled = self.force_enable or _env_bool("LLM_ENABLE", _env_bool("DEEPSEEK_ENABLE", False))
-        return backend_enabled and env_enabled and bool(self.api_key)
+        # local：RK3588 本机 OpenAI 兼容服务（RKLLM / llama.cpp server 等），不需要 API Key
+        return backend_enabled and env_enabled and (bool(self.api_key) or self.backend == "local")
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,22 @@ class DeepSeekClient:
         except ValueError:
             temperature = 0.1
         backend = os.getenv("LLM_BACKEND", "deepseek").strip().lower()
+        if backend == "local":
+            try:
+                timeout = float(os.getenv("LLM_LOCAL_TIMEOUT_SECONDS", "20"))
+            except ValueError:
+                timeout = 20.0
+            return LLMClientConfig(
+                backend=backend,
+                api_key=os.getenv("LLM_LOCAL_API_KEY") or "local",
+                base_url=os.getenv("LLM_LOCAL_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
+                model=os.getenv("LLM_LOCAL_MODEL", "qwen2.5-1.5b-instruct"),
+                timeout_seconds=timeout,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                debug_raw=_env_bool("LLM_DEBUG_RAW", False),
+                force_enable=bool(force_enable),
+            )
         return LLMClientConfig(
             backend=backend,
             api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -158,8 +175,9 @@ class DeepSeekClient:
             ],
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
-            "response_format": {"type": "json_object"},
         }
+        if config.backend != "local" or _env_bool("LLM_LOCAL_JSON_MODE", True):
+            payload["response_format"] = {"type": "json_object"}
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
@@ -188,7 +206,8 @@ class DeepSeekClient:
         except (KeyError, IndexError, TypeError):
             return LLMClientResponse(success=False, error="deepseek-invalid-response", model=config.model, raw_response=raw)
         response_model = str(raw.get("model") or config.model)
-        return LLMClientResponse(success=True, content=str(content), model=response_model, raw_response=raw if config.debug_raw else None)
+        return LLMClientResponse(success=True, content=str(content), backend=config.backend, model=response_model,
+                                 raw_response=raw if config.debug_raw else None)
 
     def chat_text(self, *, system_prompt: str, user_prompt: str, force_enable: bool | None = None) -> LLMClientResponse:
         config = self.config(force_enable=force_enable)
@@ -232,7 +251,8 @@ class DeepSeekClient:
         except (KeyError, IndexError, TypeError):
             return LLMClientResponse(success=False, error="deepseek-invalid-response", model=config.model, raw_response=raw)
         response_model = str(raw.get("model") or config.model)
-        return LLMClientResponse(success=True, content=str(content), model=response_model, raw_response=raw if config.debug_raw else None)
+        return LLMClientResponse(success=True, content=str(content), backend=config.backend, model=response_model,
+                                 raw_response=raw if config.debug_raw else None)
 
 
 llm_client = DeepSeekClient()

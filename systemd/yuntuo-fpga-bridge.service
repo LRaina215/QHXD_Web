@@ -1,0 +1,21 @@
+[Unit]
+Description=YunTuo FPGA bridge (task layer <-> FPGA navigation, replaces Nav2 mission executor)
+Wants=qhxd-backend.service
+After=qhxd-backend.service
+Conflicts=qhxd-nav-mission.service
+
+[Service]
+Type=simple
+User=robomaster
+Group=robomaster
+SupplementaryGroups=dialout
+WorkingDirectory=/home/robomaster/QHXD
+ExecStart=/home/robomaster/QHXD/scripts/run_fpga_bridge.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillSignal=SIGINT
+SyslogIdentifier=yuntuo-fpga-bridge
+
+[Install]
+WantedBy=multi-user.target

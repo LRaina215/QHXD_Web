@@ -1,0 +1,13 @@
+# 云拓固定设备名。上机后用 `lsusb` 与 `udevadm info -a -n /dev/ttyACM0` 核对 VID/PID，必要时按序列号或 USB 口路径区分。
+# 安装：sudo install -m 0644 scripts/udev/99-yuntuo.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+
+# FPGA 板载 USB 串口（导航 uart_bus_bridge，CH9102，921600）
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", SYMLINK+="yuntuo-fpga", MODE="0660", GROUP="dialout"
+
+# 底盘控制遥测（控制仓库 P11-40 TX，230400，常见为 CH340 USB-TTL；与上面同芯片时改用 ATTRS{serial} 或 KERNELS 口路径）
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="yuntuo-ctl", MODE="0660", GROUP="dialout"
+
+# Orbbec Astra Pro Plus 彩色（UVC，VID 2bc5）：只取第一个视频节点
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="2bc5", ATTR{index}=="0", SYMLINK+="yuntuo-astra-color", MODE="0660", GROUP="video"
+# Astra 深度走 OpenNI2（libusb），需要普通用户可读写
+SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", MODE="0666"

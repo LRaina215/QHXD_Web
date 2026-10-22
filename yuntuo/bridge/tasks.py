@@ -350,7 +350,7 @@ class TaskRunner:
             if t.blocked_since is None:
                 t.blocked_since = now
                 t.phase = "blocked"
-                self._emit("progress", "前方受阻，FPGA 正在重新规划。")
+                self._emit("blocked", "前方受阻，FPGA 正在重新规划。")
             elif now - t.blocked_since > self.cfg.blocked_fail_s:
                 self.fail(f"受阻超过 {self.cfg.blocked_fail_s:.0f} s，无法到达{point.name}。")
         elif s.mode != 1:
@@ -420,19 +420,23 @@ class TaskRunner:
             if tracking:
                 pick = t.last_pick
                 dist = f"，距离约 {pick.distance_m:.1f} m" if pick else ""
-                self._emit("progress", f"发现「{t.spec.label}」{dist}，FPGA 开始接近。")
+                self._emit("target_found", f"发现「{t.spec.label}」{dist}，FPGA 开始接近。")
                 t.track_start_m = pick.distance_m if pick else None
             else:
-                self._emit("progress", f"「{t.spec.label}」不在视野内，FPGA 继续探索。")
+                self._emit("target_lost", f"「{t.spec.label}」不在视野内，FPGA 继续探索。")
         if not tracking:
             t.progress = max(t.progress, 5)
             return
         pick = self.target_pick(now, 0.8)
         if pick is not None:
             t.remaining_m = max(0.0, pick.distance_m - STANDOFF_M)
-            if t.track_start_m:
-                span = max(0.05, t.track_start_m - STANDOFF_M)
-                t.progress = max(t.progress, min(95, 30 + int(65 * (1 - t.remaining_m / span))))
+            if not t.track_start_m:
+                t.track_start_m = pick.distance_m
+            span = max(0.05, t.track_start_m - STANDOFF_M)
+            t.progress = max(t.progress, min(95, 30 + int(65 * (1 - t.remaining_m / span))))
+            if now - t.last_progress_emit >= 1.0:
+                t.last_progress_emit = now
+                self._emit("progress", f"接近「{t.spec.label}」，距离 {pick.distance_m:.2f} m。", suffix=f"p{t.event_seq}")
         if t.task_type != "search_target":
             return
         near_goal = s.distance_to_goal_mm() / 1000 <= self.cfg.target_arrive_tol_m
