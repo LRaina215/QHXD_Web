@@ -91,9 +91,20 @@ class LLMIntentParser:
             return False
         if rule_result.intent is None:
             return True
+        if self._rule_is_confident(text, rule_result):
+            return False
         if rule_result.need_confirm or rule_result.confidence < 0.75:
             return True
         return self._looks_complex(text)
+
+    def _rule_is_confident(self, text: str, rule_result: ParsedIntent) -> bool:
+        """规则解析有把握（≥0.9）且句子不复杂：常用短句（跟着我、去 A 点、返航…）不必再等几秒大模型。
+        运动类照样要用户确认；危险说法已在规则里直接拒绝。"""
+        return (
+            rule_result.intent not in {None, "unknown"}
+            and rule_result.confidence >= 0.9
+            and not self._looks_complex(text)
+        )
 
     @staticmethod
     def _looks_complex(text: str) -> bool:

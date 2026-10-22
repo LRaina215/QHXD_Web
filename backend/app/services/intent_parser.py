@@ -69,7 +69,9 @@ class IntentParser:
                 detail="已解析为安全规则查询。",
             )
 
-        if self._contains_any(normalized, ["向前走", "往前走", "开快", "快一点", "走一米", "撞过去", "速度", "底盘速度"]):
+        if self._contains_any(normalized, ["向前走", "往前走", "开快", "快一点", "走一米", "撞过去", "速度", "底盘速度",
+                                           "撞", "全速", "最快", "高速", "加速", "冲过去", "跑快",
+                                           "关掉急停", "关闭急停", "关急停", "解除急停", "取消急停", "忽略"]):
             return ParsedIntent(
                 intent="unknown",
                 confidence=0.95,

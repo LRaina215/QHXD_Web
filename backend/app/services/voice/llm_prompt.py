@@ -46,7 +46,7 @@ intent 取值：
 - open_chat 闲聊或常识问答，简短中文回答写进 reply_text，不能包含任务
 - unknown 无法确定，或要求关急停、忽略故障、高速冲、撞东西、写代码、删文件等
 target_class 只能是 bottle、cup、person、sports ball、chair、backpack；target_color 只能是 red、green、blue、yellow、white、black，没有就不写。
-用不到的字段不要输出。confidence 是 0 到 1 的把握程度。"""
+用不到的字段不要输出，但每个 JSON 都必须有 intent 和 confidence（0 到 1 的把握程度）。"""
 
 
 def prompt_style(backend: str) -> str:

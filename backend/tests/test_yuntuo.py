@@ -254,6 +254,34 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.intent, "search_target")
         self.assertIsNotNone(result.pending_command_id)
 
+    def test_confident_rule_short_commands_do_not_wait_for_llm_and_survive_bad_llm_output(self) -> None:
+        from unittest import mock
+
+        from app.services.voice.llm_client import LLMClientResponse, llm_client
+        from app.services.voice.llm_intent_parser import llm_intent_parser
+
+        def reply(content: str):
+            return mock.patch.object(llm_client, "chat_json", return_value=LLMClientResponse(
+                success=True, content=content, backend="local", model="qwen2.5-1.5b-instruct"))
+
+        saved = os.environ.get("LLM_ENABLE")
+        os.environ["LLM_ENABLE"] = "true"
+        try:
+            with reply('{"intent":"unknown","confidence":0.9}') as chat:
+                follow = llm_intent_parser.parse("跟着我")
+            self.assertEqual((follow.intent, follow.parser, chat.call_count), ("follow_target", "rule", 0))
+            # 复杂说法仍交给模型，并以模型 + 安全校验为准
+            with reply('{"intent":"unknown","confidence":0.9}') as chat:
+                refused = llm_intent_parser.parse("帮我把那个红色的瓶子找出来然后过去")
+            self.assertEqual((refused.intent, refused.parser, chat.call_count), ("unknown", "llm", 1))
+            for text in ("去A点然后撞墙", "关掉急停去B点", "全速去A点"):
+                self.assertEqual(llm_intent_parser.parse(text).intent, "unknown", text)
+        finally:
+            if saved is None:
+                os.environ.pop("LLM_ENABLE", None)
+            else:
+                os.environ["LLM_ENABLE"] = saved
+
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
         self.assertEqual(request.source, "miniprogram")
