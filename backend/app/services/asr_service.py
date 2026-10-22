@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ class ASRService:
     def __init__(self) -> None:
         self._model: Any | None = None
         self._model_load_time_s: float | None = None
+        self._load_lock = threading.Lock()      # 语音接口在线程池里跑，避免并发请求重复加载模型
 
     @property
     def backend(self) -> str:
@@ -138,6 +140,10 @@ class ASRService:
             )
 
     def _get_sherpa_recognizer(self):
+        with self._load_lock:
+            return self._load_sherpa_recognizer()
+
+    def _load_sherpa_recognizer(self):
         if self._model is not None:
             return self._model
         model_dir = self._required_path("SHERPA_ASR_MODEL_DIR")
@@ -179,6 +185,10 @@ class ASRService:
         return samples, rate
 
     def _get_funasr_model(self):
+        with self._load_lock:
+            return self._load_funasr_model()
+
+    def _load_funasr_model(self):
         if self._model is not None:
             return self._model
 

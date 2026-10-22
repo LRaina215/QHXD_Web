@@ -777,7 +777,7 @@ async def get_latest_weather() -> ExternalWeatherLatestResponse:
 
 @app.post("/api/voice/text_command", response_model=VoiceCommandResponse)
 async def text_command(request: VoiceTextCommandRequest) -> VoiceCommandResponse:
-    result, state = voice_entry_service.handle_text_command(request)
+    result, state = await asyncio.to_thread(voice_entry_service.handle_text_command, request)
     if state is not None:
         await ws_manager.broadcast_state(state)
     return VoiceCommandResponse(data=result)
@@ -785,7 +785,7 @@ async def text_command(request: VoiceTextCommandRequest) -> VoiceCommandResponse
 
 @app.post("/api/voice/smart_command", response_model=SmartCommandResponse)
 async def smart_command(request: SmartCommandRequest) -> SmartCommandResponse:
-    result, state = smart_voice_service.handle(request)
+    result, state = await asyncio.to_thread(smart_voice_service.handle, request)
     if state is not None:
         await ws_manager.broadcast_state(state)
     return SmartCommandResponse(data=result)
@@ -805,12 +805,14 @@ async def smart_audio_command(request: Request) -> SmartCommandResponse:
     try:
         temp_path = _save_temp_wav(upload["file_bytes"])
         _validate_wav_duration(temp_path)
-        result, state = _smart_result_from_asr(
-            asr_service.transcribe_audio_file(str(temp_path)),
-            source=source,
-            requested_by=requested_by,
-            use_llm=use_llm,
-            generate_tts=generate_tts,
+        result, state = await asyncio.to_thread(
+            lambda: _smart_result_from_asr(
+                asr_service.transcribe_audio_file(str(temp_path)),
+                source=source,
+                requested_by=requested_by,
+                use_llm=use_llm,
+                generate_tts=generate_tts,
+            )
         )
         if state is not None:
             await ws_manager.broadcast_state(state)
@@ -827,7 +829,7 @@ async def smart_record_command(request: VoiceRecordCommandRequest) -> SmartComma
     keep_audio = request.keep_audio if request.keep_audio is not None else audio_recorder.default_keep_audio()
     source = request.source or "rk3588-smart-record-command"
     requested_by = request.requested_by
-    record_result = audio_recorder.record(duration)
+    record_result = await asyncio.to_thread(audio_recorder.record, duration)
 
     if not record_result.success:
         if record_result.audio_path is not None and not keep_audio:
@@ -862,12 +864,14 @@ async def smart_record_command(request: VoiceRecordCommandRequest) -> SmartComma
         )
         return SmartCommandResponse(success=False, data=result)
 
-    result, state = _smart_result_from_asr(
-        asr_service.transcribe_audio_file(str(audio_path)),
-        source=source,
-        requested_by=requested_by,
-        use_llm=request.use_llm,
-        generate_tts=True,
+    result, state = await asyncio.to_thread(
+        lambda: _smart_result_from_asr(
+            asr_service.transcribe_audio_file(str(audio_path)),
+            source=source,
+            requested_by=requested_by,
+            use_llm=request.use_llm,
+            generate_tts=True,
+        )
     )
     if state is not None:
         await ws_manager.broadcast_state(state)
@@ -881,7 +885,7 @@ async def smart_record_command(request: VoiceRecordCommandRequest) -> SmartComma
 @app.post("/api/voice/asr_text_mock", response_model=VoiceCommandResponse)
 async def asr_text_mock(request: VoiceTextCommandRequest) -> VoiceCommandResponse:
     text_request = asr_service.transcribe_text_mock(request)
-    result, state = voice_entry_service.handle_text_command(text_request)
+    result, state = await asyncio.to_thread(voice_entry_service.handle_text_command, text_request)
     if state is not None:
         await ws_manager.broadcast_state(state)
     return VoiceCommandResponse(data=result)
@@ -899,7 +903,7 @@ async def confirm_voice_command(request: VoiceConfirmCommandRequest) -> VoiceCon
 
 @app.post("/api/voice/speak", response_model=SpeakResponse)
 async def speak(request: SpeakRequest) -> SpeakResponse:
-    return SpeakResponse(data=tts_service.speak(request.text))
+    return SpeakResponse(data=await asyncio.to_thread(tts_service.speak, request.text))
 
 
 @app.get("/api/voice/tts/latest", response_model=TTSLatestResponse)
@@ -942,11 +946,13 @@ async def audio_command(request: Request) -> VoiceAudioCommandResponse:
     try:
         temp_path = _save_temp_wav(upload["file_bytes"])
         audio_duration_s = _validate_wav_duration(temp_path)
-        result, state = _voice_result_from_asr(
-            asr_service.transcribe_audio_file(str(temp_path)),
-            source=source,
-            requested_by=requested_by,
-            use_llm=use_llm,
+        result, state = await asyncio.to_thread(
+            lambda: _voice_result_from_asr(
+                asr_service.transcribe_audio_file(str(temp_path)),
+                source=source,
+                requested_by=requested_by,
+                use_llm=use_llm,
+            )
         )
         if state is not None:
             await ws_manager.broadcast_state(state)
@@ -963,7 +969,7 @@ async def record_command(request: VoiceRecordCommandRequest) -> VoiceRecordComma
     keep_audio = request.keep_audio if request.keep_audio is not None else audio_recorder.default_keep_audio()
     source = request.source or "rk3588-record-command"
     requested_by = request.requested_by
-    record_result = audio_recorder.record(duration)
+    record_result = await asyncio.to_thread(audio_recorder.record, duration)
 
     if not record_result.success:
         if record_result.audio_path is not None and not keep_audio:
@@ -982,11 +988,13 @@ async def record_command(request: VoiceRecordCommandRequest) -> VoiceRecordComma
             detail="录音文件不存在。",
         )
 
-    result, state = _voice_result_from_asr(
-        asr_service.transcribe_audio_file(str(audio_path)),
-        source=source,
-        requested_by=requested_by,
-        use_llm=request.use_llm,
+    result, state = await asyncio.to_thread(
+        lambda: _voice_result_from_asr(
+            asr_service.transcribe_audio_file(str(audio_path)),
+            source=source,
+            requested_by=requested_by,
+            use_llm=request.use_llm,
+        )
     )
     if state is not None:
         await ws_manager.broadcast_state(state)
