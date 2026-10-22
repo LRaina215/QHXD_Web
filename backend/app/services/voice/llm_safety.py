@@ -6,6 +6,25 @@ import os
 from app.services.voice.llm_schema import ALLOWED_COMMANDS, ALLOWED_INTENTS, LOW_RISK_COMMANDS, MOTION_COMMANDS, LLMIntent
 from app.services.waypoint_resolver import waypoint_resolver
 
+SUPPORTED_TARGET_CLASSES = {"bottle", "cup", "person", "sports ball", "chair", "backpack"}
+SUPPORTED_COLORS = {"red", "green", "blue", "yellow", "white", "black"}
+_CLASS_ALIASES = {"水瓶": "bottle", "瓶子": "bottle", "杯子": "cup", "水杯": "cup", "人": "person", "行人": "person",
+                  "球": "sports ball", "ball": "sports ball", "椅子": "chair", "背包": "backpack", "书包": "backpack"}
+_COLOR_ALIASES = {"红": "red", "红色": "red", "绿": "green", "绿色": "green", "蓝": "blue", "蓝色": "blue",
+                  "黄": "yellow", "黄色": "yellow", "白": "white", "白色": "white", "黑": "black", "黑色": "black"}
+
+
+def normalize_class(value: str) -> str:
+    key = (value or "").strip().lower()
+    return _CLASS_ALIASES.get(key, key)
+
+
+def normalize_color(value: str | None) -> str | None:
+    if not value:
+        return None
+    key = value.strip().lower()
+    return _COLOR_ALIASES.get(key, key)
+
 
 @dataclass(frozen=True)
 class SafeLLMIntent:
@@ -70,7 +89,18 @@ class LLMSafetyValidator:
                     return self._reject(result, "LLM 目标点不存在或未能唯一匹配，未触发任务。")
             payload["waypoint_id"] = str(waypoint_id)
         elif command == "start_patrol":
-            payload["patrol_id"] = "patrol_default"
+            payload["patrol_id"] = "default_patrol"
+        elif command in {"search_target", "follow_target"}:
+            target_class = normalize_class(result.target_class or ("person" if command == "follow_target" else ""))
+            if target_class not in SUPPORTED_TARGET_CLASSES:
+                return self._reject(result, f"目标类别「{result.target_class or '未指定'}」不在感知模型支持范围内，未触发任务。")
+            color = normalize_color(result.target_color)
+            if color is not None and color not in SUPPORTED_COLORS:
+                return self._reject(result, f"目标颜色「{result.target_color}」无法识别，未触发任务。")
+            payload["target_class"] = target_class
+            if color:
+                payload["color"] = color
+            payload["label"] = (result.target_label or target_class)[:32]
 
         need_confirm = bool(result.need_confirm)
         if command in MOTION_COMMANDS and _require_confirm_for_motion():

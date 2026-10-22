@@ -1,4 +1,5 @@
 from app.schemas import (
+    FollowTargetRequest,
     GoToWaypointRequest,
     JsonScalar,
     MissionActionResult,
@@ -7,6 +8,7 @@ from app.schemas import (
     ResumeMissionRequest,
     ReturnHomeRequest,
     RobotState,
+    SearchTargetRequest,
     StartPatrolRequest,
 )
 from app.services.mock_state import mock_state_service
@@ -88,6 +90,33 @@ class MissionGateway:
             mock_handler=mock_state_service.return_home,
         )
 
+    def search_target(self, request: SearchTargetRequest) -> tuple[MissionActionResult, RobotState | None]:
+        return self._target_task(request, "search_target", mock_state_service.search_target)
+
+    def follow_target(self, request: FollowTargetRequest) -> tuple[MissionActionResult, RobotState | None]:
+        return self._target_task(request, "follow_target", mock_state_service.follow_target)
+
+    def _target_task(self, request, command: str, mock_handler) -> tuple[MissionActionResult, RobotState | None]:
+        payload: dict[str, JsonScalar] = {
+            "target_class": request.target_class.strip().lower(),
+            "color": request.color,
+            "label": request.label or request.target_class,
+            "timeout_s": request.timeout_s,
+        }
+        if state_store.get_system_mode().mode == "real" and self._preflight_enabled():
+            try:
+                # 探索 / 跟随在无图模式下也能进行，不要求先验地图
+                self._require_navigation_ready(require_map=False)
+            except ValueError as exc:
+                return self._record_rejection(request, command, payload, str(exc))
+        return self._dispatch(
+            request=request,
+            public_command=command,
+            nuc_command=command,
+            payload=payload,
+            mock_handler=mock_handler,
+        )
+
     def cancel(self, request: MissionRequestBase) -> tuple[MissionActionResult, RobotState | None]:
         if state_store.get_system_mode().mode == "mock":
             latest = state_store.get_latest_state()
@@ -160,27 +189,53 @@ class MissionGateway:
             return str(exc)
         return None
 
-    def _require_navigation_ready(self, expected_map_id: str | None = None) -> None:
+    def _require_navigation_ready(self, expected_map_id: str | None = None, require_map: bool = True) -> None:
         state = state_store.get_latest_state()
         if state.device_status.emergency_stop:
             raise ValueError("急停已触发，禁止开始或恢复导航任务。")
         if not state.device_status.online and not self._cboard_heartbeat_fresh():
-            raise ValueError("机器人真实状态离线且 C 板心跳过期，禁止开始或恢复导航任务。")
+            raise ValueError("机器人真实状态离线且底盘心跳过期，禁止开始或恢复导航任务。")
         blocking_faults = {"real-state-timeout", "real-command-link-unreachable", "emergency-stop"}
         if state.device_status.fault_code in blocking_faults:
             raise ValueError(f"机器人存在阻断故障：{state.device_status.fault_code}")
+        self._require_platform_ready(state)
 
         metadata = navigation_store.map_metadata()
         snapshot = navigation_store.latest()
-        if metadata is None:
-            raise ValueError("导航地图尚未上传，禁止发送 Nav2 Goal。")
-        if expected_map_id and metadata.map_id != expected_map_id:
+        if require_map and metadata is None:
+            raise ValueError("导航地图尚未上传，禁止发送导航目标。")
+        if require_map and expected_map_id and metadata.map_id != expected_map_id:
             raise ValueError(f"点位地图 {expected_map_id} 与当前地图 {metadata.map_id} 不一致。")
         if snapshot is None or snapshot.pose is None:
             raise ValueError("导航定位尚未就绪，缺少 map 到 base_link 位姿。")
         age = (datetime.now(timezone.utc) - snapshot.timestamp).total_seconds()
         if age > self._max_navigation_age_seconds():
-            raise ValueError(f"导航状态已过期 {age:.1f} 秒，禁止发送 Nav2 Goal。")
+            raise ValueError(f"导航状态已过期 {age:.1f} 秒，禁止发送导航目标。")
+
+    @staticmethod
+    def _require_platform_ready(state: RobotState) -> None:
+        """云拓 FPGA 平台：导航链路必须在线；控制侧急停 / 故障时拒绝运动任务。"""
+        platform = state.platform_status
+        if platform is None:
+            return
+        try:
+            max_age = float(os.getenv("YUNTUO_PLATFORM_MAX_AGE_SECONDS", "3.0"))
+        except ValueError:
+            max_age = 3.0
+        age = (datetime.now(timezone.utc) - platform.updated_at).total_seconds()
+        if age > max_age:
+            raise ValueError(f"FPGA 平台状态已 {age:.1f} s 未刷新，请检查 fpga_bridge 是否运行。")
+        if platform.nav_link not in {"online", "mock"}:
+            raise ValueError("FPGA 导航链路离线，禁止发送导航任务。")
+        if platform.fpga_state == "estop":
+            raise ValueError("FPGA 导航处于急停状态，请先解除急停（模式切回空闲）。")
+        if platform.control_estop:
+            raise ValueError("底盘控制急停已锁存，禁止开始运动任务。")
+        if platform.control_faults:
+            raise ValueError(f"底盘控制存在故障：{', '.join(platform.control_faults)}")
+        require_control = os.getenv("YUNTUO_REQUIRE_CONTROL_LINK", "false").strip().lower() in {"1", "true", "yes", "on"}
+        if require_control and platform.control_link not in {"online", "mock"}:
+            raise ValueError("底盘控制遥测离线，禁止开始运动任务。")
 
     def _record_rejection(
         self,
@@ -222,7 +277,8 @@ class MissionGateway:
             max_age = max(1.0, float(os.getenv("CBOARD_HEARTBEAT_MAX_AGE_SECONDS", "3")))
         except ValueError:
             max_age = 3.0
-        return 0.0 <= age <= max_age
+        # 文件系统 mtime 精度可能略超前于当前时钟，容忍 1 s 的负偏差
+        return -1.0 <= age <= max_age
 
     @staticmethod
     def _preflight_enabled() -> bool:

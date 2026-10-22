@@ -129,7 +129,7 @@ class RobotStatusProvider:
                 "progress": task.progress,
                 "source": task.source,
             },
-            "safety_boundary": "回答只能用于观察和建议，不能替代 Nav2 避障，也不能直接生成控制命令。",
+            "safety_boundary": "回答只能用于观察和建议，不能替代 FPGA 导航避障，也不能直接生成控制命令。",
         }
 
         if detection is None:
@@ -230,7 +230,7 @@ class RobotStatusProvider:
             return None
 
         system_prompt = (
-            "你是琼海芯动灵巡机器人的车载智能助手。"
+            "你是云拓多模态复杂地形轮腿机器人的车载智能助手。"
             "请只根据给定 JSON 上下文回答用户关于前方、导航安全或障碍物的问题。"
             "正常情况下不要提更新时间、数据来源、接口名、detection_status、YOLO、rk3588、时间戳或模型名。"
             "只有当 vision.freshness=stale 或 vision.status 不是 available 时，才用自然语言说明现在无法可靠查看前方画面，并结合最近事件说明。"

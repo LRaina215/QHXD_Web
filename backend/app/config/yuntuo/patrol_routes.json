@@ -1,0 +1,11 @@
+[
+  {
+    "route_id": "default_patrol",
+    "name": "场地巡检（台阶 → 斜坡 → 碎石 → 起点）",
+    "waypoints": ["wp_a", "wp_b", "wp_c"],
+    "stop_seconds": 2,
+    "capture_perception": true,
+    "return_home": true,
+    "enabled": true
+  }
+]

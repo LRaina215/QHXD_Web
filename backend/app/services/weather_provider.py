@@ -90,7 +90,7 @@ class WeatherProvider:
             "forecast_days": "1",
         }
         url = f"https://api.open-meteo.com/v1/forecast?{urlencode(params)}"
-        request = Request(url, headers={"User-Agent": "QHXD-Sentinel/1.0"})
+        request = Request(url, headers={"User-Agent": "YunTuo/1.0"})
         with urlopen(request, timeout=self._timeout_seconds()) as response:
             payload = json.loads(response.read().decode("utf-8"))
 

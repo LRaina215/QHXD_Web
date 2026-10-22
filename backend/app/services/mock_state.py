@@ -10,6 +10,7 @@ from app.schemas import (
     AlertEvent,
     DeviceStatus,
     EnvSensor,
+    FollowTargetRequest,
     GoToWaypointRequest,
     MissionActionResult,
     MissionRequestBase,
@@ -17,10 +18,12 @@ from app.schemas import (
     ModeSwitchResult,
     NavStatus,
     PauseMissionRequest,
+    PlatformStatus,
     ResumeMissionRequest,
     ReturnHomeRequest,
     RobotPose,
     RobotState,
+    SearchTargetRequest,
     StartPatrolRequest,
     SystemMode,
     TaskStatus,
@@ -89,7 +92,7 @@ class MockStateService:
             received_at=self._timestamp(),
             detail=(
                 f"已切换到 {request.mode} 模式。"
-                "Mock 模式由本地模拟数据生成器驱动；Real 模式等待 RK3588 本机导航、IMU、C 板与感知链路上送真实状态，任务命令进入真实执行链路。"
+                "Mock 模式由本地模拟数据生成器驱动；Real 模式等待 fpga_bridge 上送 FPGA 导航、控制与感知状态，任务命令进入真实执行链路。"
             ),
         )
 
@@ -175,6 +178,35 @@ class MockStateService:
         self._record_command(request, result, {})
         return result
 
+    def search_target(self, request: SearchTargetRequest) -> MissionActionResult:
+        return self._start_target_task(request, "search_target", "寻找")
+
+    def follow_target(self, request: FollowTargetRequest) -> MissionActionResult:
+        return self._start_target_task(request, "follow_target", "跟随")
+
+    def _start_target_task(self, request, task_type: str, verb: str) -> MissionActionResult:
+        label = request.label or request.target_class
+        self._current_task = TaskStatus(
+            task_id=f"task-{task_type.replace('_', '-')}",
+            task_type=task_type,
+            state="running",
+            progress=5,
+            source=request.source,
+            phase="exploring",
+            detail=f"模拟{verb}目标：{label}",
+        )
+        result = MissionActionResult(
+            accepted=True,
+            command=task_type,
+            task_status=self.get_current_task(),
+            received_at=self._timestamp(),
+            detail=f"已受理{verb}「{label}」的模拟命令。",
+        )
+        self._record_command(
+            request, result, {"target_class": request.target_class, "color": request.color, "label": request.label}
+        )
+        return result
+
     @staticmethod
     def _timestamp() -> datetime:
         return datetime.now(timezone.utc)
@@ -211,7 +243,50 @@ class MockStateService:
                 status="mock",
             ),
             system_mode=self.get_system_mode(),
+            platform_status=self._build_platform_status(timestamp, angle),
             updated_at=timestamp,
+        )
+
+    def _build_platform_status(self, timestamp: datetime, angle: float) -> PlatformStatus:
+        task = self._current_task
+        running = task.state == "running"
+        if task.task_type in {"search_target", "follow_target"} and running:
+            fpga_mode, fpga_state = ("track", "tracking") if task.progress >= 50 else ("search", "searching")
+        elif running:
+            fpga_mode, fpga_state = "goto", "moving"
+        elif task.state == "completed" and task.task_type != "placeholder":
+            fpga_mode, fpga_state = "idle", "arrived"
+        else:
+            fpga_mode, fpga_state = "idle", "idle"
+        moving = fpga_state in {"moving", "tracking", "searching"}
+        return PlatformStatus(
+            source="mock",
+            updated_at=timestamp,
+            nav_link="mock",
+            nav_link_kind="mock",
+            fpga_mode=fpga_mode,
+            fpga_state=fpga_state,
+            loc_state="ok",
+            loc_quality=88 + int(math.sin(angle) * 6),
+            map_loaded=True,
+            target_valid=fpga_state == "tracking",
+            lidar_ok=True,
+            odom_ok=True,
+            cmd_vx_mps=round(0.35 + 0.05 * math.sin(angle), 3) if moving else 0.0,
+            cmd_wz_radps=round(0.3 * math.cos(angle), 3) if moving else 0.0,
+            fpga_uptime_s=float(self._sequence),
+            status_rate_hz=5.0,
+            control_link="mock",
+            policy_active=True,
+            control_estop=False,
+            control_faults=[],
+            wheel_left_mps=round(0.34 + 0.04 * math.sin(angle), 3) if moving else 0.0,
+            wheel_right_mps=round(0.36 + 0.04 * math.cos(angle), 3) if moving else 0.0,
+            roll_deg=round(1.2 * math.sin(angle * 1.7), 2),
+            pitch_deg=round(2.0 * math.cos(angle * 1.3), 2),
+            yaw_rate_radps=round(0.3 * math.cos(angle), 3) if moving else 0.0,
+            height_cmd_m=0.16,
+            telemetry_rate_hz=50.0,
         )
 
     def _advance_task(self) -> None:
@@ -238,6 +313,8 @@ class MockStateService:
             return "mock-patrol-route"
         if self._current_task.task_type == "return_home":
             return "home"
+        if self._current_task.task_type in {"search_target", "follow_target"}:
+            return "mock-target"
         return None
 
     @staticmethod

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from app.schemas import DetectionStatus, RobotState, SystemMode
+from app.schemas import DetectionStatus, PlatformStatus, RobotState, SystemMode
 
 
 class StateStore:
@@ -29,6 +29,18 @@ class StateStore:
         latest_state = self.get_latest_state().model_copy(
             update={
                 "detection_status": detection_status,
+                "updated_at": self._timestamp(),
+            }
+        )
+        self._latest_state = latest_state
+        return self.get_latest_state()
+
+    def update_platform_status(self, platform_status: PlatformStatus) -> RobotState | None:
+        if self._system_mode.mode != "real":
+            return None
+        latest_state = self.get_latest_state().model_copy(
+            update={
+                "platform_status": platform_status,
                 "updated_at": self._timestamp(),
             }
         )
@@ -64,11 +76,17 @@ class StateStore:
         detection_status = state.detection_status
         if detection_status is None and self._latest_state is not None:
             detection_status = self._latest_state.detection_status
+        platform_status = state.platform_status
+        if platform_status is None and self._latest_state is not None:
+            platform_status = self._latest_state.platform_status
+        if platform_status is not None and platform_status.source == "mock" and self._system_mode.mode == "real":
+            platform_status = None
 
         stored_state = state.model_copy(
             update={
                 "system_mode": self.get_system_mode(),
                 "detection_status": detection_status,
+                "platform_status": platform_status,
             }
         )
         self._latest_state = stored_state

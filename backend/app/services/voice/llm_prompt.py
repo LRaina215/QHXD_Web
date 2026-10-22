@@ -5,7 +5,7 @@ import json
 from app.services.voice.llm_schema import ALLOWED_INTENTS
 from app.services.waypoint_resolver import waypoint_resolver
 
-SYSTEM_PROMPT = """你是灵巡 Sentinel 的受控型智能语音助手。
+SYSTEM_PROMPT = """你是云拓（多模态复杂地形轮腿机器人）的受控型智能语音助手。
 你必须把用户文本解析为允许的 JSON 意图。
 你不能直接控制机器人。
 你可以在 reply_text 中输出自然语言回答，但最外层只能输出 JSON。
@@ -17,10 +17,13 @@ SYSTEM_PROMPT = """你是灵巡 Sentinel 的受控型智能语音助手。
 只输出一个 JSON 对象，不要输出 Markdown。"""
 
 JSON_SCHEMA = {
-    "intent": "go_to_waypoint | start_patrol | pause_task | resume_task | return_home | query_self_identity | query_capability | query_safety_rule | query_assistant_model | query_robot_status | query_task_status | query_navigation_status | query_battery | query_emergency_stop | query_perception_status | query_front_status | query_obstacle_status | query_navigation_safety | query_weather | query_environment | speak_last_result | open_chat | unknown",
+    "intent": "go_to_waypoint | start_patrol | pause_task | resume_task | return_home | search_target | follow_target | query_self_identity | query_capability | query_safety_rule | query_assistant_model | query_robot_status | query_task_status | query_navigation_status | query_battery | query_emergency_stop | query_perception_status | query_front_status | query_obstacle_status | query_navigation_safety | query_weather | query_environment | speak_last_result | open_chat | unknown",
     "command": "same as intent for executable/query commands, or null",
     "waypoint_alias": "用户提到的目标点别名，或 null",
     "waypoint_id": "仅可从可用 waypoint 列表选择，或 null",
+    "target_class": "search_target/follow_target 的目标类别：bottle | cup | person | sports ball | chair | backpack，或 null",
+    "target_color": "目标颜色：red | green | blue | yellow | white | black，或 null",
+    "target_label": "目标的中文称呼，例如 红色水瓶，或 null",
     "confidence": "0.0 到 1.0",
     "need_confirm": "移动类任务 true，查询/暂停/继续可 false",
     "reason": "一句简短中文原因",
@@ -47,7 +50,9 @@ def build_prompts(recognized_text: str) -> tuple[str, str]:
         "output_json_schema": JSON_SCHEMA,
         "safety_rules": [
             "不得编造 waypoint_id；目标点只能来自 available_waypoints。",
-            "go_to_waypoint/start_patrol/return_home 属于移动类任务，need_confirm 必须为 true。",
+            "go_to_waypoint/start_patrol/return_home/search_target/follow_target 属于移动类任务，need_confirm 必须为 true。",
+            "用户要求找到某个物体并移动到其附近（例如找到红色水瓶）时用 search_target，填 target_class/target_color/target_label；要求跟着自己或某人时用 follow_target，target_class=person。",
+            "目标类别只能是 bottle/cup/person/sports ball/chair/backpack；其他物体返回 unknown。",
             "如果用户要求写代码、删除文件、随便高速移动、自由规划或无法确定任务，intent 返回 unknown。",
             "如果用户要求直接速度控制、关闭急停、忽略故障、撞过去，intent 返回 unknown。",
             "如果缺少目标点，intent 返回 unknown，并在 missing_slots 写 target_waypoint。",

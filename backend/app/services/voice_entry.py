@@ -6,11 +6,13 @@ import os
 from uuid import uuid4
 
 from app.schemas import (
+    FollowTargetRequest,
     GoToWaypointRequest,
     PauseMissionRequest,
     ResumeMissionRequest,
     ReturnHomeRequest,
     RobotState,
+    SearchTargetRequest,
     StartPatrolRequest,
     VoiceCommandResult,
     VoiceConfirmCommandRequest,
@@ -23,7 +25,7 @@ from app.services.state_store import state_store
 from app.services.voice.llm_intent_parser import llm_intent_parser
 
 
-MOTION_INTENTS = {"go_to_waypoint", "start_patrol", "return_home"}
+MOTION_INTENTS = {"go_to_waypoint", "start_patrol", "return_home", "search_target", "follow_target"}
 QUERY_INTENTS = {
     "query_status",
     "query_task",
@@ -161,7 +163,7 @@ class VoiceEntryService:
         if intent == "start_patrol":
             return mission_gateway.start_patrol(
                 StartPatrolRequest(
-                    patrol_id=str(payload.get("patrol_id", "patrol_default")),
+                    patrol_id=str(payload.get("patrol_id", "default_patrol")),
                     source=source,
                     requested_by=request.requested_by,
                 )
@@ -172,6 +174,17 @@ class VoiceEntryService:
             return mission_gateway.resume(ResumeMissionRequest(source=source, requested_by=request.requested_by))
         if intent == "return_home":
             return mission_gateway.return_home(ReturnHomeRequest(source=source, requested_by=request.requested_by))
+        if intent in {"search_target", "follow_target"}:
+            fields = {
+                "target_class": str(payload.get("target_class") or "person"),
+                "color": payload.get("color") or None,
+                "label": payload.get("label") or None,
+                "source": source,
+                "requested_by": request.requested_by,
+            }
+            if intent == "search_target":
+                return mission_gateway.search_target(SearchTargetRequest(**fields))
+            return mission_gateway.follow_target(FollowTargetRequest(**fields))
         raise ValueError(f"Unsupported voice mission intent: {intent}")
 
     def _create_pending(self, parsed: ParsedIntent, request: VoiceTextCommandRequest) -> str:
@@ -205,6 +218,10 @@ class VoiceEntryService:
         if parsed.intent == "start_patrol":
             return True
         if parsed.intent == "return_home":
+            return True
+        if parsed.intent == "search_target":
+            return bool(parsed.payload.get("target_class"))
+        if parsed.intent == "follow_target":
             return True
         return False
 

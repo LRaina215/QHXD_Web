@@ -8,12 +8,15 @@ JsonScalar = str | int | float | bool | None
 SystemModeValue = Literal["mock", "real"]
 NavModeValue = Literal["auto", "manual"]
 NavStateValue = Literal["idle", "running", "paused", "completed", "failed", "offline"]
-TaskTypeValue = Literal["placeholder", "go_to_waypoint", "start_patrol", "return_home"]
+TaskTypeValue = Literal[
+    "placeholder", "go_to_waypoint", "start_patrol", "return_home", "search_target", "follow_target"
+]
 TaskStateValue = Literal["idle", "pending", "running", "paused", "completed", "failed", "cancelled"]
 SensorStatusValue = Literal["mock", "nominal", "warning", "fault", "offline"]
 AlertLevelValue = Literal["info", "warning", "error", "critical"]
 MissionCommandValue = Literal[
-    "go_to_waypoint", "start_patrol", "pause_task", "resume_task", "cancel_task", "return_home"
+    "go_to_waypoint", "start_patrol", "pause_task", "resume_task", "cancel_task", "return_home",
+    "search_target", "follow_target",
 ]
 VoiceIntentValue = Literal[
     "go_to_waypoint",
@@ -21,6 +24,8 @@ VoiceIntentValue = Literal[
     "pause_task",
     "resume_task",
     "return_home",
+    "search_target",
+    "follow_target",
     "query_status",
     "query_task",
     "query_detection",
@@ -101,6 +106,7 @@ class NavigationSnapshot(ContractModel):
     local_path: list[NavigationPoint] = Field(default_factory=list)
     nav_state: str = Field(default="waiting")
     remaining_distance: float | None = Field(default=None, ge=0.0)
+    target: NavigationPoint | None = Field(default=None, description="正在接近 / 跟随的视觉目标（map 坐标系）")
 
 
 class NavigationMapOrigin(ContractModel):
@@ -203,6 +209,85 @@ class DetectionObject(ContractModel):
     recently_seen: bool = Field(default=False, description="是否为短时保持的最近目标")
     last_seen_at: datetime | None = Field(default=None, description="短时保持目标上次被检测到的时间")
     age_s: float | None = Field(default=None, ge=0.0, description="距离上次检测到的秒数")
+    track_id: int | None = Field(default=None, ge=0, description="跟踪 ID，同一目标在相邻帧保持不变")
+    color: str | None = Field(default=None, description="框内主色：red / green / blue / yellow / white / black / other")
+    position_body_m: list[float] | None = Field(
+        default=None, min_length=3, max_length=3, description="机身系目标位置 [x 前, y 左, z 上]，单位 m；无深度时为空"
+    )
+    distance_m: float | None = Field(default=None, ge=0.0, description="目标水平距离，单位 m")
+
+
+LinkStateValue = Literal["online", "offline", "mock", "unknown"]
+
+
+class PlatformStatus(ContractModel):
+    """云拓整车 FPGA 侧状态：导航（NV STATUS 报文）与控制（V2 遥测），由 fpga_bridge 上送。"""
+
+    source: str = Field(default="fpga_bridge")
+    updated_at: datetime = Field(description="最近一次刷新时间")
+    nav_link: LinkStateValue = Field(default="unknown", description="FPGA 导航链路")
+    nav_link_kind: str | None = Field(default=None, description="链路类型，例如 uart:/dev/ttyACM0、udp:127.0.0.1:9000")
+    fpga_mode: str | None = Field(default=None, description="FPGA 导航模式：idle / goto / track / search / estop")
+    fpga_state: str | None = Field(
+        default=None, description="FPGA 导航状态：idle / moving / arrived / blocked / tracking / searching / estop"
+    )
+    loc_state: str | None = Field(default=None, description="定位状态：mapless / aligning / ok / degraded / lost")
+    loc_quality: int | None = Field(default=None, ge=0, le=100, description="有图定位质量，百分比")
+    map_loaded: bool = Field(default=False, description="FPGA 是否已加载先验地图")
+    target_valid: bool = Field(default=False, description="FPGA 当前是否持有有效视觉目标")
+    lidar_ok: bool | None = Field(default=None, description="雷达代价图是否正常")
+    odom_ok: bool | None = Field(default=None, description="里程计是否正常")
+    cmd_vx_mps: float | None = Field(default=None, description="导航当前期望前进速度 m/s")
+    cmd_wz_radps: float | None = Field(default=None, description="导航当前期望角速度 rad/s（左转为正）")
+    fpga_uptime_s: float | None = Field(default=None, ge=0.0, description="FPGA 计时（32 位微秒计数换算）")
+    status_rate_hz: float | None = Field(default=None, ge=0.0, description="STATUS 报文实际接收频率")
+    control_link: LinkStateValue = Field(default="unknown", description="FPGA 控制遥测链路")
+    policy_active: bool | None = Field(default=None, description="RL 策略是否在运行")
+    control_estop: bool | None = Field(default=None, description="控制侧急停锁存")
+    control_faults: list[str] = Field(default_factory=list, description="控制侧故障标志")
+    wheel_left_mps: float | None = Field(default=None, description="左轮编码器速度 m/s（前进为正）")
+    wheel_right_mps: float | None = Field(default=None, description="右轮编码器速度 m/s（前进为正）")
+    roll_deg: float | None = Field(default=None, description="横滚角 deg")
+    pitch_deg: float | None = Field(default=None, description="俯仰角 deg")
+    yaw_rate_radps: float | None = Field(default=None, description="偏航角速度 rad/s")
+    height_cmd_m: float | None = Field(default=None, description="当前底盘高度指令 m")
+    telemetry_rate_hz: float | None = Field(default=None, ge=0.0, description="控制遥测实际接收频率")
+
+
+class PlatformStatusUpdateRequest(ContractModel):
+    platform_status: PlatformStatus
+
+
+class PlatformStatusResponse(ContractModel):
+    success: bool = Field(default=True)
+    data: PlatformStatus | None
+
+
+class PlatformEstopRequest(ContractModel):
+    engage: bool = Field(default=True, description="true 触发急停（MODE estop）；false 解除导航急停（MODE idle）")
+    source: str = Field(default="web")
+    requested_by: str | None = None
+
+
+class PlatformSetPoseRequest(ContractModel):
+    x: float = Field(description="地图系 X，m")
+    y: float = Field(description="地图系 Y，m")
+    yaw: float = Field(default=0.0, description="朝向，rad")
+    align: bool = Field(default=True, description="有图时在先验图上搜索对准")
+    source: str = Field(default="web")
+    requested_by: str | None = None
+
+
+class PlatformCommandResult(ContractModel):
+    accepted: bool
+    command: str
+    detail: str
+    received_at: datetime
+
+
+class PlatformCommandResponse(ContractModel):
+    success: bool = True
+    data: PlatformCommandResult
 
 
 class DetectionEvent(ContractModel):
@@ -272,6 +357,7 @@ class RobotState(ContractModel):
     env_sensor: EnvSensor
     system_mode: SystemMode
     detection_status: DetectionStatus | None = Field(default=None, description="可选本地视觉检测状态")
+    platform_status: PlatformStatus | None = Field(default=None, description="云拓 FPGA 导航与控制链路状态")
     updated_at: datetime = Field(description="状态更新时间")
 
 
@@ -351,6 +437,27 @@ class ReturnHomeRequest(MissionRequestBase):
 
 class CancelMissionRequest(MissionRequestBase):
     pass
+
+
+TargetColorValue = Literal["red", "green", "blue", "yellow", "white", "black", "other"]
+
+
+class SearchTargetRequest(MissionRequestBase):
+    """探索场地找指定目标，找到后由 FPGA 自主接近并停在目标前（站位约 0.7 m）。"""
+
+    target_class: str = Field(min_length=1, description="检测类别，取自模型 labels，例如 bottle、person、cup")
+    color: TargetColorValue | None = Field(default=None, description="可选颜色约束，例如 red")
+    label: str | None = Field(default=None, description="展示名，例如 红色水瓶")
+    timeout_s: int = Field(default=180, ge=10, le=900, description="超过该时间仍未完成即判失败")
+
+
+class FollowTargetRequest(MissionRequestBase):
+    """持续跟随指定目标（例如人员），目标丢失后回到探索继续找。"""
+
+    target_class: str = Field(default="person", min_length=1, description="检测类别")
+    color: TargetColorValue | None = Field(default=None, description="可选颜色约束")
+    label: str | None = Field(default=None, description="展示名")
+    timeout_s: int = Field(default=300, ge=10, le=1800, description="跟随任务总时长上限")
 
 
 class WaypointPose(ContractModel):

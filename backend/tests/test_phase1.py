@@ -517,7 +517,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(identity.success)
         self.assertEqual(identity.data.intent, "query_self_identity")
         self.assertEqual(identity.data.data_source, "robot_profile")
-        self.assertIn("灵巡 Sentinel", identity.data.reply_text)
+        self.assertIn("云拓", identity.data.reply_text)
         self.assertIsNotNone(identity.data.tts_status)
         self.assertEqual(identity.data.tts_status.status, "generated")
 
@@ -1075,7 +1075,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(response.success)
         self.assertFalse(response.data.accepted)
-        self.assertIn("Nav2 任务执行器", response.data.detail)
+        self.assertIn("任务执行器", response.data.detail)
         self.assertEqual(len(logs), 1)
         self.assertFalse(logs[0].accepted)
         self.assertEqual(logs[0].command, "resume")

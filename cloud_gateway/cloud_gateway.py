@@ -67,11 +67,15 @@ WRITE_PATH_PREFIXES = (
     "/api/robot/voice/onboard_record_command",
     "/api/robot/voice/onboard_smart_command",
     "/api/mission/",
+    "/api/platform/estop",
+    "/api/platform/set_pose",
     "/api/system/mode/switch",
 )
 
+# 急停只要求写权限（令牌），不做"在线 / 无故障"前置检查：故障或离线时恰恰需要能急停
 CONTROL_PATH_PREFIXES = (
     "/api/mission/",
+    "/api/platform/set_pose",
 )
 
 ALLOWED_PATH_PREFIXES = (
@@ -85,6 +89,11 @@ ALLOWED_PATH_PREFIXES = (
     "/api/imu/latest",
     "/api/perception/latest_frame",
     "/api/perception/frame_stream",
+    "/api/perception/events",
+    "/api/perception/video_health",
+    "/api/platform/status",
+    "/api/platform/estop",
+    "/api/platform/set_pose",
     "/api/navigation/",
     "/api/external/weather/latest",
     "/api/voice/text_command",

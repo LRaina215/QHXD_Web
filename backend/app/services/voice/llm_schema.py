@@ -9,6 +9,8 @@ ALLOWED_INTENTS = {
     "pause_task",
     "resume_task",
     "return_home",
+    "search_target",
+    "follow_target",
     "query_status",
     "query_task",
     "query_detection",
@@ -38,6 +40,8 @@ ALLOWED_COMMANDS = {
     "pause_task",
     "resume_task",
     "return_home",
+    "search_target",
+    "follow_target",
     "query_status",
     "query_task",
     "query_detection",
@@ -60,7 +64,7 @@ ALLOWED_COMMANDS = {
     "open_chat",
 }
 
-MOTION_COMMANDS = {"go_to_waypoint", "start_patrol", "return_home"}
+MOTION_COMMANDS = {"go_to_waypoint", "start_patrol", "return_home", "search_target", "follow_target"}
 LOW_RISK_COMMANDS = {
     "pause_task",
     "resume_task",
@@ -93,6 +97,9 @@ class LLMIntent:
     command: str | None = None
     waypoint_alias: str | None = None
     waypoint_id: str | None = None
+    target_class: str | None = None
+    target_color: str | None = None
+    target_label: str | None = None
     confidence: float = 0.0
     need_confirm: bool = True
     reason: str = ""
@@ -116,6 +123,9 @@ class LLMIntent:
             command=str(data["command"]) if data.get("command") is not None else None,
             waypoint_alias=str(data["waypoint_alias"]) if data.get("waypoint_alias") is not None else None,
             waypoint_id=str(data["waypoint_id"]) if data.get("waypoint_id") is not None else None,
+            target_class=str(data["target_class"]) if data.get("target_class") else None,
+            target_color=str(data["target_color"]) if data.get("target_color") else None,
+            target_label=str(data["target_label"]) if data.get("target_label") else None,
             confidence=confidence_value,
             need_confirm=bool(data.get("need_confirm", True)),
             reason=str(data.get("reason") or ""),

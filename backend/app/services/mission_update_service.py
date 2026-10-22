@@ -13,7 +13,7 @@ class MissionUpdateService:
                 MissionExecutorUpdateResult(
                     accepted=False,
                     state_updated=False,
-                    detail="当前不是 Real 模式，已忽略 Nav2 任务状态。",
+                    detail="当前不是 Real 模式，已忽略 FPGA 任务状态。",
                 ),
                 None,
             )
@@ -45,7 +45,7 @@ class MissionUpdateService:
                 accepted=True,
                 state_updated=published is not None,
                 duplicate=not inserted,
-                detail="Nav2 任务状态已更新。" if inserted else "重复任务事件已忽略，状态已同步。",
+                detail="FPGA 任务状态已更新。" if inserted else "重复任务事件已忽略，状态已同步。",
             ),
             published,
         )

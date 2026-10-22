@@ -1,0 +1,38 @@
+[
+  {
+    "waypoint_id": "home",
+    "name": "起点",
+    "aliases": ["起点", "出发点", "返回点", "home", "家"],
+    "map_id": "yuntuo_field",
+    "pose": [0.0, 0.0, 0.0],
+    "group": "home",
+    "enabled": true
+  },
+  {
+    "waypoint_id": "wp_a",
+    "name": "A 点（台阶区）",
+    "aliases": ["A点", "a点", "A 点", "一号点", "1号点", "台阶区", "台阶"],
+    "map_id": "yuntuo_field",
+    "pose": [2.0, 1.5, 0.0],
+    "group": "patrol",
+    "enabled": true
+  },
+  {
+    "waypoint_id": "wp_b",
+    "name": "B 点（斜坡区）",
+    "aliases": ["B点", "b点", "B 点", "二号点", "2号点", "斜坡区", "斜坡"],
+    "map_id": "yuntuo_field",
+    "pose": [3.5, -1.5, 0.0],
+    "group": "patrol",
+    "enabled": true
+  },
+  {
+    "waypoint_id": "wp_c",
+    "name": "C 点（碎石区）",
+    "aliases": ["C点", "c点", "C 点", "三号点", "3号点", "碎石区", "碎石"],
+    "map_id": "yuntuo_field",
+    "pose": [4.2, 0.0, 0.0],
+    "group": "patrol",
+    "enabled": true
+  }
+]

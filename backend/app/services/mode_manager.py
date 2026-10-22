@@ -42,7 +42,7 @@ class ModeManager:
             fault_code="waiting-for-real-state",
         )
         latest_state = state_store.publish_real_state(waiting_state) or base_state
-        self._save_mode_alert("warning", "已切换到 Real 模式，等待 RK3588 实时链路上送导航、IMU、C 板与感知状态。")
+        self._save_mode_alert("warning", "已切换到 Real 模式，等待 fpga_bridge 上送 FPGA 导航 / 控制状态与感知状态。")
         return latest_state
 
     def record_real_state(self, state: RobotState) -> RobotState:
@@ -51,7 +51,7 @@ class ModeManager:
         self._real_link_state = "online"
 
         if previous_state in {"waiting", "timeout", "bridge_error"}:
-            self._save_mode_alert("info", "灵巡实时状态链路已恢复。")
+            self._save_mode_alert("info", "云拓实时状态链路已恢复。")
 
         return state
 

@@ -28,7 +28,7 @@ class Nav2MissionAdapter:
     ) -> tuple[MissionActionResult, RobotState | None]:
         received_at = datetime.now(timezone.utc)
         if state_store.get_system_mode().mode != "real":
-            return self._rejected(command, "当前系统未处于 Real 模式，未发送 Nav2 任务。", received_at), None
+            return self._rejected(command, "当前系统未处于 Real 模式，未发送 FPGA 任务。", received_at), None
 
         command_request = NucMissionCommandRequest(
             command=command,
@@ -51,11 +51,11 @@ class Nav2MissionAdapter:
             parsed = NucMissionCommandResponse.model_validate(json.loads(response_text))
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
-            return self._failure(command, f"Nav2 任务执行器返回 HTTP {exc.code}：{detail or '无响应正文'}")
+            return self._failure(command, f"fpga_bridge 任务执行器返回 HTTP {exc.code}：{detail or '无响应正文'}")
         except (error.URLError, OSError) as exc:
-            return self._failure(command, f"无法连接 Nav2 任务执行器：{exc}")
+            return self._failure(command, f"无法连接 fpga_bridge 任务执行器：{exc}")
         except Exception as exc:
-            return self._failure(command, f"Nav2 任务执行器响应无效：{exc}")
+            return self._failure(command, f"fpga_bridge 任务执行器响应无效：{exc}")
 
         result = MissionActionResult(
             accepted=parsed.data.accepted,

@@ -37,13 +37,20 @@ from app.schemas import (
     NucImuUpdateResponse,
     NucStateUpdateRequest,
     NucStateUpdateResponse,
+    FollowTargetRequest,
     PauseMissionRequest,
     PerceptionDetectionStatusRequest,
     PerceptionDetectionStatusResponse,
     PerceptionDetectionStatusResult,
+    PlatformCommandResponse,
+    PlatformEstopRequest,
+    PlatformSetPoseRequest,
+    PlatformStatusResponse,
+    PlatformStatusUpdateRequest,
     ResumeMissionRequest,
     RobotPose,
     ReturnHomeRequest,
+    SearchTargetRequest,
     SmartCommandRequest,
     SmartCommandResponse,
     SmartCommandResult,
@@ -78,6 +85,7 @@ from app.services.navigation_store import navigation_store
 from app.services.mock_state import mock_state_service
 from app.services.nuc_adapter import nuc_adapter
 from app.services.persistence import persistence
+from app.services.platform_adapter import platform_adapter
 from app.services.smart_voice_service import smart_voice_service
 from app.services.state_store import state_store
 from app.services.tts_service import tts_service
@@ -1034,6 +1042,22 @@ async def return_home(request: ReturnHomeRequest) -> MissionActionResponse:
     return MissionActionResponse(data=result)
 
 
+@app.post("/api/mission/search_target", response_model=MissionActionResponse)
+async def search_target(request: SearchTargetRequest) -> MissionActionResponse:
+    result, state = mission_gateway.search_target(request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    return MissionActionResponse(data=result)
+
+
+@app.post("/api/mission/follow_target", response_model=MissionActionResponse)
+async def follow_target(request: FollowTargetRequest) -> MissionActionResponse:
+    result, state = mission_gateway.follow_target(request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    return MissionActionResponse(data=result)
+
+
 @app.post("/api/mission/cancel", response_model=MissionActionResponse)
 async def cancel_mission(request: CancelMissionRequest) -> MissionActionResponse:
     result, state = mission_gateway.cancel(request)
@@ -1082,6 +1106,32 @@ async def ingest_detection_status(
             detail="已接收本地视觉检测状态并刷新共享状态。",
         )
     )
+
+
+@app.post("/api/internal/platform/status", response_model=PlatformStatusResponse)
+async def ingest_platform_status(request: PlatformStatusUpdateRequest) -> PlatformStatusResponse:
+    latest_state = state_store.update_platform_status(request.platform_status)
+    if latest_state is None:
+        return PlatformStatusResponse(success=False, data=None)
+    await ws_manager.broadcast_state(latest_state)
+    return PlatformStatusResponse(data=latest_state.platform_status)
+
+
+@app.get("/api/platform/status", response_model=PlatformStatusResponse)
+async def get_platform_status() -> PlatformStatusResponse:
+    return PlatformStatusResponse(data=state_store.get_latest_state().platform_status)
+
+
+@app.post("/api/platform/estop", response_model=PlatformCommandResponse)
+async def platform_estop(request: PlatformEstopRequest) -> PlatformCommandResponse:
+    result = await asyncio.to_thread(platform_adapter.estop, request)
+    return PlatformCommandResponse(data=result)
+
+
+@app.post("/api/platform/set_pose", response_model=PlatformCommandResponse)
+async def platform_set_pose(request: PlatformSetPoseRequest) -> PlatformCommandResponse:
+    result = await asyncio.to_thread(platform_adapter.set_pose, request)
+    return PlatformCommandResponse(data=result)
 
 
 @app.post("/api/internal/nuc/state", response_model=NucStateUpdateResponse)
