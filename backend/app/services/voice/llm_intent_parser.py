@@ -26,8 +26,7 @@ class LLMIntentParser:
     def parse(self, text: str, *, use_llm: bool | None = None) -> ParsedIntent:
         rule_result = intent_parser.parse(text)
         if not self._should_try_llm(text, rule_result, use_llm):
-            self._remember(text, rule_result.intent, rule_result.detail)
-            return rule_result
+            return rule_result        # 规则直出的回答（问候/日期/任务确认）不进闲聊历史，只会把小模型带偏
 
         style = prompt_style(llm_client.config(force_enable=use_llm).backend)
         system_prompt, user_prompt = build_prompts(text, style=style, history=self._history)
@@ -57,7 +56,7 @@ class LLMIntentParser:
         except (json.JSONDecodeError, TypeError, ValueError):
             # 创作类请求带温度后，小模型常直接输出纯文本（笑话/故事），不再包 JSON：当闲聊回复用
             plain = (client_response.content or "").strip().strip("`").strip()
-            for marker in ("\n用户：", "\nUser:", " 用户：", "\n点位表", "\n目标", "\n示例", "\ntarget="):      # 小模型偶尔把提示里的对话格式带出来
+            for marker in ("\n用户：", "\nUser:", " 用户：", "\n助手：", "助手：", "\n点位表", "\n目标", "\n示例", "\ntarget="):      # 小模型偶尔把提示里的对话格式带出来
                 plain = plain.split(marker)[0].rstrip()
             if creative and plain and "{" not in plain and 2 <= len(plain) <= 200:
                 self._remember(text, "open_chat", plain)
