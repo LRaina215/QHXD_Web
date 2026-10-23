@@ -176,4 +176,4 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 | 检测精度（INT8） | 已换 `~/models/yolo/yolo26n_int8.rknn`（阈值 0.40）：单帧约为 fp32 的一半，coco128 上 6 类精度 0.84 / 召回 0.39（fp32@0.35 为 0.90 / 0.41），实拍 20 帧与 fp32 的检测对上 24/28。场地里对红瓶、杯子再复查；不满意就去掉 `.env` 的 `YUNTUO_RKNN_MODEL` 回到 fp32。数据与转换方法见 `experiments/rknn_yolo/models/README.md` |
 | 场地点位 | 实测场地后改 `backend/app/config/yuntuo/waypoints.json`（m，起点为里程计原点） |
 | 车载麦克风 | 现场对着麦克风说一句，看识别结果；音量在 `.env` 的 `AUDIO_CAPTURE_VOLUME` |
-| 云端低延迟视频 | 旧栈的 RTMP 推流来自旧相机服务，云拓感知节点不推流；网页相机窗口走 MJPEG 检测画面。2026-10-23 修了保存 Token 后相机窗口每隔几秒黑一下（后台重连低延迟视频时把检测画面撤了），现在重连在后台进行、间隔退避到 60 s。需要 HLS 时再给感知节点加推流 |
+| 云端低延迟视频 | 2026-10-23 已恢复：感知节点把带检测框的画面（640×480@15 fps、1 Mbps）经 RK MPP 硬件编码推到云端 MediaMTX，网页保存 Token 后走 WebRTC，没有 Token 时仍显示检测图片流。视频帧率与检测帧率分开，空闲时检测 5 fps、视频仍 15 fps，框最多落后一个检测周期，超过 0.6 s 的旧框不画。推流后感知 CPU 基本不变、大模型耗时不变。推流状态见 `/api/perception/video_health` |
