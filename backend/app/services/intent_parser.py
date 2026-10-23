@@ -83,7 +83,15 @@ class IntentParser:
         if target_task is not None:
             return target_task
 
-        if self._contains_any(normalized, ["天气", "下雨", "温度", "湿度", "环境适合", "适合巡检"]):
+        if self._contains_any(normalized, ["你好", "早上好", "晚上好", "下午好", "哈喽", "嗨", "hi", "hello", "早安", "晚安", "在吗", "在不在"]):
+            return ParsedIntent(
+                intent="open_chat",
+                confidence=0.9,
+                need_confirm=False,
+                detail="你好，我在，有什么可以帮你的？",
+            )
+
+        if self._contains_any(normalized, ["天气", "下雨", "温度", "湿度", "环境适合", "适合巡检", "冷吗", "热吗", "冷不冷", "热不热", "会下雨", "要不要带伞", "紫外线", "风大", "刮不刮风"]):
             return ParsedIntent(
                 intent="query_weather",
                 confidence=0.94,

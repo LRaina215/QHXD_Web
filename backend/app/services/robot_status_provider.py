@@ -23,72 +23,72 @@ class RobotStatusProvider:
     def robot_status_reply(self) -> str:
         state = self.latest_state()
         device = state.device_status
-        task = state.task_status
-        nav = state.nav_status
-        faults: list[str] = []
         if not device.online:
-            faults.append("机器人链路离线")
+            return "我现在和机器人的链路断了，先帮我检查一下连接。"
         if device.emergency_stop:
-            faults.append("急停已触发")
+            return "机器人现在处于急停状态，先人工处理一下再继续。"
         if device.fault_code:
-            faults.append(f"故障码 {device.fault_code}")
-        fault_text = "，".join(faults) if faults else "未发现急停或故障"
-        return (
-            f"当前模式 {state.system_mode.mode}，任务状态 {task.task_type}/{task.state}，"
-            f"导航状态 {nav.state}，{fault_text}。"
-        )
+            return f"机器人报故障了（故障码 {device.fault_code}），先看一眼再动。"
+        return "机器人现在正常，没有急停，也没报故障。"
 
     def task_reply(self) -> str:
         task = self.current_task()
         events = persistence.list_task_events(limit=3, task_id=None if task.task_id == "mock-task" else task.task_id)
-        event_text = "；".join(event.detail for event in events[:3]) if events else "暂无任务事件记录"
-        return (
-            f"当前任务为 {task.task_type}，状态 {task.state}，进度 {task.progress}%，来源 {task.source}。"
-            f"最近事件：{event_text}。"
-        )
+        if task.state == "idle":
+            return "现在没有正在执行的任务，可以给我派一个。"
+        if task.state == "completed":
+            last = events[0].detail if events else "上一个任务"
+            return f"刚才的任务已经做完了。{last}。"
+        if task.state == "paused":
+            return f"任务暂停了，进度 {task.progress}%，说继续我就接着做。"
+        if task.state in {"running", "pending"}:
+            prog = f"，进度 {task.progress}%" if task.progress else ""
+            return f"正在执行{task.task_type}任务{prog}。"
+        return f"任务状态：{task.task_type} / {task.state}，进度 {task.progress}%。"
 
     def navigation_reply(self) -> str:
         state = self.latest_state()
         nav = state.nav_status
         snapshot = navigation_store.latest()
-        if snapshot is None:
-            return f"当前导航状态为 {nav.state}，还没有收到导航地图或定位快照。"
-
-        age = (datetime.now(timezone.utc) - snapshot.timestamp).total_seconds()
-        age_text = f"{age:.1f}秒前"
-        if snapshot.pose is None:
-            return f"当前导航状态为 {nav.state}，最近导航快照在{age_text}更新，但暂未获得 map 到车体位姿。"
-
-        goal_text = f"目标点 {nav.current_goal}" if nav.current_goal else "当前没有明确目标点"
-        distance_text = f"，剩余距离约 {nav.remaining_distance:.2f} 米" if nav.remaining_distance is not None else ""
-        path_text = f"，全局路径 {len(snapshot.global_path)} 个点，局部路径 {len(snapshot.local_path)} 个点"
-        stale_text = "，导航数据可能过期" if age > 3 else ""
-        return (
-            f"当前已定位，导航状态 {nav.state}，{goal_text}{distance_text}{path_text}。"
-            f"最近导航快照更新于{age_text}{stale_text}。"
-        )
+        if snapshot is None or snapshot.pose is None:
+            return "我现在还没拿到定位，等导航起来我再告诉你。"
+        if nav.state == "idle":
+            return "导航已经定位好了，现在在原地待命，没有目标点。"
+        parts = ["导航在跑"]
+        if nav.current_goal:
+            parts.append(f"目标是{nav.current_goal}")
+        if nav.remaining_distance is not None:
+            parts.append(f"还剩约 {nav.remaining_distance:.1f} 米")
+        return "，".join(parts) + "。"
 
     def battery_reply(self) -> str:
         battery = self.latest_state().device_status.battery_percent
         if battery is None:
-            return "当前没有电量数据。"
-        return f"当前电量约 {battery}%。"
+            return "我这边还没拿到电量数据。"
+        if battery <= 20:
+            return f"只剩 {battery}% 了，得赶紧回去充电。"
+        if battery <= 50:
+            return f"还有 {battery}%，能用一阵，留意着点。"
+        return f"电量 {battery}%，挺充足的。"
 
     def emergency_stop_reply(self) -> str:
         device = self.latest_state().device_status
-        return "当前急停已触发，请人工检查。" if device.emergency_stop else "当前未触发急停。"
+        if device.emergency_stop:
+            return "现在处于急停状态，机器人不动了，先人工检查一下。"
+        return "没有触发急停，一切正常。"
 
     def perception_reply(self) -> str:
         detection = self.latest_state().detection_status
         if detection is None:
-            return "当前没有视觉检测状态。"
+            return "我这边还没拿到视觉状态。"
         objects = self._objects_text(detection.objects)
-        live_events = "、".join(event.message for event in detection.events[:3])
         persisted = persistence.list_visual_events(limit=3)
         history = "、".join(f"{event.message}（{self._age_text(event.last_seen_at)}）" for event in persisted)
-        event_text = live_events or history or "暂无视觉事件"
-        age = self._age_text(detection.timestamp)
-        return f"视觉来源 {detection.source}，画面更新于{age}，最近目标：{objects}；最近事件：{event_text}。"
+        if not history and not detection.objects:
+            return "现在画面里没识别到什么目标。"
+        if detection.objects:
+            return f"现在能看到：{objects}。"
+        return f"现在画面里没目标，之前看到过：{history}。"
 
     def front_status_reply(self, question: str | None = None, *, use_llm: bool = True) -> str:
         context = self.front_status_context()

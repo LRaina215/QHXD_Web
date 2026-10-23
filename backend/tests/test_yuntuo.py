@@ -336,8 +336,26 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
     def test_confidence_reject_message_is_user_friendly(self) -> None:
         result = llm_safety_validator.validate(LLMIntent.from_dict({"intent": "open_chat", "confidence": 0.0}))
         self.assertFalse(result.ok)
-        self.assertIn("没听懂", result.detail)
+        self.assertIn("没太听清", result.detail)
         self.assertNotIn("阈值", result.detail)
+        self.assertNotIn("LLM", result.detail)
+
+    def test_greeting_and_weather_question_specific_replies(self) -> None:
+        from app.services.data_service import _weather_reply
+        from app.services.intent_parser import intent_parser
+        from app.schemas import WeatherData
+
+        self.assertEqual(intent_parser.parse("你好").intent, "open_chat")
+        self.assertEqual(intent_parser.parse("早上好").intent, "open_chat")
+        w = WeatherData(location="海南海口", temperature_c=26.9, apparent_temperature_c=31.7,
+                        humidity_percent=83, precipitation_mm=0.0, precipitation_probability_percent=46,
+                        uv_index=7.5, weather="晴", wind="风速8.1公里/小时", source="open_meteo",
+                        advice="紫外线较强，外出注意防晒。",
+                        updated_at=datetime.now(timezone.utc))
+        self.assertIn("不用带伞", _weather_reply(w, "今天会下雨吗"))
+        self.assertIn("体感32度", _weather_reply(w, "现在外面热吗"))
+        self.assertNotIn("体感", _weather_reply(w, "要不要带伞"))
+        self.assertIn("明天的", _weather_reply(w, "明天天气怎么样"))
 
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")

@@ -27,8 +27,8 @@ class DataService:
         backend = os.getenv("LLM_BACKEND", "deepseek").strip() or "deepseek"
         if backend == "local":
             model = os.getenv("LLM_LOCAL_MODEL", "").strip() or "本地大模型"
-            return (f"当前大模型部署在本机 RK3588 上，模型是 {model}，推理走 NPU，不联网。"
-                    "机器人运动控制仍由本地安全校验和确认流程接管。")
+            return (f"我跑在本机 RK3588 上，用的是 {model}，走 NPU，全程不联网。"
+                    "你说话我先在本地理解，运动指令还是会先经安全校验、再请你确认。")
         request_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
         model = os.getenv("DEEPSEEK_DISPLAY_MODEL", request_model).strip() or request_model
         if backend == "deepseek":
@@ -63,32 +63,78 @@ class DataService:
         if intent in {"query_weather", "query_environment"}:
             weather = weather_provider.latest()
             if weather.source == "unavailable":
-                return "weather_unavailable", "暂时无法获取实时天气，请稍后再试。"
-            temperature = f"气温{weather.temperature_c:.1f}摄氏度" if weather.temperature_c is not None else "气温未知"
-            apparent = (
-                f"，体感{weather.apparent_temperature_c:.1f}摄氏度"
-                if weather.apparent_temperature_c is not None else ""
-            )
-            humidity = f"，相对湿度{weather.humidity_percent:.0f}%" if weather.humidity_percent is not None else ""
-            rain_probability = (
-                f"今日最高降雨概率{weather.precipitation_probability_percent:.0f}%"
-                if weather.precipitation_probability_percent is not None else ""
-            )
-            uv_index = f"，紫外线指数{weather.uv_index:.1f}" if weather.uv_index is not None else ""
-            forecast = f"{rain_probability}{uv_index}。" if rain_probability or uv_index else ""
-            age_seconds = max(0.0, (datetime.now(timezone.utc) - weather.updated_at).total_seconds())
-            if weather.source == "open_meteo":
-                freshness = f"实时天气，约{age_seconds / 60:.0f}分钟前更新"
-            elif weather.is_stale:
-                freshness = f"使用最近一次成功缓存，约{age_seconds / 60:.0f}分钟前更新"
-            else:
-                freshness = f"缓存天气，约{age_seconds / 60:.0f}分钟前更新"
-            return (
-                weather.source,
-                f"{weather.location}当前{weather.weather}（{freshness}），{temperature}{apparent}{humidity}，"
-                f"{weather.wind or '风力未知'}。{forecast}出行建议：{weather.advice or '请根据天气合理安排出行。'}"
-            )
+                return "weather_unavailable", "我现在连不上天气服务，稍后再帮你查。"
+            return weather.source, _weather_reply(weather, question or "")
         return "none", "我还不能回答这个问题。"
+
+
+def _weather_reply(weather, question: str) -> str:
+    """按问题回答，不再把整段数据都念一遍。数据仍是实时 Open-Meteo。"""
+    loc = weather.location
+    w = weather.weather
+    t = weather.temperature_c
+    feels = weather.apparent_temperature_c
+    hum = weather.humidity_percent
+    rain = weather.precipitation_probability_percent
+    uv = weather.uv_index
+    wind = weather.wind
+    q = question or ""
+
+    def age() -> str:
+        mins = max(0.0, (datetime.now(timezone.utc) - weather.updated_at).total_seconds()) / 60
+        return "刚更新" if mins < 1 else f"约{mins:.0f}分钟前更新"
+
+    if any(k in q for k in ("下雨", "带伞", "雨", "淋")):
+        if rain is None:
+            return f"{loc}现在{w}，暂时没有降雨预报数据。"
+        if rain >= 50 or (weather.precipitation_mm or 0) > 0:
+            return f"{loc}今天最高降雨概率{rain:.0f}%，最好带把伞。{weather.advice or ''}"
+        return f"{loc}现在{w}，今天最高降雨概率只有{rain:.0f}%，基本不会下，不用带伞。"
+
+    if any(k in q for k in ("冷", "热", "凉", "晒", "暖")):
+        if t is None:
+            return f"{loc}现在{w}，温度数据暂时没拿到。"
+        feel = f"，体感{feels:.0f}度" if feels is not None else ""
+        if t <= 12 or (feels is not None and feels <= 10):
+            return f"{loc}现在{t:.0f}度{feel}，挺冷的，出门加件外套。"
+        if t >= 30 or (feels is not None and feels >= 33):
+            hum_text = "，湿度也大，闷热" if hum is not None and hum >= 75 else ""
+            return f"{loc}现在{t:.0f}度{feel}{hum_text}，注意防晒补水。"
+        return f"{loc}现在{t:.0f}度{feel}，不冷不热，挺舒服的。"
+
+    if any(k in q for k in ("紫外线", "防晒", "晒不晒")):
+        if uv is None:
+            return f"{loc}紫外线数据暂时没拿到。"
+        level = "很强" if uv >= 8 else "较强" if uv >= 6 else "中等" if uv >= 3 else "弱"
+        tip = "，长时间在外要涂防晒、戴帽子" if uv >= 6 else "，正常活动不用太担心"
+        return f"{loc}紫外线指数{uv:.1f}，{level}{tip}。"
+
+    if any(k in q for k in ("风", "刮")):
+        return f"{loc}现在{w}，{wind or '风力数据没拿到'}。"
+
+    if "明天" in q or "明后" in q:
+        base = f"我现在只有{loc}今天的数据：{w}" + (f"，气温{t:.0f}度" if t is not None else "")
+        if rain is not None:
+            base += f"，今天最高降雨概率{rain:.0f}%"
+        return base + "。明天的我还没查到。"
+
+    parts = [f"{loc}现在{w}"]
+    if t is not None:
+        feel_part = f"（体感{feels:.0f}度）" if feels is not None and abs(feels - t) >= 2 else ""
+        parts.append(f"气温{t:.0f}度{feel_part}")
+    if hum is not None:
+        parts.append(f"湿度{hum:.0f}%")
+    line = "，".join(parts) + "。"
+    extras = []
+    if rain is not None and rain >= 30:
+        extras.append(f"今日最高降雨概率{rain:.0f}%")
+    if uv is not None and uv >= 6:
+        extras.append(f"紫外线指数{uv:.1f}，注意防晒")
+    if extras:
+        line += "；".join(extras) + "。"
+    if weather.advice and weather.advice != "天气条件总体平稳，适合正常出行。":
+        line += f"出行建议：{weather.advice}"
+    return line + f"（{age()}）"
 
 
 data_service = DataService()
