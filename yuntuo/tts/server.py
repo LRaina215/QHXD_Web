@@ -95,7 +95,8 @@ def load_sherpa(kind: str, files: dict[str, str], threads: int) -> Any:
         model = sherpa_onnx.OfflineTtsModelConfig(
             vits=sherpa_onnx.OfflineTtsVitsModelConfig(model=files["model"], **common),
             num_threads=threads, provider="cpu")
-    config = sherpa_onnx.OfflineTtsConfig(model=model, rule_fsts=files.get("rule_fsts", ""), max_num_sentences=1)
+    # max_num_sentences 不限制：多句文本（笑话、播报）逐句合成拼接；之前设 1 会让音频只播第一句
+    config = sherpa_onnx.OfflineTtsConfig(model=model, rule_fsts=files.get("rule_fsts", ""))
     if not config.validate():
         raise RuntimeError("sherpa-onnx TTS 配置校验失败，检查模型文件")
     return sherpa_onnx.OfflineTts(config)

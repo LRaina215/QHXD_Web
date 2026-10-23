@@ -114,10 +114,15 @@ def _weather_reply(weather, question: str) -> str:
         return f"{loc}现在{w}，{wind or '风力数据没拿到'}。"
 
     if "明天" in q or "明后" in q:
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+
+        d = datetime.now(ZoneInfo("Asia/Shanghai")) + timedelta(days=1)
+        weekdays = ["一", "二", "三", "四", "五", "六", "日"]
         base = f"我现在只有{loc}今天的数据：{w}" + (f"，气温{t:.0f}度" if t is not None else "")
         if rain is not None:
             base += f"，今天最高降雨概率{rain:.0f}%"
-        return base + "。明天的我还没查到。"
+        return base + f"。明天（{d.month}月{d.day}日 星期{weekdays[d.weekday()]}）的预报我还没查到。"
 
     parts = [f"{loc}现在{w}"]
     if t is not None:

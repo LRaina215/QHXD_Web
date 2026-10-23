@@ -104,6 +104,10 @@ class IntentParser:
                 detail="你好，我在，有什么可以帮你的？",
             )
 
+        dt_reply = self._datetime_reply(normalized)
+        if dt_reply is not None:
+            return dt_reply
+
         if self._contains_any(normalized, ["天气", "下雨", "温度", "湿度", "环境适合", "适合巡检", "冷吗", "热吗", "冷不冷", "热不热", "会下雨", "要不要带伞", "紫外线", "风大", "刮不刮风"]):
             return self._remember("query_weather", ParsedIntent(
                 intent="query_weather",
@@ -268,6 +272,38 @@ class IntentParser:
             need_confirm=True,
             detail="未知文本命令，未触发机器人任务。",
         )
+
+    def _datetime_reply(self, normalized: str) -> ParsedIntent | None:
+        """日期 / 时间问答：直接读系统时钟（北京时区），不走大模型，秒回。"""
+        hit = any(k in normalized for k in ("几号", "几日", "日期", "星期几", "周几", "礼拜几", "哪一天",
+                                            "几点", "什么时间", "现在时间", "现在几点", "哪一年", "几年了",
+                                            "多少号", "今天是哪天"))
+        if not hit:
+            return None
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+
+        def day_info(d):
+            return f"{d.year}年{d.month}月{d.day}日 星期{weekdays[d.weekday()]}"
+
+        if "明天" in normalized and any(k in normalized for k in ("星期", "周几", "礼拜")):
+            from datetime import timedelta
+            d = now + timedelta(days=1)
+            return ParsedIntent(intent="open_chat", confidence=0.95, need_confirm=False,
+                                detail=f"明天是{d.month}月{d.day}日 星期{weekdays[d.weekday()]}。")
+        if "后天" in normalized and any(k in normalized for k in ("星期", "周几", "礼拜")):
+            from datetime import timedelta
+            d = now + timedelta(days=2)
+            return ParsedIntent(intent="open_chat", confidence=0.95, need_confirm=False,
+                                detail=f"后天是{d.month}月{d.day}日 星期{weekdays[d.weekday()]}。")
+        if any(k in normalized for k in ("几点", "什么时间", "现在时间")):
+            return ParsedIntent(intent="open_chat", confidence=0.95, need_confirm=False,
+                                detail=f"现在是{now.hour:02d}点{now.minute:02d}分。今天是{day_info(now)}。")
+        return ParsedIntent(intent="open_chat", confidence=0.95, need_confirm=False,
+                            detail=f"今天是{day_info(now)}，现在{now.hour:02d}点{now.minute:02d}分。")
 
     def _remember(self, intent: str, parsed: ParsedIntent) -> ParsedIntent:
         import time as _time

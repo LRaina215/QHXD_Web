@@ -355,7 +355,7 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不用带伞", _weather_reply(w, "今天会下雨吗"))
         self.assertIn("体感32度", _weather_reply(w, "现在外面热吗"))
         self.assertNotIn("体感", _weather_reply(w, "要不要带伞"))
-        self.assertIn("明天的", _weather_reply(w, "明天天气怎么样"))
+        self.assertIn("预报我还没查到", _weather_reply(w, "明天天气怎么样"))
 
     def test_hallucinated_waypoint_and_target_are_rejected_with_follow_ups(self) -> None:
         from unittest import mock
@@ -434,6 +434,15 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cancelled.intent, "cancel_task")
         self.assertFalse(cancelled.need_confirm)
         self.assertTrue(cancelled.reply_text)
+
+    def test_datetime_queries_answer_from_system_clock(self) -> None:
+        for text in ("今天几号", "现在几点", "今天星期几", "明天星期几", "今年哪一年"):
+            parsed = intent_parser.parse(text)
+            self.assertEqual(parsed.intent, "open_chat", text)
+            self.assertGreaterEqual(parsed.confidence, 0.9)
+            self.assertRegex(parsed.detail, r"202\d年|\d+月\d+日|\d+点\d+分")
+        self.assertIn("星期", intent_parser.parse("明天星期几").detail)
+        self.assertIsNone(intent_parser._datetime_reply("去a点"))      # 普通指令不能被误判成时间问答
 
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
