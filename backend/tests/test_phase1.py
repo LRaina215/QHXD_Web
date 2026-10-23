@@ -638,7 +638,7 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(rejected.data.intent, "unknown")
         self.assertIsNone(rejected.data.mission_candidate)
-        self.assertIn("拒绝直接速度控制", rejected.data.reply_text)
+        self.assertIn("这个我不能做", rejected.data.reply_text)
 
     async def test_detection_status_update_is_visible_in_latest_state(self) -> None:
         response = await main_module.ingest_detection_status(

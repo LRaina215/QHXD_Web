@@ -35,7 +35,7 @@ class IntentParser:
     def parse(self, text: str) -> ParsedIntent:
         normalized = self._normalize(text)
         if not normalized:
-            return ParsedIntent(intent=None, detail="文本命令为空，未触发任务。")
+            return ParsedIntent(intent=None, detail="我没听到内容，再说一遍要做什么。")
 
         if self._contains_any(normalized, ["使用的模型", "用的模型", "什么模型", "大模型", "deepseek", "llm模型"]):
             return ParsedIntent(
@@ -76,7 +76,7 @@ class IntentParser:
                 intent="unknown",
                 confidence=0.95,
                 need_confirm=True,
-                detail="拒绝直接速度控制或危险运动请求，未触发任务。",
+                detail="这个我不能做，会撞到或者失控，换个安全的指令试试。",
             )
 
         target_task = self._parse_target_task(normalized)
@@ -212,7 +212,7 @@ class IntentParser:
                     intent="go_to_waypoint",
                     confidence=0.4,
                     need_confirm=True,
-                    detail=f"目标点存在歧义：{names}，未触发任务。",
+                    detail=f"你说的这个点有好几个：{names}，说得更具体一点。",
                 )
             if waypoint.waypoint_id is not None:
                 return ParsedIntent(
@@ -226,7 +226,7 @@ class IntentParser:
                 intent="go_to_waypoint",
                 confidence=0.42,
                 need_confirm=True,
-                detail="识别到前往目标点意图，但没有匹配到已配置目标点，未触发任务。",
+                detail="你说的这个点我没有，能说个具体的点位吗？比如 A 点、B 点、C 点或起点。",
             )
 
         return ParsedIntent(
@@ -254,7 +254,7 @@ class IntentParser:
                 intent="search_target",
                 confidence=0.4,
                 need_confirm=True,
-                detail="识别到寻找目标的意图，但没有听清要找什么（支持水瓶、杯子、人、球、椅子、背包），未触发任务。",
+                detail="想找什么？我能找水瓶、杯子、人、球、椅子或背包。",
             )
         word, target_class = target
         color = next(((cn, en) for cn, en in COLOR_WORDS if cn in normalized), None)

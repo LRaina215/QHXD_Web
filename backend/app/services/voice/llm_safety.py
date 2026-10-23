@@ -44,7 +44,7 @@ class SafeLLMIntent:
     payload: dict[str, str] = field(default_factory=dict)
     confidence: float = 0.0
     need_confirm: bool = True
-    detail: str = "LLM 输出未通过安全校验。"
+    detail: str = "这句话我不能照做，换个说法试试。"
 
 
 def _threshold() -> float:
@@ -64,19 +64,19 @@ class LLMSafetyValidator:
         intent = result.intent
         command = result.command or (intent if intent in ALLOWED_COMMANDS else None)
         if intent not in ALLOWED_INTENTS:
-            return self._reject(result, "LLM 输出了不在白名单内的 intent。")
+            return self._reject(result, "这个我还不会做，可以让我导航、巡检、找东西或者跟着你走。")
         if intent == "unknown":
             return self._reject(result, result.ask_text or result.reason or "没太听清，能再说一遍吗？或者说要做什么，比如去 A 点、找红色水瓶、跟着我。")
         if command not in ALLOWED_COMMANDS:
-            return self._reject(result, "LLM 输出了不在白名单内的 command。")
+            return self._reject(result, "这个操作我执行不了，换个指令试试。")
         if result.confidence < _threshold():
             return self._reject(result, "没太听清，能再说一遍吗？或者说要做什么，比如去 A 点、找红色水瓶、跟着我。")
         if result.missing_slots:
-            return self._reject(result, result.ask_text or f"缺少必要槽位：{', '.join(result.missing_slots)}。")
+            return self._reject(result, result.ask_text or "信息不够，告诉我要去哪、找什么，或者说得更具体一点。")
         if command == "open_chat":
             reply_text = (result.reply_text or result.reason or "").strip()
             if not reply_text:
-                return self._reject(result, "LLM 开放回答缺少 reply_text，未触发任务。")
+                return self._reject(result, "我这边没组织好回答，再试一次。")
             return SafeLLMIntent(
                 ok=True,
                 intent="open_chat",
@@ -96,17 +96,17 @@ class LLMSafetyValidator:
                     if not resolved.ambiguous and resolved.waypoint_id is not None:
                         waypoint_id = resolved.waypoint_id
                 if not waypoint_resolver.waypoint_exists(waypoint_id):
-                    return self._reject(result, "LLM 目标点不存在或未能唯一匹配，未触发任务。")
+                    return self._reject(result, "你说的这个点我没有，能说个具体的点位吗？比如 A 点、B 点、C 点或起点。")
             payload["waypoint_id"] = str(waypoint_id)
         elif command == "start_patrol":
             payload["patrol_id"] = "default_patrol"
         elif command in {"search_target", "follow_target"}:
             target_class = normalize_class(result.target_class or ("person" if command == "follow_target" else ""))
             if target_class not in SUPPORTED_TARGET_CLASSES:
-                return self._reject(result, f"目标类别「{result.target_class or '未指定'}」不在感知模型支持范围内，未触发任务。")
+                return self._reject(result, "我只能找水瓶、杯子、人、球、椅子或背包，别的东西还不认识。")
             color = normalize_color(result.target_color)
             if color is not None and color not in SUPPORTED_COLORS:
-                return self._reject(result, f"目标颜色「{result.target_color}」无法识别，未触发任务。")
+                return self._reject(result, "颜色我只能认红、绿、蓝、黄、白、黑，换个颜色试试。")
             payload["target_class"] = target_class
             if color:
                 payload["color"] = color

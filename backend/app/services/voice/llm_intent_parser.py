@@ -54,7 +54,7 @@ class LLMIntentParser:
                 intent=None,
                 confidence=0.0,
                 need_confirm=True,
-                detail="LLM 输出不是合法 JSON，未触发任务。",
+                detail="我这边理解出了点问题，稍等再试一次，或者直接说要做什么（去 A 点、找红色水瓶、跟着我）。",
                 parser="llm",
                 llm_backend=client_response.backend,
                 llm_model=client_response.model,
