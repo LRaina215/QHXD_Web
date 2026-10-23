@@ -57,7 +57,7 @@ def prompt_style(backend: str) -> str:
     return "compact" if backend == "local" else "full"
 
 
-def build_compact_prompts(recognized_text: str) -> tuple[str, str]:
+def build_compact_prompts(recognized_text: str, history: list[tuple[str, str]] | None = None) -> tuple[str, str]:
     waypoints = [item for item in waypoint_resolver.list_waypoints() if item.get("waypoint_id")]
 
     def _row(item: dict) -> str:
@@ -85,13 +85,16 @@ def build_compact_prompts(recognized_text: str) -> tuple[str, str]:
                                          "reply_text": "太阳内部一直在发生核聚变，释放出大量的光和热。"}))
     shots = "\n".join(f"用户：{q}\n{json.dumps(a, ensure_ascii=False, separators=(',', ':'))}" for q, a in examples)
     system_prompt = f"{COMPACT_SYSTEM_PROMPT}\n示例：\n{shots}"
-    user_prompt = f"点位表：{table or '无'}\n用户：{recognized_text}"
+    history_lines = "".join(f"用户：{u}\n助手：{a}\n" for u, a in (history or [])[-3:])
+    user_prompt = (f"最近对话（仅供理解指代，如“再讲一个”“明天呢”）：\n{history_lines or '无'}\n"
+                   f"点位表：{table or '无'}\n用户：{recognized_text}")
     return system_prompt, user_prompt
 
 
-def build_prompts(recognized_text: str, *, style: str = "full") -> tuple[str, str]:
+def build_prompts(recognized_text: str, *, style: str = "full",
+                  history: list[tuple[str, str]] | None = None) -> tuple[str, str]:
     if style == "compact":
-        return build_compact_prompts(recognized_text)
+        return build_compact_prompts(recognized_text, history)
     waypoints = waypoint_resolver.list_waypoints()
     compact_waypoints = [
         {

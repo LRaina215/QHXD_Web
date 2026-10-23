@@ -32,6 +32,9 @@ class ParsedIntent:
 class IntentParser:
     """Small rule-based parser for Phase 4A text command debugging."""
 
+    def __init__(self) -> None:
+        self._last_query: tuple[str, float] | None = None      # (intent, monotonic) 最近一次查询意图，供追问用
+
     def parse(self, text: str) -> ParsedIntent:
         normalized = self._normalize(text)
         if not normalized:
@@ -101,20 +104,24 @@ class IntentParser:
             )
 
         if self._contains_any(normalized, ["天气", "下雨", "温度", "湿度", "环境适合", "适合巡检", "冷吗", "热吗", "冷不冷", "热不热", "会下雨", "要不要带伞", "紫外线", "风大", "刮不刮风"]):
-            return ParsedIntent(
+            return self._remember("query_weather", ParsedIntent(
                 intent="query_weather",
                 confidence=0.94,
                 need_confirm=False,
                 detail="已解析为天气/环境查询。",
-            )
+            ))
+
+        follow_up = self._query_follow_up(normalized)
+        if follow_up is not None:
+            return follow_up
 
         if self._contains_any(normalized, ["当前导航", "导航状态", "导航怎么样", "导航正常", "还要走多远", "剩余距离"]):
-            return ParsedIntent(
+            return self._remember("query_navigation_status", ParsedIntent(
                 intent="query_navigation_status",
                 confidence=0.94,
                 need_confirm=False,
                 detail="已解析为导航状态查询。",
-            )
+            ))
 
         if self._contains_any(normalized, ["前面有什么", "前方有什么", "前面有没有", "前方有没有", "前方状况", "前面状况", "前方情况", "前面情况"]):
             return ParsedIntent(
@@ -244,6 +251,30 @@ class IntentParser:
             need_confirm=True,
             detail="未知文本命令，未触发机器人任务。",
         )
+
+    def _remember(self, intent: str, parsed: ParsedIntent) -> ParsedIntent:
+        import time as _time
+        self._last_query = (intent, _time.monotonic())
+        return parsed
+
+    def _query_follow_up(self, normalized: str) -> ParsedIntent | None:
+        """追问：上一轮问过天气，这轮只说"明天呢 / 后天冷不冷"这类短句时，按天气继续答。"""
+        import time as _time
+        if not self._last_query or _time.monotonic() - self._last_query[1] > 120:
+            return None
+        intent = self._last_query[0]
+        if len(normalized) > 12 or not any(k in normalized for k in ("明天", "后天", "大后天", "周末", "今晚", "傍晚", "呢")):
+            return None
+        if any(k in normalized for k in ("去", "找", "跟", "暂停", "继续", "回", "巡", "停", "急停")):
+            return None
+        if intent == "query_weather":
+            return ParsedIntent(
+                intent="query_weather",
+                confidence=0.85,
+                need_confirm=False,
+                detail="已解析为天气/环境查询。",
+            )
+        return None
 
     def _parse_target_task(self, normalized: str) -> ParsedIntent | None:
         """视觉目标任务：「找到红色水瓶并移动到其附近」「跟着我」。"""

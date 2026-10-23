@@ -357,6 +357,68 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("体感", _weather_reply(w, "要不要带伞"))
         self.assertIn("明天的", _weather_reply(w, "明天天气怎么样"))
 
+    def test_hallucinated_waypoint_and_target_are_rejected_with_follow_ups(self) -> None:
+        from unittest import mock
+
+        from app.services.voice.llm_client import LLMClientResponse, llm_client
+        from app.services.voice.llm_intent_parser import llm_intent_parser
+
+        def reply(content: str):
+            return mock.patch.object(llm_client, "chat_json", return_value=LLMClientResponse(
+                success=True, content=content, backend="local", model="qwen2.5-1.5b-instruct"))
+
+        saved = os.environ.get("LLM_ENABLE")
+        os.environ["LLM_ENABLE"] = "true"
+        try:
+            with reply('{"intent":"go_to_waypoint","waypoint_id":"wp_a","confidence":0.9}') as chat:
+                vague = llm_intent_parser.parse("去那个点")
+            self.assertEqual(chat.call_count, 1)
+            self.assertEqual(vague.intent, "unknown")
+            self.assertIn("具体的点位", vague.detail)
+            with reply('{"intent":"search_target","target_class":"bottle","target_color":"green",'
+                       '"target_label":"绿色瓶子","confidence":0.9}'):
+                hollow = llm_intent_parser.parse("帮我找一下东西")
+            self.assertEqual(hollow.intent, "unknown")
+            self.assertIn("想找什么", hollow.detail)
+            # 用户真的说了点位 / 类别时不误伤（用默认点位表里的 wp_201）
+            with reply('{"intent":"go_to_waypoint","waypoint_id":"wp_201","confidence":0.9}'):
+                real = llm_intent_parser.parse("能不能去二零一实验室看看")
+            self.assertEqual(real.intent, "go_to_waypoint")
+            self.assertEqual(real.payload.get("waypoint_id"), "wp_201")
+        finally:
+            if saved is None:
+                os.environ.pop("LLM_ENABLE", None)
+            else:
+                os.environ["LLM_ENABLE"] = saved
+
+    def test_weather_follow_up_and_spoken_cancel(self) -> None:
+        from app.services.intent_parser import intent_parser
+        from app.schemas import SmartCommandRequest, VoiceConfirmCommandRequest
+        from app.services.smart_voice_service import smart_voice_service
+
+        first = intent_parser.parse("今天天气怎么样")
+        self.assertEqual(first.intent, "query_weather")
+        self.assertEqual(intent_parser.parse("明天呢").intent, "query_weather")
+        self.assertEqual(intent_parser.parse("后天冷不冷").intent, "query_weather")
+        self.assertIsNone(intent_parser._query_follow_up("明天去a点"))      # 任务句不能当天气追问
+
+        from app.services.voice_entry import voice_entry_service
+        voice_entry_service._pending.clear()               # 其他测试可能留下待确认命令
+        cold = smart_voice_service.handle(SmartCommandRequest(text="确认执行", source="test"))
+        self.assertIn("没有待确认", cold[0].reply_text)
+
+        created = smart_voice_service.handle(SmartCommandRequest(text="去二零一实验室", source="test"))
+        pending_id = created[0].pending_command_id
+        self.assertIsNotNone(pending_id)
+        cancelled = smart_voice_service.handle(SmartCommandRequest(text="取消", source="test"))
+        self.assertIn("已取消", cancelled[0].reply_text)
+        self.assertNotIn("请在界面上确认或取消", cancelled[0].reply_text)
+        from app.services.voice_entry import voice_entry_service as voice_entry_module
+        expired = voice_entry_module.confirm_pending_command(
+            VoiceConfirmCommandRequest(pending_command_id=pending_id, confirmed=True))
+        self.assertFalse(expired[0].accepted)
+        self.assertIn("过期", expired[0].detail)
+
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
         self.assertEqual(request.source, "miniprogram")

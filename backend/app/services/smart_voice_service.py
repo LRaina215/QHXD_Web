@@ -91,7 +91,7 @@ class SmartVoiceService:
             error_reason = voice_result.detail
 
         reply_text = voice_result.detail
-        if voice_result.need_confirm and mission_candidate is not None:
+        if voice_result.need_confirm and mission_candidate is not None and voice_result.pending_command_id:
             reply_text = f"{voice_result.detail} 请在界面上确认或取消。"
 
         result = SmartCommandResult(

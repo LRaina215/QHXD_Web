@@ -20,13 +20,17 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 class LLMIntentParser:
+    def __init__(self) -> None:
+        self._history: list[tuple[str, str]] = []          # (用户原话, 一句话结局)，给"再讲一个"这类追问提供指代上下文
+
     def parse(self, text: str, *, use_llm: bool | None = None) -> ParsedIntent:
         rule_result = intent_parser.parse(text)
         if not self._should_try_llm(text, rule_result, use_llm):
+            self._remember(text, rule_result.intent, rule_result.detail)
             return rule_result
 
         style = prompt_style(llm_client.config(force_enable=use_llm).backend)
-        system_prompt, user_prompt = build_prompts(text, style=style)
+        system_prompt, user_prompt = build_prompts(text, style=style, history=self._history)
         client_response = llm_client.chat_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -62,6 +66,7 @@ class LLMIntentParser:
                 llm_raw_output=client_response.content if self._debug_raw() else None,
             )
 
+        self._remember(text, llm_result.intent, llm_result.reply_text or llm_result.reason)
         safe = llm_safety_validator.validate(self._fill_target_slots(llm_result, rule_result))
         grounded = self._check_grounded(text, safe)
         if safe.ok and grounded is not None:
@@ -165,6 +170,10 @@ class LLMIntentParser:
             and rule_result.confidence >= 0.9
             and not self._looks_complex(text)
         )
+
+    def _remember(self, text: str, intent: str | None, summary: str) -> None:
+        self._history.append((text[:40], (summary or str(intent or ""))[:40]))
+        self._history = self._history[-6:]
 
     @staticmethod
     def _looks_complex(text: str) -> bool:

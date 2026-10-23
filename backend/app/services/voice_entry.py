@@ -136,7 +136,7 @@ class VoiceEntryService:
         self._purge_expired()
         pending = self._pending.pop(request.pending_command_id, None)
         if pending is None:
-            parsed = ParsedIntent(intent=None, detail="待确认命令不存在或已过期，未触发任务。", parser="confirm")
+            parsed = ParsedIntent(intent=None, detail="没有找到待确认的指令，可能已过期，请重新说一遍。", parser="confirm")
             return self._result(False, parsed, None, parsed.detail), None
         if not request.confirmed:
             parsed = pending.parsed
@@ -144,8 +144,7 @@ class VoiceEntryService:
                 False,
                 parsed,
                 parsed.intent,
-                "已取消待确认语音命令，未触发任务。",
-                pending_command_id=request.pending_command_id,
+                "好的，已取消这个任务。",
             ), None
 
         original = pending.request
