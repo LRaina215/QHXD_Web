@@ -172,7 +172,10 @@ class LLMIntentParser:
         )
 
     def _remember(self, text: str, intent: str | None, summary: str) -> None:
-        self._history.append((text[:40], (summary or str(intent or ""))[:40]))
+        """只记成功轮次：历史里堆满 unknown 会把小模型带偏（后面几句跟着答不上来）。"""
+        if intent in {None, "unknown", ""}:
+            return
+        self._history.append((text[:40], (summary or str(intent))[:40]))
         self._history = self._history[-6:]
 
     @staticmethod

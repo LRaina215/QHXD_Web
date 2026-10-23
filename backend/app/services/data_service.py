@@ -95,12 +95,13 @@ def _weather_reply(weather, question: str) -> str:
         if t is None:
             return f"{loc}现在{w}，温度数据暂时没拿到。"
         feel = f"，体感{feels:.0f}度" if feels is not None else ""
+        only_today = "明天的预报我还没有，先说今天：" if ("明" in q or "后天" in q or "周末" in q) else ""
         if t <= 12 or (feels is not None and feels <= 10):
-            return f"{loc}现在{t:.0f}度{feel}，挺冷的，出门加件外套。"
+            return f"{only_today}{loc}现在{t:.0f}度{feel}，挺冷的，出门加件外套。"
         if t >= 30 or (feels is not None and feels >= 33):
             hum_text = "，湿度也大，闷热" if hum is not None and hum >= 75 else ""
-            return f"{loc}现在{t:.0f}度{feel}{hum_text}，注意防晒补水。"
-        return f"{loc}现在{t:.0f}度{feel}，不冷不热，挺舒服的。"
+            return f"{only_today}{loc}现在{t:.0f}度{feel}{hum_text}，注意防晒补水。"
+        return f"{only_today}{loc}现在{t:.0f}度{feel}，不冷不热，挺舒服的。"
 
     if any(k in q for k in ("紫外线", "防晒", "晒不晒")):
         if uv is None:
@@ -125,15 +126,16 @@ def _weather_reply(weather, question: str) -> str:
     if hum is not None:
         parts.append(f"湿度{hum:.0f}%")
     line = "，".join(parts) + "。"
+    advice = weather.advice if weather.advice and weather.advice != "天气条件总体平稳，适合正常出行。" else ""
     extras = []
     if rain is not None and rain >= 30:
         extras.append(f"今日最高降雨概率{rain:.0f}%")
-    if uv is not None and uv >= 6:
+    if uv is not None and uv >= 6 and "紫外线" not in advice:
         extras.append(f"紫外线指数{uv:.1f}，注意防晒")
     if extras:
         line += "；".join(extras) + "。"
-    if weather.advice and weather.advice != "天气条件总体平稳，适合正常出行。":
-        line += f"出行建议：{weather.advice}"
+    if advice:
+        line += f"出行建议：{advice}"
     return line + f"（{age()}）"
 
 

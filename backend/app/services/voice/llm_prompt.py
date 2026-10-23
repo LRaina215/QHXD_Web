@@ -83,11 +83,18 @@ def build_compact_prompts(recognized_text: str, history: list[tuple[str, str]] |
         "confidence": 0.9}))
     examples.append(("太阳为什么是热的", {"intent": "open_chat", "confidence": 0.9,
                                          "reply_text": "太阳内部一直在发生核聚变，释放出大量的光和热。"}))
+    examples.append(("讲个笑话", {"intent": "open_chat", "confidence": 0.9,
+                                "reply_text": "程序员最讨厌的两件事：别人不写注释，和自己要写注释。"}))
     shots = "\n".join(f"用户：{q}\n{json.dumps(a, ensure_ascii=False, separators=(',', ':'))}" for q, a in examples)
     system_prompt = f"{COMPACT_SYSTEM_PROMPT}\n示例：\n{shots}"
     history_lines = "".join(f"用户：{u}\n助手：{a}\n" for u, a in (history or [])[-3:])
+    ask = ""
+    if any(k in recognized_text for k in ("笑话", "故事", "冷知识")):
+        ask = "\n（用户想要一个简短的笑话或小故事，用 reply_text 直接给出内容，不要反问。）"
+    elif any(k in recognized_text for k in ("再讲一个", "再来一个", "还有吗")):
+        ask = "\n（结合最近对话，用户想再来一个同类内容，用 reply_text 直接给出。）"
     user_prompt = (f"最近对话（仅供理解指代，如“再讲一个”“明天呢”）：\n{history_lines or '无'}\n"
-                   f"点位表：{table or '无'}\n用户：{recognized_text}")
+                   f"点位表：{table or '无'}\n用户：{recognized_text}{ask}")
     return system_prompt, user_prompt
 
 
