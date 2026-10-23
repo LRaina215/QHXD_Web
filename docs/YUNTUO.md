@@ -188,6 +188,6 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 
 原有轮速/姿态/故障字段保留；`platform_status.control_telemetry`增加`transport/source/version/fresh/receive_age_ms/measurement_age_ms/raw`，`raw`保留原V2全部字段和整数单位。过期时保留诊断原值但`fresh=false`，实时轮速/姿态字段为空。后端请求与响应模型均保留该对象；页面无需一次展示全部诊断量。原计数快照不直接累加成里程，也不能据一个零速度样本宣布实车已停止。
 
-验证：FPGA原UART位级对照和8个完整UDP遥测包/3个邮箱包共存通过，实际RTL包由生产Web解码后可还原原帧；桥接与协议46项通过、1项跳过；后端新增全字段请求/响应合同1项通过。测试环境`F:/yuntuo_test_env_20261023`按仓库依赖单独建立，不改变全局环境。后端整套在Windows执行得到46失败/4通过后中断，已观察到SQLite临时文件未关闭导致WinError32清理失败；未因此宣称全部后端测试通过。未修改数据库层，该全套回归缺口需在部署前闭合。
+验证：FPGA原UART位级对照和8个完整UDP遥测包/3个邮箱包共存通过，实际RTL包由生产Web解码后可还原原帧；桥接与协议46项通过、1项跳过；后端新增全字段请求/响应合同1项通过。测试环境`F:/yuntuo_test_env_20261023`按仓库依赖单独建立，不改变全局环境。首次后端整套在Windows出现SQLite连接未关闭的清理失败，并因进程探测os.kill(pid,0)在Windows发送CTRL_C_EVENT而中断。已在独立后续修复中补事务结束后的连接关闭、测试读连接关闭，并将Windows进程探测改为只读进程句柄查询；最终后端52项全通过（仅第三方TestClient弃用提示1项），失败记录保留。
 
 仍待逐项交付：PATH与COSTMAP_TILE、地图/坐标/启动代号、命令session/seq/有效期/ACK、区分命令速度与实测速度、真实模式准入、停止请求与实际停稳。视频/语音/感知仍由RK直接供Web，不经FPGA往返。

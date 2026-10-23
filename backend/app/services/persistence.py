@@ -1,5 +1,7 @@
 import json
 import sqlite3
+from contextlib import contextmanager
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -434,10 +436,15 @@ class SqlitePersistence:
             )
             connection.commit()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self._db_path)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     @staticmethod
     def _max_optional_float(left: float | None, right: float | None) -> float | None:

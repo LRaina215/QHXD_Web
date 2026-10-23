@@ -334,6 +334,23 @@ def _latest_frame_response():
 def _pid_running(pid: int | None) -> bool:
     if pid is None or pid <= 0:
         return False
+    if os.name == "nt":
+        # Windows signal 0 is CTRL_C_EVENT, not POSIX's read-only existence probe.
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only
+        if not handle:
+            return ctypes.get_last_error() == 5  # an inaccessible process exists
+        try:
+            return kernel.WaitForSingleObject(handle, 0) == 258  # WAIT_TIMEOUT: still running
+        finally:
+            kernel.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except OSError:

@@ -1180,7 +1180,8 @@ class Phase1BackendTests(unittest.IsolatedAsyncioTestCase):
         before = main_module.mock_state_service.get_latest_state()
         after = main_module.mock_state_service.tick()
 
-        with sqlite3.connect(persistence.db_path) as connection:
+        from contextlib import closing
+        with closing(sqlite3.connect(persistence.db_path)) as connection:
             snapshot_count = connection.execute(
                 "SELECT COUNT(*) FROM state_snapshots"
             ).fetchone()[0]
