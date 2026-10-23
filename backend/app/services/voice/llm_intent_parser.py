@@ -23,7 +23,35 @@ class LLMIntentParser:
     def __init__(self) -> None:
         self._history: list[tuple[str, str]] = []          # (用户原话, 一句话结局)，给"再讲一个"这类追问提供指代上下文
 
+    _JOKES = [
+        "机器人最怕什么？停电。一停电，再聪明的策略也只能站成铁憨憨。",
+        "为什么程序员的冰箱总是很乱？因为他们习惯了只在命令行里找东西。",
+        "轮腿机器人过台阶为什么稳？摔出来的经验全被强化学习写进策略里了。",
+    ]
+    _STORIES = [
+        "小蜗牛背着房子去旅行，走到哪儿都像回家一样安心。",
+        "小机器人在场地里找红色水瓶，转了三圈没找到。它不着急，因为它知道，找不到只是还没找到。",
+    ]
+
     def parse(self, text: str, *, use_llm: bool | None = None) -> ParsedIntent:
+        creative = self._is_creative(text)
+        result = self._parse_once(text, use_llm=use_llm)
+        if creative and result.intent in {None, "unknown"}:
+            result = self._parse_once(text, use_llm=use_llm)      # 小模型偶尔把闲聊判成 unknown，重试一次
+        if creative and result.intent in {None, "unknown"}:
+            pool = self._STORIES if "故事" in text else self._JOKES
+            self._builtin_at = getattr(self, "_builtin_at", -1) + 1
+            reply = pool[self._builtin_at % len(pool)]
+            self._remember(text, "open_chat", reply)
+            return ParsedIntent(intent="open_chat", confidence=0.8, need_confirm=False, detail=reply,
+                                parser="builtin", llm_backend=result.llm_backend, llm_model=result.llm_model)
+        return result
+
+    @staticmethod
+    def _is_creative(text: str) -> bool:
+        return any(k in text for k in ("笑话", "故事", "冷知识", "再讲一个", "再来一个", "还有吗"))
+
+    def _parse_once(self, text: str, *, use_llm: bool | None = None) -> ParsedIntent:
         rule_result = intent_parser.parse(text)
         if not self._should_try_llm(text, rule_result, use_llm):
             return rule_result        # 规则直出的回答（问候/日期/任务确认）不进闲聊历史，只会把小模型带偏
@@ -38,7 +66,7 @@ class LLMIntentParser:
 
         style = prompt_style(llm_client.config(force_enable=use_llm).backend)
         system_prompt, user_prompt = build_prompts(text, style=style, history=self._history)
-        creative = any(k in text for k in ("笑话", "故事", "冷知识", "再讲一个", "再来一个", "还有吗"))
+        creative = self._is_creative(text)
         client_response = llm_client.chat_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
