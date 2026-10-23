@@ -164,7 +164,7 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 | 端到端（模拟 FPGA） | 真相机看到人 → 跟随任务 → fpga_bridge 发 TARGET → 模拟 FPGA 进入跟踪、目标落在地图上 |
 | 云端（2026-10-23） | 公网 lingxunrobot.cn 已换云拓前端，备案号与公安备案图标照常由 nginx 注入；网关加了 `/api/platform/*` 与 `/api/gateway/health`；小程序只读冒烟全过 |
 
-仍待核对：
+仍待核对（接上 FPGA 串口或 SFP 网线后先跑 `./scripts/check_fpga_link.sh`：只读，会识别加载的是导航镜像 NAV0 还是 SFP 调试镜像 SFP1，检查网口载波、192.168.2.x 地址、ARP，并对调试镜像测 UDP 回显往返、对导航镜像测 STATUS 频率；每个失败项后面给出处理建议。fpga_bridge 占用同一条链路时只读它的状态，不做探测）：
 
 | 项 | 怎么核对 |
 |---|---|
