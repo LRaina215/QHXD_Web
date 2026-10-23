@@ -55,6 +55,19 @@ class LLMIntentParser:
             data = json.loads(self._strip_json_fence(client_response.content))
             llm_result = LLMIntent.from_dict(data)
         except (json.JSONDecodeError, TypeError, ValueError):
+            # 创作类请求带温度后，小模型常直接输出纯文本（笑话/故事），不再包 JSON：当闲聊回复用
+            plain = (client_response.content or "").strip().strip("`").strip()
+            if creative and plain and "{" not in plain and 2 <= len(plain) <= 200:
+                self._remember(text, "open_chat", plain)
+                return ParsedIntent(
+                    intent="open_chat",
+                    confidence=0.75,
+                    need_confirm=False,
+                    detail=plain,
+                    parser="llm",
+                    llm_backend=client_response.backend,
+                    llm_model=client_response.model,
+                )
             if self._rule_can_back_up(rule_result):
                 return rule_result
             return ParsedIntent(
