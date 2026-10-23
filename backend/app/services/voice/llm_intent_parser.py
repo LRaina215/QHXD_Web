@@ -28,6 +28,14 @@ class LLMIntentParser:
         if not self._should_try_llm(text, rule_result, use_llm):
             return rule_result        # 规则直出的回答（问候/日期/任务确认）不进闲聊历史，只会把小模型带偏
 
+        normalized = "".join(text.strip().lower().split())
+        if normalized in {"再讲一个", "再来一个", "还有吗", "还有没有", "继续讲"} and not self._history:
+            return ParsedIntent(
+                intent="open_chat", confidence=0.9, need_confirm=False,
+                detail="刚才还没讲过什么呢。想听笑话还是故事？直接说“讲个笑话”就行。",
+                parser="rule",
+            )
+
         style = prompt_style(llm_client.config(force_enable=use_llm).backend)
         system_prompt, user_prompt = build_prompts(text, style=style, history=self._history)
         creative = any(k in text for k in ("笑话", "故事", "冷知识", "再讲一个", "再来一个", "还有吗"))
@@ -163,10 +171,12 @@ class LLMIntentParser:
 
     @staticmethod
     def _check_grounded(text: str, safe) -> tuple[str, str] | None:
-        """小模型会把用户没说的点位 / 目标编出来（"去那个点"→A点、"找东西"→绿色瓶子）。
-        校验通过的意图还要能在原话里找到依据，找不到就改为追问。返回 (意图, 追问话术) 表示不成立。"""
+        """小模型会把用户没说的点位 / 目标编出来（"去那个点"→A点、"找东西"→绿色瓶子；偶尔还会把闲聊错答成导航）。
+        校验通过的意图还要能在原话里找到依据，找不到就改为追问；追问文案按用户原话选，不按模型的错误意图选。"""
         normalized = "".join(text.lower().split())
         command = safe.command
+        goto_asked = any(k in normalized for k in ("去", "到", "回", "前往", "导航", "点"))
+        search_asked = any(k in normalized for k in ("找", "寻", "搜"))
         if command == "go_to_waypoint":
             waypoint_id = str(safe.payload.get("waypoint_id") or "")
             waypoint = next((w for w in waypoint_resolver.list_waypoints()
@@ -174,12 +184,16 @@ class LLMIntentParser:
             aliases = [waypoint_id, str(waypoint.get("name") or ""), *[str(a) for a in (waypoint or {}).get("aliases", [])]]
             mentioned = any(alias and "".join(alias.lower().split()) in normalized for alias in aliases)
             if not mentioned:
-                return command, "你说的这个点我没有，能说个具体的点位吗？比如 A 点、B 点、C 点或起点。"
+                if goto_asked and not search_asked:
+                    return command, "你说的这个点我没有，能说个具体的点位吗？比如 A 点、B 点、C 点或起点。"
+                return command, "这个我有点没跟上。可以让我去某个点位、找东西、跟着你，或者陪我聊聊。"
         elif command == "search_target":
             from app.services.intent_parser import TARGET_CLASS_WORDS
             mentioned = any(word in normalized for word, _ in TARGET_CLASS_WORDS) or "人" in normalized
             if not mentioned:
-                return command, "想找什么？我能找水瓶、杯子、人、球、椅子或背包。"
+                if search_asked:
+                    return command, "想找什么？我能找水瓶、杯子、人、球、椅子或背包。"
+                return command, "这个我有点没跟上。可以让我去某个点位、找东西、跟着你，或者陪我聊聊。"
         return None
 
     @staticmethod
