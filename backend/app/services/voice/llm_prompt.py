@@ -90,7 +90,7 @@ def build_compact_prompts(recognized_text: str, history: list[tuple[str, str]] |
     if any(k in recognized_text for k in ("笑话", "故事", "冷知识")):
         ask = "\n（用户想要一个简短的笑话或小故事，用 reply_text 直接给出内容，不要反问。）"
     elif any(k in recognized_text for k in ("再讲一个", "再来一个", "还有吗")):
-        ask = "\n（结合最近对话，用户想再来一个同类内容，用 reply_text 直接给出。）"
+        ask = "\n（结合最近对话，用户想再来一个同类且不同的内容，不要重复之前给过的，用 reply_text 直接给出。）"
     user_prompt = (f"最近对话（仅供理解指代，如“再讲一个”“明天呢”）：\n{history_lines or '无'}\n"
                    f"点位表：{table or '无'}\n用户：{recognized_text}{ask}")
     return system_prompt, user_prompt
