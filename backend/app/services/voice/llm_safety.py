@@ -75,7 +75,7 @@ class LLMSafetyValidator:
             return self._reject(result, result.ask_text or "信息不够，告诉我要去哪、找什么，或者说得更具体一点。")
         if command == "open_chat":
             reply_text = (result.reply_text or result.reason or "").strip()
-            for marker in ("\n用户：", "\nUser:", " 用户：", "\n助手：", "助手：", "\n点位表", "\n示例"):   # 模型偶尔把提示里的对话格式带出来
+            for marker in ("\n用户：", "\nUser:", " 用户：", "用户：", "\n助手：", "助手：", "\n点位表", "\n示例"):   # 模型偶尔把提示里的对话格式带出来
                 reply_text = reply_text.split(marker)[0].rstrip()
             if not reply_text:
                 return self._reject(result, "我这边没组织好回答，再试一次。")
