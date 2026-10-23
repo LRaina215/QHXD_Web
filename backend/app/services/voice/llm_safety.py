@@ -66,11 +66,11 @@ class LLMSafetyValidator:
         if intent not in ALLOWED_INTENTS:
             return self._reject(result, "LLM 输出了不在白名单内的 intent。")
         if intent == "unknown":
-            return self._reject(result, result.ask_text or result.reason or "LLM 无法确定机器人任务。")
+            return self._reject(result, result.ask_text or result.reason or "抱歉，这句话我没听懂，请换种说法，或说具体任务（去 A 点、找红色水瓶、跟着我）。")
         if command not in ALLOWED_COMMANDS:
             return self._reject(result, "LLM 输出了不在白名单内的 command。")
         if result.confidence < _threshold():
-            return self._reject(result, f"LLM 置信度 {result.confidence:.2f} 低于阈值。")
+            return self._reject(result, "抱歉，这句话我没听懂，请换种说法，或说具体任务（去 A 点、找红色水瓶、跟着我）。")
         if result.missing_slots:
             return self._reject(result, result.ask_text or f"缺少必要槽位：{', '.join(result.missing_slots)}。")
         if command == "open_chat":

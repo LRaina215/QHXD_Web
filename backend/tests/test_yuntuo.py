@@ -315,6 +315,30 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
             else:
                 os.environ["YUNTUO_PERCEPTION_STATUS_FILE"] = saved
 
+    def test_local_model_reply_says_on_board_model_not_deepseek(self) -> None:
+        from app.services.data_service import DataService
+
+        saved = {k: os.environ.get(k) for k in ("LLM_BACKEND", "LLM_LOCAL_MODEL", "DEEPSEEK_DISPLAY_MODEL")}
+        try:
+            os.environ.update(LLM_BACKEND="local", LLM_LOCAL_MODEL="qwen2.5-1.5b-instruct")
+            os.environ["DEEPSEEK_DISPLAY_MODEL"] = "DeepSeek V4 Flash"
+            reply = DataService().assistant_model_reply()
+            self.assertIn("RK3588", reply)
+            self.assertIn("qwen2.5-1.5b-instruct", reply)
+            self.assertNotIn("DeepSeek", reply)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_confidence_reject_message_is_user_friendly(self) -> None:
+        result = llm_safety_validator.validate(LLMIntent.from_dict({"intent": "open_chat", "confidence": 0.0}))
+        self.assertFalse(result.ok)
+        self.assertIn("没听懂", result.detail)
+        self.assertNotIn("阈值", result.detail)
+
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
         self.assertEqual(request.source, "miniprogram")

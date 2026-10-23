@@ -38,7 +38,7 @@ class LLMIntentParser:
                 intent=None,
                 confidence=0.0,
                 need_confirm=True,
-                detail=f"LLM 未可用或调用失败：{client_response.error}，未触发任务。",
+                detail="本地大模型暂时不可用，请稍后再试，或说具体任务（去 A 点、找红色水瓶、跟着我）。",
                 parser="llm",
                 llm_backend=client_response.backend,
                 llm_model=client_response.model,

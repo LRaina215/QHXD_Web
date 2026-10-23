@@ -25,6 +25,10 @@ class DataService:
 
     def assistant_model_reply(self) -> str:
         backend = os.getenv("LLM_BACKEND", "deepseek").strip() or "deepseek"
+        if backend == "local":
+            model = os.getenv("LLM_LOCAL_MODEL", "").strip() or "本地大模型"
+            return (f"当前大模型部署在本机 RK3588 上，模型是 {model}，推理走 NPU，不联网。"
+                    "机器人运动控制仍由本地安全校验和确认流程接管。")
         request_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
         model = os.getenv("DEEPSEEK_DISPLAY_MODEL", request_model).strip() or request_model
         if backend == "deepseek":
