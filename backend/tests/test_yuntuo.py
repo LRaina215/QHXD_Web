@@ -419,6 +419,22 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(expired[0].accepted)
         self.assertIn("过期", expired[0].detail)
 
+    def test_cancel_task_intent_cancels_running_task(self) -> None:
+        from app.schemas import SmartCommandRequest
+        from app.services.smart_voice_service import smart_voice_service
+
+        started, _ = smart_voice_service.handle(SmartCommandRequest(text="开始巡检", source="test"))
+        self.assertEqual(started.intent, "start_patrol")
+        self.assertIsNotNone(started.pending_command_id)          # 运动类先待确认
+        spoken_cancel, _ = smart_voice_service.handle(SmartCommandRequest(text="取消", source="test"))
+        self.assertIn("已取消", spoken_cancel.reply_text)          # 有待确认时口头取消优先
+        confirmed, _ = smart_voice_service.handle(SmartCommandRequest(text="开始巡检", source="test"))
+        smart_voice_service.handle(SmartCommandRequest(text="确认执行", source="test"))
+        cancelled, _ = smart_voice_service.handle(SmartCommandRequest(text="取消任务", source="test"))
+        self.assertEqual(cancelled.intent, "cancel_task")
+        self.assertFalse(cancelled.need_confirm)
+        self.assertTrue(cancelled.reply_text)
+
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
         self.assertEqual(request.source, "miniprogram")

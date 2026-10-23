@@ -77,7 +77,7 @@ class SmartVoiceService:
         )
 
         mission_candidate = None
-        if voice_result.intent in MOTION_INTENTS or voice_result.command in {"pause_task", "resume_task"}:
+        if voice_result.intent in MOTION_INTENTS or voice_result.command in {"pause_task", "resume_task", "cancel_task"}:
             if voice_result.payload or voice_result.intent in {"start_patrol", "return_home", "pause_task", "resume_task"}:
                 mission_candidate = MissionCandidate(
                     command=voice_result.intent,

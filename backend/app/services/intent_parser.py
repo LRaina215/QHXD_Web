@@ -187,6 +187,22 @@ class IntentParser:
                 detail="已解析为状态查询。",
             )
 
+        if self._contains_any(normalized, ["取消任务", "停止任务", "终止任务", "别去了", "别走了", "不要去了", "停下任务"]):
+            return ParsedIntent(
+                intent="cancel_task",
+                confidence=0.93,
+                need_confirm=False,
+                detail="已解析为取消当前任务。",
+            )
+
+        if self._contains_any(normalized, ["取消", "停止", "停下"]):
+            return ParsedIntent(
+                intent="cancel_task",
+                confidence=0.88,
+                need_confirm=False,
+                detail="已解析为取消当前任务。",
+            )
+
         if self._contains_any(normalized, ["暂停任务", "暂停", "停一下"]):
             return ParsedIntent(
                 intent="pause_task",

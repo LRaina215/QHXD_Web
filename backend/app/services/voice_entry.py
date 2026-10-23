@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.schemas import (
     FollowTargetRequest,
     GoToWaypointRequest,
+    MissionRequestBase,
     PauseMissionRequest,
     ResumeMissionRequest,
     ReturnHomeRequest,
@@ -201,6 +202,8 @@ class VoiceEntryService:
             return mission_gateway.pause(PauseMissionRequest(source=source, requested_by=request.requested_by))
         if intent == "resume_task":
             return mission_gateway.resume(ResumeMissionRequest(source=source, requested_by=request.requested_by))
+        if intent == "cancel_task":
+            return mission_gateway.cancel(MissionRequestBase(source=source, requested_by=request.requested_by))
         if intent == "return_home":
             return mission_gateway.return_home(ReturnHomeRequest(source=source, requested_by=request.requested_by))
         if intent in {"search_target", "follow_target"}:

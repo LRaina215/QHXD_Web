@@ -23,6 +23,7 @@ VoiceIntentValue = Literal[
     "start_patrol",
     "pause_task",
     "resume_task",
+    "cancel_task",
     "return_home",
     "search_target",
     "follow_target",

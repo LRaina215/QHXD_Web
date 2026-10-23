@@ -8,6 +8,7 @@ ALLOWED_INTENTS = {
     "start_patrol",
     "pause_task",
     "resume_task",
+    "cancel_task",
     "return_home",
     "search_target",
     "follow_target",
@@ -34,40 +35,13 @@ ALLOWED_INTENTS = {
     "unknown",
 }
 
-ALLOWED_COMMANDS = {
-    "go_to_waypoint",
-    "start_patrol",
-    "pause_task",
-    "resume_task",
-    "return_home",
-    "search_target",
-    "follow_target",
-    "query_status",
-    "query_task",
-    "query_detection",
-    "query_self_identity",
-    "query_capability",
-    "query_safety_rule",
-    "query_assistant_model",
-    "query_robot_status",
-    "query_task_status",
-    "query_navigation_status",
-    "query_battery",
-    "query_emergency_stop",
-    "query_perception_status",
-    "query_front_status",
-    "query_obstacle_status",
-    "query_navigation_safety",
-    "query_weather",
-    "query_environment",
-    "speak_last_result",
-    "open_chat",
-}
+ALLOWED_COMMANDS = ALLOWED_INTENTS - {"unknown"}
 
 MOTION_COMMANDS = {"go_to_waypoint", "start_patrol", "return_home", "search_target", "follow_target"}
 LOW_RISK_COMMANDS = {
     "pause_task",
     "resume_task",
+    "cancel_task",
     "query_status",
     "query_task",
     "query_detection",
