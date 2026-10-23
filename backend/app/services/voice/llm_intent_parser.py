@@ -57,9 +57,7 @@ class LLMIntentParser:
         except (json.JSONDecodeError, TypeError, ValueError):
             # 创作类请求带温度后，小模型常直接输出纯文本（笑话/故事），不再包 JSON：当闲聊回复用
             plain = (client_response.content or "").strip().strip("`").strip()
-            for marker in ("
-用户：", "
-User:", " 用户："):      # 小模型偶尔把提示里的对话格式带出来
+            for marker in ("\n用户：", "\nUser:", " 用户："):      # 小模型偶尔把提示里的对话格式带出来
                 plain = plain.split(marker)[0].rstrip()
             if creative and plain and "{" not in plain and 2 <= len(plain) <= 200:
                 self._remember(text, "open_chat", plain)
