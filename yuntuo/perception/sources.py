@@ -152,6 +152,10 @@ class AstraSource:
             time.sleep(0.005)
         return None
 
+    def peek_color(self) -> tuple[Any, float]:
+        """最新彩色帧（不消耗，推流线程用）：(BGR 帧或 None, 采集时刻 monotonic)。"""
+        return self.color_reader.latest()
+
     def close(self) -> None:
         self.color_reader.running = False
         if self.depth_reader is not None:
@@ -183,7 +187,11 @@ class ReplaySource:
         depth = np.load(dp) if dp.exists() else None
         h, w = color.shape[:2]
         k = ASTRA_COLOR_640.scaled(w, h)
-        return RgbdFrame(color, depth, time.monotonic(), k, k if depth is not None else ASTRA_DEPTH_640, True)
+        self._last = (color, time.monotonic())
+        return RgbdFrame(color, depth, self._last[1], k, k if depth is not None else ASTRA_DEPTH_640, True)
+
+    def peek_color(self) -> tuple[Any, float]:
+        return getattr(self, "_last", (None, 0.0))
 
     def close(self) -> None:
         pass

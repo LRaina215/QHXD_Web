@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import tempfile
@@ -398,15 +399,24 @@ def _video_health_status() -> VideoHealthStatus:
     if detection is not None:
         detection_age_s = max(0.0, (now - detection.timestamp).total_seconds())
 
-    yolo_pid = _read_pid_file(PROJECT_ROOT / ".runtime" / "yolo_camera.pid")
-    yolo_running = _yolo_camera_running(yolo_pid)
+    perception = _yuntuo_perception_status()
+    if perception is not None:
+        yolo_pid = perception.get("pid")
+        yolo_running = bool(perception.get("running"))
+    else:
+        yolo_pid = _read_pid_file(PROJECT_ROOT / ".runtime" / "yolo_camera.pid")
+        yolo_running = _yolo_camera_running(yolo_pid)
     recent_events = visual_event_service.list_recent(limit=5)
 
     status = "ok"
     details: list[str] = []
     if not yolo_running:
         status = "degraded"
-        details.append("YOLO camera service is not running")
+        details.append("perception service is not running")
+    stream = (perception or {}).get("stream")
+    if stream is not None and stream.get("last_error") and not stream.get("pushed"):
+        status = "degraded"
+        details.append("video stream is not publishing")
     if not latest_frame_fresh:
         status = "degraded"
         details.append("latest perception frame is missing or stale")
@@ -431,12 +441,29 @@ def _video_health_status() -> VideoHealthStatus:
         yolo_camera_pid=yolo_pid,
         yolo_camera_running=yolo_running,
         stream_url=_redacted_stream_url(os.getenv("QHXD_VIDEO_STREAM_URL")),
+        perception=perception,
         recent_visual_events=recent_events,
         detail="; ".join(details) if details else "video and perception health look normal",
         updated_at=now,
     )
 
 
+
+
+def _yuntuo_perception_status() -> dict | None:
+    """yuntuo-perception 每 0.5 s 写一次 .runtime/yuntuo_perception.json（检测帧率、推流计数）。"""
+    path = Path(os.getenv("YUNTUO_PERCEPTION_STATUS_FILE", str(PROJECT_ROOT / ".runtime" / "yuntuo_perception.json")))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    age_s = max(0.0, time.time() - float(data.get("updated_at") or 0.0))
+    pid = data.get("pid") if isinstance(data.get("pid"), int) else None
+    data["age_s"] = round(age_s, 2)
+    data["running"] = age_s <= 10.0 and _pid_running(pid)
+    return data
 
 
 def _parse_optional_bool(value: str | None) -> bool | None:

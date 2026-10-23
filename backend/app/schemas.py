@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -339,6 +339,7 @@ class VideoHealthStatus(ContractModel):
     yolo_camera_pid: int | None = None
     yolo_camera_running: bool = False
     stream_url: str | None = None
+    perception: dict[str, Any] | None = Field(default=None, description="云拓感知节点自报状态：检测帧率、推流计数")
     recent_visual_events: list[VisualEventRecord] = Field(default_factory=list)
     detail: str
     updated_at: datetime

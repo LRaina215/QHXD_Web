@@ -293,6 +293,28 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
             else:
                 os.environ["LLM_ENABLE"] = saved
 
+    def test_video_health_reads_perception_status_file(self) -> None:
+        import json as jsonlib
+        import time as timelib
+
+        path = Path(self._temp_dir.name) / "yuntuo_perception.json"
+        saved = os.environ.get("YUNTUO_PERCEPTION_STATUS_FILE")
+        os.environ["YUNTUO_PERCEPTION_STATUS_FILE"] = str(path)
+        try:
+            path.write_text(jsonlib.dumps({"pid": os.getpid(), "updated_at": timelib.time(), "detect_fps": 5.0,
+                                           "stream": {"pushed": 0, "last_error": "rtmpsink: could not connect"}}))
+            health = main_module._video_health_status()
+            self.assertTrue(health.yolo_camera_running)
+            self.assertEqual(health.perception["detect_fps"], 5.0)
+            self.assertIn("video stream is not publishing", health.detail)
+            path.write_text(jsonlib.dumps({"pid": os.getpid(), "updated_at": timelib.time() - 60}))
+            self.assertFalse(main_module._video_health_status().yolo_camera_running)
+        finally:
+            if saved is None:
+                os.environ.pop("YUNTUO_PERCEPTION_STATUS_FILE", None)
+            else:
+                os.environ["YUNTUO_PERCEPTION_STATUS_FILE"] = saved
+
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")
         self.assertEqual(request.source, "miniprogram")

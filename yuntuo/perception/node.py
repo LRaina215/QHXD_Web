@@ -3,6 +3,7 @@
   --source astra（缺省）| replay:目录      --detector rknn（缺省）| blob:red
 每帧：检测 -> 颜色 -> 三维定位 -> 跟踪；有三维位置的目标以 UDP JSON 发给 fpga_bridge（127.0.0.1:9102，由它筛选
 后转成 NV TARGET）；按 --status-hz 向后端上送 detection_status，按 --save-hz 写带框的最新帧（网页 MJPEG / 截图用）。
+QHXD_VIDEO_STREAM_ENABLED=true 时另起推流线程，把带框画面硬件编码后 RTMP 推到云端（见 yuntuo/perception/stream.py）。
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from urllib import request
 from yuntuo.perception.detectors import RKNN_DIR, color_blob_detector, rknn_detector
 from yuntuo.perception.geometry import Mount
 from yuntuo.perception.pipeline import Pipeline, PipelineConfig, bridge_message, detection_status
+from yuntuo.perception.stream import AnnotatedStream, annotate, make_publisher
 
 log = logging.getLogger("perception")
 
@@ -52,20 +54,21 @@ class LatestPoster(threading.Thread):
 def save_annotated(frame, dets: list[dict], path: Path) -> None:
     import cv2
 
-    img = frame.copy()
-    for d in dets:
-        x1, y1, x2, y2 = (int(v) for v in d["bbox"])
-        color = (0, 0, 255) if d.get("color") == "red" else (0, 200, 255)
-        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-        text = f"{d['cls']}#{d.get('track_id', 0)}"
-        if d.get("color"):
-            text += f" {d['color']}"
-        if d.get("position"):
-            text += f" {((d['position'][0] ** 2 + d['position'][1] ** 2) ** 0.5):.2f}m"
-        cv2.putText(img, text, (x1, max(12, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     tmp = path.with_suffix(".tmp.jpg")
-    cv2.imwrite(str(tmp), img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    cv2.imwrite(str(tmp), annotate(frame, dets), [cv2.IMWRITE_JPEG_QUALITY, 80])
     os.replace(tmp, path)
+
+
+def write_status(path: Path, payload: dict) -> None:
+    """后端 /api/perception/video_health 读这个文件判断感知与推流是否正常。"""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    return default if value is None else value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def parse_mount(text: str) -> Mount:
@@ -147,6 +150,14 @@ def main() -> int:
                     help="librknnrt 初始化时会把所有线程调到 nice -19，压过板上大模型 / 语音合成 / 后端；这里调回该值")
     ap.add_argument("--stall-exit-s", type=float, default=float(os.getenv("YUNTUO_CAMERA_STALL_EXIT_S", "5")),
                     help="这么久没有新画面就退出（相机重新插拔后设备要重开），由 systemd 自动重启；0 关闭")
+    ap.add_argument("--stream", action=argparse.BooleanOptionalAction, default=env_bool("QHXD_VIDEO_STREAM_ENABLED"),
+                    help="推带框的 H.264 视频到 QHXD_VIDEO_STREAM_URL（云端 MediaMTX）")
+    ap.add_argument("--stream-url", default=os.getenv("QHXD_VIDEO_STREAM_URL", ""))
+    ap.add_argument("--stream-fps", type=float, default=float(os.getenv("YUNTUO_STREAM_FPS", "15")))
+    ap.add_argument("--stream-size", default=os.getenv("YUNTUO_STREAM_SIZE", "640x480"), help="编码分辨率，宽x高")
+    ap.add_argument("--stream-bitrate", type=int, default=int(os.getenv("YUNTUO_STREAM_BITRATE", "1000000")))
+    ap.add_argument("--status-file", default=os.getenv("YUNTUO_PERCEPTION_STATUS_FILE",
+                                                       str(RKNN_DIR.parents[1] / ".runtime" / "yuntuo_perception.json")))
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -173,6 +184,19 @@ def main() -> int:
     busy_period, idle_period = 1.0 / max(1.0, args.fps), 1.0 / max(0.5, min(args.idle_fps, args.fps))
     target_task = TargetTaskWatcher(args.bridge_health)
     target_task.start()
+    stream = None
+    if args.stream and args.stream_url:
+        width, _, height = args.stream_size.lower().partition("x")
+        publisher = make_publisher(args.stream_url, args.stream_fps, int(width), int(height), args.stream_bitrate)
+        stream = AnnotatedStream(source.peek_color, publisher, fps=args.stream_fps)
+        stream.start()
+        log.info("推流：%s，%s@%g fps，%d kbps", publisher.redacted_url, args.stream_size, args.stream_fps,
+                 args.stream_bitrate // 1000)
+    elif args.stream:
+        log.warning("QHXD_VIDEO_STREAM_ENABLED=true 但没有 QHXD_VIDEO_STREAM_URL，不推流")
+    status_path = Path(args.status_file)
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    det_times: list[float] = []
     changed = reset_thread_nice(args.nice)
     log.info("感知节点启动：来源 %s，检测器 %s，发往 fpga_bridge %s（%d 个线程 nice 调回 %d）",
              args.source, model_name, bridge_addr, changed, args.nice)
@@ -191,13 +215,27 @@ def main() -> int:
             seq += 1
             dets = pipeline.process(frame)
             sock.sendto(json.dumps(bridge_message(dets, frame, seq)).encode("utf-8"), bridge_addr)
+            if stream is not None:
+                stream.update(dets, frame.stamp_mono)
             now = time.monotonic()
+            det_times = [t for t in det_times if now - t < 5.0] + [now]
             if now >= next_nice:                      # 运行库后建的线程同样会被调高优先级
                 next_nice = now + 5.0
                 reset_thread_nice(args.nice)
             if now >= next_status:
                 next_status = now + 1.0 / args.status_hz
                 poster.put(detection_status(dets, model_name=model_name))
+                stats = getattr(getattr(stream, "publisher", None), "stats", None)
+                write_status(status_path, {
+                    "pid": os.getpid(), "updated_at": time.time(), "model": model_name,
+                    "detect_fps": round((len(det_times) - 1) / max(det_times[-1] - det_times[0], 1e-3), 1)
+                    if len(det_times) > 1 else 0.0,
+                    "target_task": target_task.active,
+                    "stream": None if stream is None else {
+                        "url": stream.publisher.redacted_url, "frames": stream.frames,
+                        "pushed": stats.pushed, "dropped": stats.dropped, "reconnects": stats.reconnects,
+                        "last_error": stats.last_error[:200]},
+                })
             if now >= next_save:
                 next_save = now + 1.0 / args.save_hz
                 save_annotated(frame.color, dets, save_path)
@@ -206,6 +244,9 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        if stream is not None:
+            stream.stop()
+            stream.publisher.close()
         source.close()
         release()
     return 0
