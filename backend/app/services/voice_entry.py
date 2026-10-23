@@ -57,6 +57,11 @@ class PendingVoiceCommand:
     expires_at: datetime
 
 
+# 口头确认 / 取消（仅在存在待确认命令时生效；"好的"这类客套话不放进来自由触发）
+CONFIRM_WORDS = {"确认", "确认执行", "执行", "确定", "可以执行", "开始吧", "是的执行"}
+CANCEL_WORDS = {"取消", "取消任务", "不执行", "算了", "不要了"}
+
+
 class VoiceEntryService:
     """Text-command entry point that reuses the existing mission gateway."""
 
@@ -67,6 +72,15 @@ class VoiceEntryService:
         self, request: VoiceTextCommandRequest, *, parsed: ParsedIntent | None = None
     ) -> tuple[VoiceCommandResult, RobotState | None]:
         """parsed：调用方已解析过就传进来，避免同一句话再调一次大模型（板载模型一次要几秒，且两次结果可能不同）。"""
+        spoken = self._spoken_confirm_or_cancel(request.text)
+        if spoken == "__none__":
+            parsed = ParsedIntent(intent=None, detail="现在没有待确认的指令，先说要做什么。", parser="confirm")
+            return self._result(False, parsed, None, parsed.detail), None
+        if spoken is not None:
+            normalized = "".join(request.text.strip().lower().split())
+            return self.confirm_pending_command(VoiceConfirmCommandRequest(
+                pending_command_id=spoken, confirmed=normalized in CONFIRM_WORDS,
+                requested_by=request.requested_by, source=request.source))
         if parsed is None:
             parsed = llm_intent_parser.parse(request.text, use_llm=request.use_llm)
 
@@ -105,6 +119,18 @@ class VoiceEntryService:
             ),
             latest_state,
         )
+
+    def _spoken_confirm_or_cancel(self, text: str) -> str | None:
+        """多轮对话：上一句生成了待确认任务时，一句"确认执行 / 取消"就能处理，不必去点界面。
+        返回待处理的 pending id；没有待确认的命令时也返回 None（由上层给提示）。"""
+        normalized = "".join(text.strip().lower().split())
+        if normalized not in CONFIRM_WORDS and normalized not in CANCEL_WORDS:
+            return None
+        self._purge_expired()
+        pending_id = next(iter(sorted(self._pending, key=lambda k: self._pending[k].expires_at, reverse=True)), None)
+        if pending_id is None and normalized in CONFIRM_WORDS:
+            return "__none__"
+        return pending_id
 
     def confirm_pending_command(self, request: VoiceConfirmCommandRequest) -> tuple[VoiceCommandResult, RobotState | None]:
         self._purge_expired()

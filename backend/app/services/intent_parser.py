@@ -79,6 +79,15 @@ class IntentParser:
                 detail="这个我不能做，会撞到或者失控，换个安全的指令试试。",
             )
 
+        if self._contains_any(normalized, ["关机", "重启", "删除", "格式化", "写代码", "写一段代码", "编程",
+                                            "黑客", "病毒", "下载", "发邮件", "拍照", "录像", "播放音乐"]):
+            return ParsedIntent(
+                intent="unknown",
+                confidence=0.95,
+                need_confirm=False,
+                detail="这类操作我支持不了。我可以导航、巡检、找东西、跟着你，或者问我的状态和天气。",
+            )
+
         target_task = self._parse_target_task(normalized)
         if target_task is not None:
             return target_task

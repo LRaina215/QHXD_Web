@@ -7,6 +7,7 @@ from dataclasses import replace
 from app.services.intent_parser import ParsedIntent, intent_parser
 from app.services.voice.llm_client import llm_client
 from app.services.voice.llm_prompt import build_prompts, prompt_style
+from app.services.waypoint_resolver import waypoint_resolver
 from app.services.voice.llm_schema import LLMIntent
 from app.services.voice.llm_safety import _threshold as confidence_threshold, llm_safety_validator, normalize_class
 
@@ -62,6 +63,19 @@ class LLMIntentParser:
             )
 
         safe = llm_safety_validator.validate(self._fill_target_slots(llm_result, rule_result))
+        grounded = self._check_grounded(text, safe)
+        if safe.ok and grounded is not None:
+            if self._rule_can_back_up(rule_result) and rule_result.intent == grounded[0]:
+                return rule_result
+            return ParsedIntent(
+                intent="unknown",
+                confidence=0.0,
+                need_confirm=True,
+                detail=grounded[1],
+                parser="llm",
+                llm_backend=client_response.backend,
+                llm_model=client_response.model,
+            )
         if not safe.ok:
             # 板载小模型常漏掉 confidence（解析成 0）：规则有把握时用规则结果；模型明确判 unknown 且有把握时仍以模型为准
             if self._rule_can_back_up(rule_result) and llm_result.confidence < confidence_threshold():
@@ -117,6 +131,27 @@ class LLMIntentParser:
             target_color=llm_result.target_color or (str(rule_result.payload["color"]) if rule_result.payload.get("color") else None),
             target_label=llm_result.target_label or (str(rule_result.payload["label"]) if rule_result.payload.get("label") else None),
         )
+
+    @staticmethod
+    def _check_grounded(text: str, safe) -> tuple[str, str] | None:
+        """小模型会把用户没说的点位 / 目标编出来（"去那个点"→A点、"找东西"→绿色瓶子）。
+        校验通过的意图还要能在原话里找到依据，找不到就改为追问。返回 (意图, 追问话术) 表示不成立。"""
+        normalized = "".join(text.lower().split())
+        command = safe.command
+        if command == "go_to_waypoint":
+            waypoint_id = str(safe.payload.get("waypoint_id") or "")
+            waypoint = next((w for w in waypoint_resolver.list_waypoints()
+                             if str(w.get("waypoint_id")) == waypoint_id), None)
+            aliases = [waypoint_id, str(waypoint.get("name") or ""), *[str(a) for a in (waypoint or {}).get("aliases", [])]]
+            mentioned = any(alias and "".join(alias.lower().split()) in normalized for alias in aliases)
+            if not mentioned:
+                return command, "你说的这个点我没有，能说个具体的点位吗？比如 A 点、B 点、C 点或起点。"
+        elif command == "search_target":
+            from app.services.intent_parser import TARGET_CLASS_WORDS
+            mentioned = any(word in normalized for word, _ in TARGET_CLASS_WORDS) or "人" in normalized
+            if not mentioned:
+                return command, "想找什么？我能找水瓶、杯子、人、球、椅子或背包。"
+        return None
 
     @staticmethod
     def _rule_can_back_up(rule_result: ParsedIntent) -> bool:
