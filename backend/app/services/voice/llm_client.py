@@ -162,7 +162,8 @@ class DeepSeekClient:
         return LLMClientResponse(success=True, content=None, model=config.model, raw_response=raw)
 
 
-    def chat_json(self, *, system_prompt: str, user_prompt: str, force_enable: bool | None = None) -> LLMClientResponse:
+    def chat_json(self, *, system_prompt: str, user_prompt: str, force_enable: bool | None = None,
+                  temperature: float | None = None) -> LLMClientResponse:
         config = self.config(force_enable=force_enable)
         if not config.enabled:
             return LLMClientResponse(success=False, error="llm-disabled-or-missing-api-key", model=config.model)
@@ -176,6 +177,8 @@ class DeepSeekClient:
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
         if config.backend != "local" or _env_bool("LLM_LOCAL_JSON_MODE", True):
             payload["response_format"] = {"type": "json_object"}
         request = urllib.request.Request(

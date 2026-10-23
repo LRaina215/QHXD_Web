@@ -131,8 +131,10 @@ class ChatService:
         except ValueError as exc:
             return 400, _error(str(exc), "invalid_request_error")
         json_mode = (body.get("response_format") or {}).get("type") == "json_object"
-        # 结构化输出用贪心解码：同一句话每次结果一致，小模型也不容易漏字段
-        temperature = 0.0 if json_mode else _float_or_none(body.get("temperature"))
+        # 结构化输出缺省贪心解码（结果稳定）；创作类内容（笑话/故事）由调用方显式带温度换点变化
+        temperature = _float_or_none(body.get("temperature"))
+        if json_mode and temperature is None:
+            temperature = 0.0
         gen = self.engine.generate(prompt, template=template, max_new_tokens=_int_or_none(body.get("max_tokens")),
                                    temperature=temperature,
                                    top_p=_float_or_none(body.get("top_p")), timeout_s=self.timeout_s)

@@ -58,7 +58,11 @@ def test_chat_service_json_mode_and_errors():
     assert json.loads(body["choices"][0]["message"]["content"]) == {"intent": "pause_task", "confidence": 0.9}
     assert body["usage"]["total_tokens"] == 20
     assert engine.calls[0]["max_new_tokens"] == 64
-    assert engine.calls[0]["temperature"] == 0.0          # json_object 强制贪心解码
+    assert engine.calls[0]["temperature"] == 0.0          # json_object 缺省贪心解码
+    status, body = service.chat({"messages": [{"role": "user", "content": "讲个笑话"}],
+                                 "response_format": {"type": "json_object"}, "temperature": 0.8})
+    assert status == 200
+    assert engine.calls[1]["temperature"] == 0.8           # 调用方显式带温度时保留（创作类内容要变化）
     assert service.health()["last"]["ok"] is True
 
     assert service.chat({"messages": [], "stream": True})[0] == 400

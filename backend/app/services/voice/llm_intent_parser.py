@@ -31,10 +31,12 @@ class LLMIntentParser:
 
         style = prompt_style(llm_client.config(force_enable=use_llm).backend)
         system_prompt, user_prompt = build_prompts(text, style=style, history=self._history)
+        creative = any(k in text for k in ("笑话", "故事", "冷知识", "再讲一个", "再来一个", "还有吗"))
         client_response = llm_client.chat_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             force_enable=use_llm,
+            temperature=0.8 if creative else None,
         )
         if not client_response.success or not client_response.content:
             if rule_result.intent is not None and rule_result.confidence >= 0.9 and not self._looks_complex(text):
@@ -85,11 +87,16 @@ class LLMIntentParser:
             # 板载小模型常漏掉 confidence（解析成 0）：规则有把握时用规则结果；模型明确判 unknown 且有把握时仍以模型为准
             if self._rule_can_back_up(rule_result) and llm_result.confidence < confidence_threshold():
                 return rule_result
+            detail = safe.detail
+            if rule_result.intent == "go_to_waypoint" and not rule_result.payload.get("waypoint_id"):
+                detail = "你说的这个点我没有，能说个具体的点位吗？比如 A 点、B 点、C 点或起点。"
+            elif rule_result.intent == "search_target" and not rule_result.payload.get("target_class"):
+                detail = "想找什么？我能找水瓶、杯子、人、球、椅子或背包。"
             return ParsedIntent(
                 intent="unknown",
                 confidence=safe.confidence,
                 need_confirm=True,
-                detail=safe.detail,
+                detail=detail,
                 parser="llm",
                 llm_backend=client_response.backend,
                 llm_model=client_response.model,
