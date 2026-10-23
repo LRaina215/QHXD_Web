@@ -220,6 +220,17 @@ class DetectionObject(ContractModel):
 LinkStateValue = Literal["online", "offline", "mock", "unknown"]
 
 
+class ControlTelemetry(ContractModel):
+    """完整原控制帧；raw字段与导航ICD的CONTROL_V2一致，不据此单独判定实车停稳。"""
+    transport: Literal["nv_udp", "legacy_telemetry"]
+    source: Literal["fpga", "mock"]
+    version: Literal[1, 2]
+    fresh: bool
+    receive_age_ms: float = Field(ge=0)
+    measurement_age_ms: float | None = None
+    raw: dict[str, int]
+
+
 class PlatformStatus(ContractModel):
     """云拓整车 FPGA 侧状态：导航（NV STATUS 报文）与控制（V2 遥测），由 fpga_bridge 上送。"""
 
@@ -252,6 +263,7 @@ class PlatformStatus(ContractModel):
     yaw_rate_radps: float | None = Field(default=None, description="偏航角速度 rad/s")
     height_cmd_m: float | None = Field(default=None, description="当前底盘高度指令 m")
     telemetry_rate_hz: float | None = Field(default=None, ge=0.0, description="控制遥测实际接收频率")
+    control_telemetry: ControlTelemetry | None = Field(default=None, description="原控制完整遥测，过期保留原值但fresh=false")
 
 
 class PlatformStatusUpdateRequest(ContractModel):

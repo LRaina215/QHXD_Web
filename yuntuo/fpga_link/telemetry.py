@@ -139,6 +139,19 @@ class ControlFrame:
         return out
 
 
+def decode_packet(packet: bytes) -> ControlFrame | None:
+    """Validate exactly one datagram frame; never join fragments across UDP packets."""
+    if len(packet) < 6 or packet[:2] != MAGIC:
+        return None
+    key = (packet[2], packet[3])
+    if key not in FORMATS or len(packet) != key[1] + 6:
+        return None
+    if crc16_ccitt_false(packet[2:-2]) != int.from_bytes(packet[-2:], "little"):
+        return None
+    fmt, names = FORMATS[key]
+    return ControlFrame(key[0], dict(zip(names, fmt.unpack(packet[4:-2]))))
+
+
 class TelemetryDecoder:
     """字节流 -> ControlFrame 列表；坏 CRC 逐字节重同步。"""
 

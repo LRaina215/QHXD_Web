@@ -86,12 +86,13 @@ def main() -> int:
     ap.add_argument("--backend", default=cfg.backend_url)
     ap.add_argument("--port", type=int, default=cfg.http_port)
     ap.add_argument("--perception-udp", default=cfg.perception_udp, help="感知检测输入，空字符串关闭")
-    ap.add_argument("--telemetry", default=cfg.telemetry, help="控制遥测：serial:/dev/ttyUSB0@230400 或 udp:HOST:PORT")
+    ap.add_argument("--telemetry", default=cfg.telemetry, help="控制遥测：nv（导航UDP内完整V2）、serial:/dev/ttyUSB0@230400 或 udp:HOST:PORT")
     ap.add_argument("--map", default=str(cfg.map_package) if cfg.map_package else None, help="启动时下发的 .nvmp")
     ap.add_argument("--log-level", default="INFO")
     args = ap.parse_args()
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg.link, cfg.backend_url, cfg.http_port = args.link, args.backend.rstrip("/"), args.port
+    cfg.telemetry = args.telemetry
     cfg.link_is_mock = cfg.link_is_mock or args.mock
     perception = PerceptionInbox(args.perception_udp) if args.perception_udp else None
     telemetry = TelemetryReader(args.telemetry) if args.telemetry else None

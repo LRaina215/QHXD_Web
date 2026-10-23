@@ -19,6 +19,7 @@ from yuntuo.bridge.tasks import StatusView, TaskRunner, utc_now
 from yuntuo.fpga_link import nv_proto as nv
 from yuntuo.fpga_link.links import LinkError, NavLink, open_link
 from yuntuo.fpga_link.nvmp import MapPackageError, PriorMap, parse_package
+from yuntuo.fpga_link.telemetry import ControlFrame
 
 log = logging.getLogger("fpga_bridge")
 
@@ -53,6 +54,10 @@ class FpgaBridge:
         self.poster = poster if poster is not None else BackendPoster(cfg.backend_url)
         self.perception = perception
         self.telemetry = telemetry
+        self.nv_control: ControlFrame | None = None
+        self.nv_control_at = -1e9
+        self.nv_control_rate = RateMeter()
+        self.nv_control_seen = cfg.telemetry == "nv"
         self.requests: queue.Queue[PendingRequest] = queue.Queue(maxsize=32)
         self.runner = TaskRunner(cfg, load_waypoints(cfg.waypoints_path), load_routes(cfg.routes_path),
                                  self._send, self._emit)
@@ -165,10 +170,23 @@ class FpgaBridge:
 
     def _on_message(self, msg, now: float) -> None:
         if isinstance(msg, nv.NavStatus):
+            if self.status is not None and ((msg.t_us - self.status.t_us) & 0xFFFFFFFF) >= 0x80000000:
+                # Reset/backward status: invalidate control until new samples arrive.
+                self.nv_control = None
+                self.nv_control_at = -1e9
             self.status, self.status_at = msg, now
             self.status_rate.mark(now)
         elif isinstance(msg, nv.MapAck):
             self.map_ack = msg
+        elif isinstance(msg, ControlFrame):
+            previous = self.nv_control
+            if previous is not None:
+                delta = (msg.sequence - previous.sequence) & 0xFFFF
+                if delta == 0 or delta >= 0x8000:
+                    return  # duplicate/reordered samples do not refresh health
+            self.nv_control, self.nv_control_at = msg, now
+            self.nv_control_seen = True  # never fall back to a stale/mock secondary stream
+            self.nv_control_rate.mark(now)
 
     # ---------------------------------------------------------------- 请求
     def _handle_request(self, req: PendingRequest, now: float) -> dict:
@@ -261,12 +279,12 @@ class FpgaBridge:
         return ok
 
     def _wait_map_ack(self, timeout: float, tries: int, final: bool = False) -> nv.MapAck | None:
-        for _ in range(tries):
-            data = self.link.recv(timeout)
+        deadline = time.monotonic() + timeout * tries
+        while time.monotonic() < deadline:
+            data = self.link.recv(min(timeout, max(0.0, deadline-time.monotonic())))
             msg = nv.decode(data) if data else None
-            if isinstance(msg, nv.NavStatus):
-                self._on_message(msg, self.clock())
-            elif isinstance(msg, nv.MapAck) and (not final or msg.map_state != 1):
+            self._on_message(msg, self.clock())
+            if isinstance(msg, nv.MapAck) and (not final or msg.map_state != 1):
                 return msg
         return None
 
@@ -353,13 +371,36 @@ class FpgaBridge:
             "control_link": "unknown", "policy_active": None, "control_estop": None, "control_faults": [],
             "wheel_left_mps": None, "wheel_right_mps": None, "roll_deg": None, "pitch_deg": None,
             "yaw_rate_radps": None, "height_cmd_m": None, "telemetry_rate_hz": None,
+            "control_telemetry": None,
         }
-        if self.telemetry is None:
-            return out
-        frame, at = self.telemetry.latest()
-        fresh = frame is not None and time.monotonic() - at <= 1.0
+        age_us = None
+        if self.nv_control_seen:
+            frame, at = self.nv_control, self.nv_control_at
+            fresh = frame is not None and now-at <= 1.0 and self.status_view(now).fresh
+            if fresh:
+                # Both timestamps originate from the same FPGA reset/50MHz clock.
+                # Convert modulo the STATUS 32-bit microsecond timer, including wrap.
+                board_now = (s.t_us + int((now-self.status_at)*1e6)) & 0xFFFFFFFF
+                age_us = ((board_now-frame.raw["timestamp_ms"]*1000+0x80000000) & 0xFFFFFFFF)-0x80000000
+                fresh = -100000 <= age_us <= 1000000
+            rate = self.nv_control_rate.rate(now)
+        else:
+            if self.telemetry is None:
+                return out
+            frame, at = self.telemetry.latest()
+            fresh = frame is not None and time.monotonic() - at <= 1.0
+            rate = self.telemetry.rate.rate(time.monotonic())
         out["control_link"] = (online if fresh else "offline")
-        out["telemetry_rate_hz"] = round(self.telemetry.rate.rate(time.monotonic()), 1)
+        out["telemetry_rate_hz"] = round(rate, 1)
+        if frame is not None:
+            out["control_telemetry"] = {
+                "transport": "nv_udp" if self.nv_control_seen else "legacy_telemetry",
+                "source": "mock" if self.cfg.link_is_mock else "fpga",
+                "version": frame.version, "fresh": bool(fresh),
+                "receive_age_ms": max(0, round(((now if self.nv_control_seen else time.monotonic())-at)*1000, 1)),
+                "measurement_age_ms": round(age_us/1000, 1) if age_us is not None else None,
+                "raw": dict(frame.raw),
+            }
         if fresh:
             out.update({
                 "policy_active": frame.active, "control_estop": frame.stop_latched, "control_faults": frame.faults(),

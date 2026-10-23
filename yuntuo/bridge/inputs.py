@@ -126,6 +126,8 @@ class TelemetryReader(threading.Thread):
 
     def run(self) -> None:
         kind, _, rest = self.spec.partition(":")
+        if kind == "nv":
+            return  # FpgaBridge receives CONTROL_V2 on its single navigation socket.
         while True:
             try:
                 if kind == "udp":

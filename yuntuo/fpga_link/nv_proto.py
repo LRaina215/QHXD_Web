@@ -12,6 +12,7 @@ import math
 import struct
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
+from yuntuo.fpga_link.telemetry import ControlFrame, decode_packet
 
 MAGIC = b"NV"
 VERSION = 1
@@ -28,6 +29,7 @@ MAP_CLEAR = 0x43
 STATUS = 0x80
 PATH = 0x81
 MAP_ACK = 0x82
+CONTROL_V2 = 0x83  # exactly the original A5 5A / V2 / 120-byte payload / CRC16 frame
 
 YAW_DONT_CARE = 0x7FFFFFFF
 MAX_WAYPOINTS = 32
@@ -208,11 +210,13 @@ class NavPath:
     points: tuple[tuple[int, int], ...]
 
 
-def decode(b: bytes | None) -> NavStatus | MapAck | NavPath | None:
+def decode(b: bytes | None) -> NavStatus | MapAck | NavPath | ControlFrame | None:
     """FPGA -> 主机报文；不认识或长度不足返回 None"""
     if not b or len(b) < 4 or b[:2] != MAGIC or b[2] != VERSION:
         return None
     t = b[3]
+    if t == CONTROL_V2:
+        return decode_packet(b[4:]) if len(b) == 130 and b[4:8] == b"\xa5\x5a\x02\x78" else None
     if t == STATUS and len(b) >= 4 + _STATUS_BODY.size:
         fields = _STATUS_BODY.unpack_from(b, 4)
         loc_state = b[40] if len(b) >= 42 else None

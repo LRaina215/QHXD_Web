@@ -34,7 +34,7 @@ class BridgeConfig:
     http_host: str = "127.0.0.1"
     http_port: int = 9101
     perception_udp: str | None = "127.0.0.1:9102"
-    telemetry: str | None = None                # serial:/dev/ttyUSB0@230400 | udp:127.0.0.1:9104
+    telemetry: str | None = None                # nv (shared SFP) | serial:/dev/ttyUSB0@230400 | udp:127.0.0.1:9104
     waypoints_path: Path = ROOT / "backend/app/config/yuntuo/waypoints.json"
     routes_path: Path = ROOT / "backend/app/config/yuntuo/patrol_routes.json"
     map_package: Path | None = None             # 启动时下发的先验地图 .nvmp

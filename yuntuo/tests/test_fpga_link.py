@@ -54,6 +54,28 @@ def test_crc16_ccitt_false_check_value():
     assert tm.crc16_ccitt_false(b"123456789") == 0x29B1
 
 
+def test_control_v2_nv_envelope_preserves_every_original_field():
+    # Distinct non-zero signed values make unit/offset/omitted-tail errors visible.
+    values = {n: i+1 for i, n in enumerate(tm.NAMES_V1 + tm.NAMES_V2_EXTRA)}
+    values.update(ax_raw=-32768, gz_raw=32767, gravity_z_q12=-4096,
+                  left_delta=-123456, right_control_sequence=65535, timestamp_ms=0xFFFFFFFE)
+    raw = tm.encode_frame(values)
+    packet = b"NV\x01\x83" + raw
+    decoded = nv.decode(packet)
+    assert isinstance(decoded, tm.ControlFrame)
+    assert decoded.version == 2 and decoded.raw == values
+    for broken in (packet[:-1], packet+b"x", b"NV\x02\x83"+raw,
+                   b"NV\x01\x83"+tm.encode_frame(values, version=1)):
+        assert nv.decode(broken) is None
+    corrupt = bytearray(packet)
+    corrupt[100] ^= 1
+    assert nv.decode(bytes(corrupt)) is None
+    # A bad datagram cannot be completed from bytes of a later packet.
+    assert nv.decode(packet[:40]) is None
+    assert nv.decode(packet[40:]) is None
+    assert nv.decode(packet).raw == values
+
+
 def test_telemetry_decode_resync_and_units():
     frame = tm.encode_frame({"sequence": 5, "status": tm.ST_BMI_READY | tm.ST_ACTIVE, "gravity_z_q12": -4096,
                              "left_cms": 35, "right_cms": -12, "wz_q12": 2048, "sensor_error": 0})

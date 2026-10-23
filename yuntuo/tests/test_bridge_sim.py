@@ -9,6 +9,7 @@ from yuntuo.bridge.core import FpgaBridge, PendingRequest
 from yuntuo.bridge.inputs import DetectionFrame
 from yuntuo.bridge.poster import ListPoster
 from yuntuo.fpga_link import nv_proto as nv
+from yuntuo.fpga_link import telemetry as tm
 from yuntuo.fpga_link.nvmp import build_test_package
 from yuntuo.mock_fpga import MockFpgaCore, default_world
 
@@ -19,6 +20,34 @@ class SimClock:
 
     def __call__(self):
         return self.t
+
+
+def test_nv_control_source_and_sample_freshness(tmp_path):
+    cfg = BridgeConfig(telemetry="nv")
+    bridge = FpgaBridge(cfg, poster=ListPoster())
+    status = nv.NavStatus(0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 8, 1000000, 0, 0)
+    bridge._on_message(status, 10.0)
+    assert bridge.platform_status(10.0)["control_link"] == "offline"
+    def sample(seq, stamp):
+        return nv.decode(b"NV\x01\x83"+tm.encode_frame({"sequence": seq, "timestamp_ms": stamp,
+            "left_cms": 12, "right_cms": -9, "status": tm.ST_ACTIVE | tm.ST_BMI_READY}))
+    bridge._on_message(sample(65535, 1000), 10.0)
+    assert bridge.platform_status(10.0)["wheel_left_mps"] == 0.12
+    full = bridge.platform_status(10.0)["control_telemetry"]
+    assert full["fresh"] and full["transport"] == "nv_udp" and full["raw"]["right_cms"] == -9
+    assert full["raw"] == sample(65535, 1000).raw and full["measurement_age_ms"] == 0
+    bridge._on_message(sample(0, 1010), 10.01)  # sequence wrap is valid
+    assert bridge.nv_control.sequence == 0
+    bridge._on_message(sample(65535, 1000), 10.8)
+    assert bridge.nv_control_at == 10.01
+    bridge._on_message(sample(0, 1010), 10.9)
+    assert bridge.nv_control_at == 10.01
+    assert bridge.platform_status(11.1)["control_link"] == "offline"
+    assert bridge.platform_status(11.1)["wheel_left_mps"] is None
+    assert not bridge.platform_status(11.1)["control_telemetry"]["fresh"]
+    # Newly received but old measurement cannot restore health.
+    bridge._on_message(sample(1, 10), 10.5)
+    assert bridge.platform_status(10.5)["control_link"] == "offline"
 
 
 class SimLink:
