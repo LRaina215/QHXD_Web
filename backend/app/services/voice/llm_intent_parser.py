@@ -88,9 +88,12 @@ class LLMIntentParser:
             if self._rule_can_back_up(rule_result) and llm_result.confidence < confidence_threshold():
                 return rule_result
             detail = safe.detail
-            if rule_result.intent == "go_to_waypoint" and not rule_result.payload.get("waypoint_id"):
+            normalized_text = "".join(text.lower().split())
+            if (rule_result.intent == "go_to_waypoint" and not rule_result.payload.get("waypoint_id")
+                    and any(k in normalized_text for k in ("去", "到", "回", "前往", "导航"))):
                 detail = "你说的这个点我没有，能说个具体的点位吗？比如 A 点、B 点、C 点或起点。"
-            elif rule_result.intent == "search_target" and not rule_result.payload.get("target_class"):
+            elif (rule_result.intent == "search_target" and not rule_result.payload.get("target_class")
+                    and any(k in normalized_text for k in ("找", "寻", "搜"))):
                 detail = "想找什么？我能找水瓶、杯子、人、球、椅子或背包。"
             return ParsedIntent(
                 intent="unknown",
@@ -179,11 +182,11 @@ class LLMIntentParser:
         )
 
     def _remember(self, text: str, intent: str | None, summary: str) -> None:
-        """只记成功轮次：历史里堆满 unknown 会把小模型带偏（后面几句跟着答不上来）。"""
-        if intent in {None, "unknown", ""}:
+        """只记闲聊内容：查询/任务的摘要把小模型带偏（问"太阳为什么是热的"会答成天气），追问靠规则记忆。"""
+        if intent != "open_chat" or not summary:
             return
-        self._history.append((text[:40], (summary or str(intent))[:40]))
-        self._history = self._history[-6:]
+        self._history.append((text[:40], str(summary)[:40]))
+        self._history = self._history[-4:]
 
     @staticmethod
     def _looks_complex(text: str) -> bool:
