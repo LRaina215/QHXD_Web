@@ -233,8 +233,12 @@ class RobotStatusProvider:
                 reply = response.content.strip()
                 for marker in ("\n用户：", "用户：", "\n助手：", "助手："):
                     reply = reply.split(marker)[0].rstrip()
-                if reply:
-                    return reply[:220]
+                import re as _re
+                if reply and not _re.search(r"person_count|vision_fresh|objects|distance_m", reply):
+                    return reply[:220]          # 字段名漏出来就当无效，走确定性兜底
+        q = question or ""
+        if persons == 0 and any(k in q for k in ("几个", "多少个", "多少人", "有人吗")):
+            return "现在没看到人。" + (f"能看到：{'、'.join(sorted({o['class'] for o in objs}))}。" if objs else "")
         if not objs:
             history = "；".join(e.message for e in persistence.list_visual_events(limit=2))
             return f"现在画面里没识别到目标。{('之前：' + history) if history else ''}"
