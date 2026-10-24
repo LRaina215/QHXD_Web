@@ -303,6 +303,8 @@ class TTSService:
     @staticmethod
     def _fix_es8388_output() -> None:
         import subprocess as _sp
+        # 板载 ES8388（card 2，3.5mm）与 USB 音响（按名字找，插拔后卡号会变）都拉起来；
+        # 播放设备由 TTS_PLAYER_CMD 指定，这里只是保证音量不为 0
         cmds = [
             ["amixer", "-c", "2", "sset", "Speaker", "on"],
             ["amixer", "-c", "2", "sset", "Headphone", "on"],
@@ -310,6 +312,8 @@ class TTSService:
             ["amixer", "-c", "2", "sset", "Output 1", "90%"],
             ["amixer", "-c", "2", "sset", "Output 2", "90%"],
         ]
+        for card in ("Device_1", "Device"):          # USB 音响 / USB 声卡（C-Media）
+            cmds.append(["amixer", "-c", card, "sset", "PCM", "90%", "on"])
         for cmd in cmds:
             try:
                 _sp.run(cmd, capture_output=True, timeout=2)
