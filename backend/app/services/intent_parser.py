@@ -200,7 +200,7 @@ class IntentParser:
             )
 
         if self._contains_any(normalized, ["当前状态", "现在在哪", "现在位置", "在哪", "状态", "正常吗",
-                                            "状态怎么样", "还好吗", "在干什么", "在做什么", "感觉怎么样",
+                                            "状态怎么样", "还好吗", "在干什么", "在做什么", "在干嘛", "感觉怎么样",
                                             "你现在怎么样", "你怎么样", "忙吗", "忙不忙", "闲着吗"]):
             return ParsedIntent(
                 intent="query_robot_status",

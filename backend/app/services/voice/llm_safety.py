@@ -128,7 +128,7 @@ class LLMSafetyValidator:
             confidence=result.confidence,
             need_confirm=need_confirm,
             detail=_task_detail(command, payload) or result.reply_text or result.reason
-            or "LLM 语义解析通过本地安全校验。",
+            or "好的，我明白了。",
         )
 
     @staticmethod

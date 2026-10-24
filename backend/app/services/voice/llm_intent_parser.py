@@ -94,17 +94,23 @@ class LLMIntentParser:
             plain = (client_response.content or "").strip().strip("`").strip()
             for marker in ("\n用户：", "\nUser:", " 用户：", "用户：", "\n助手：", "助手：", "\n点位表", "\n目标", "\n示例", "\ntarget="):      # 小模型偶尔把提示里的对话格式带出来
                 plain = plain.split(marker)[0].rstrip()
-            if creative and plain and "{" not in plain and 2 <= len(plain) <= 200:
-                self._remember(text, "open_chat", plain)
-                return ParsedIntent(
-                    intent="open_chat",
-                    confidence=0.75,
-                    need_confirm=False,
-                    detail=plain,
-                    parser="llm",
-                    llm_backend=client_response.backend,
-                    llm_model=client_response.model,
-                )
+            if creative and plain and "{" not in plain:
+                import re as _re
+                ends = [plain.rfind(c) for c in "。！？!?"]
+                cut = max(ends)
+                if cut != -1 and cut < len(plain) - 1:      # 结尾不完整（token 上限截断）：裁到最后一个完整句
+                    plain = plain[: cut + 1]
+                if 2 <= len(plain) <= 400:
+                    self._remember(text, "open_chat", plain)
+                    return ParsedIntent(
+                        intent="open_chat",
+                        confidence=0.75,
+                        need_confirm=False,
+                        detail=plain,
+                        parser="llm",
+                        llm_backend=client_response.backend,
+                        llm_model=client_response.model,
+                    )
             if self._rule_can_back_up(rule_result):
                 return rule_result
             return ParsedIntent(
