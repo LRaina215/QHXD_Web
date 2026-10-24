@@ -3,7 +3,7 @@ import ctypes
 import json
 
 from yuntuo.llm import rkllm
-from yuntuo.llm.server import ChatService, extract_json_object, render_chatml
+from yuntuo.llm.server import ChatService, extract_json_object, render_chatml, strip_think
 
 
 class FakeEngine:
@@ -32,6 +32,21 @@ def test_render_chatml_puts_system_in_template_and_folds_history():
     full = template[1] + prompt + template[2]
     assert full == ("<|im_start|>user\n去A点<|im_end|>\n<|im_start|>assistant\n{}<|im_end|>\n"
                     "<|im_start|>user\n再去B点<|im_end|>\n<|im_start|>assistant\n")
+
+
+def test_qwen3_no_think_switch_and_think_strip():
+    template, prompt = render_chatml([{"role": "user", "content": "一加一等于几"}], no_think=True)
+    assert prompt.endswith("一加一等于几 /no_think")
+    template2, prompt2 = render_chatml([{"role": "user", "content": "hi"}], no_think=False)
+    assert prompt2.endswith("hi")
+    assert strip_think("<think>  </think>\n答案") == "答案"
+    assert strip_think("<think>推理</think>答案") == "答案"
+    assert strip_think("没有思考段") == "没有思考段"
+    from yuntuo.llm.server import ChatService
+    svc = ChatService(engine=None, model_id="qwen3-1.7b")
+    assert svc.no_think is True
+    svc2 = ChatService(engine=None, model_id="qwen2.5-1.5b-instruct")
+    assert svc2.no_think is False
 
 
 def test_render_chatml_rejects_trailing_assistant():

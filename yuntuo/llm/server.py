@@ -46,8 +46,10 @@ def _text_of(message: dict) -> str:
     return ""
 
 
-def render_chatml(messages: list[dict]) -> tuple[tuple[str, str, str], str]:
-    """系统提示放进 rkllm 的 chat template（运行库可复用它的 KV），其余轮次拼成最后一条 user 输入。"""
+def render_chatml(messages: list[dict], no_think: bool = False) -> tuple[tuple[str, str, str], str]:
+    """系统提示放进 rkllm 的 chat template（运行库可复用它的 KV），其余轮次拼成最后一条 user 输入。
+    no_think：Qwen3 的软开关——自定义模板会绕过运行库的 enable_thinking，必须用 " /no_think" 关掉思考，
+    否则每次先输出长推理（实测一句话 13-20 秒）。"""
     if not messages:
         raise ValueError("messages 为空")
     system = "\n".join(_text_of(m) for m in messages if m.get("role") == "system").strip() or DEFAULT_SYSTEM
@@ -59,6 +61,8 @@ def render_chatml(messages: list[dict]) -> tuple[tuple[str, str, str], str]:
     prev_role = None
     for m in turns:
         role, text = m.get("role"), _text_of(m)
+        if no_think and m is turns[-1]:
+            text = f"{text} /no_think"
         if prev_role is None:
             parts.append(text)
         elif role == "assistant":
@@ -69,6 +73,18 @@ def render_chatml(messages: list[dict]) -> tuple[tuple[str, str, str], str]:
             parts.append(f"\n{text}")
         prev_role = role
     return (sys_tpl.format(system=system), prefix, postfix), "".join(parts)
+
+
+_THINK_RE = None
+
+
+def strip_think(text: str) -> str:
+    """去掉 Qwen3 输出开头的 <think>…</think>（/no_think 下是空段，也占几个 token）。"""
+    global _THINK_RE
+    import re
+    if _THINK_RE is None:
+        _THINK_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.S)
+    return _THINK_RE.sub("", text)
 
 
 def extract_json_object(text: str) -> dict | None:
@@ -102,9 +118,12 @@ def extract_json_object(text: str) -> dict | None:
 
 
 class ChatService:
-    def __init__(self, engine: Engine, model_id: str, *, timeout_s: float = 60.0) -> None:
+    def __init__(self, engine: Engine, model_id: str, *, timeout_s: float = 60.0,
+                 no_think: bool | None = None) -> None:
         self.engine = engine
         self.model_id = model_id
+        # Qwen3 系列默认关思考（自定义模板绕过运行库的 enable_thinking，只能靠 /no_think 软开关）
+        self.no_think = ("qwen3" in model_id.lower()) if no_think is None else no_think
         self.timeout_s = timeout_s
         self.started_at = time.time()
         self._stats_lock = threading.Lock()
@@ -127,7 +146,7 @@ class ChatService:
         if not isinstance(messages, list) or not all(isinstance(m, dict) for m in messages):
             return 400, _error("messages 必须是对象数组", "invalid_request_error")
         try:
-            template, prompt = render_chatml(messages)
+            template, prompt = render_chatml(messages, no_think=self.no_think)
         except ValueError as exc:
             return 400, _error(str(exc), "invalid_request_error")
         json_mode = (body.get("response_format") or {}).get("type") == "json_object"
@@ -142,7 +161,7 @@ class ChatService:
             detail = "推理超时被中止" if gen.finish_reason == "abort" else "推理出错（可能超出上下文长度）"
             self._record(gen, ok=False)
             return 500, _error(detail, "server_error")
-        content = gen.text.strip()
+        content = strip_think(gen.text).strip()
         if json_mode:
             obj = extract_json_object(content)
             if obj is not None:
