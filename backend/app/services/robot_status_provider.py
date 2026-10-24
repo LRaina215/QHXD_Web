@@ -70,10 +70,16 @@ class RobotStatusProvider:
             motion["vision_fresh"] = age_s <= 5.0
         # 短键 + 去 None：板上模型的预填 token 数直接决定首字延迟，上下文越短答得越快
         slim_motion = {k: v for k, v in motion.items() if v not in (None, [], False)}
+        snapshot = navigation_store.latest()
+        pos = None
+        if snapshot is not None and snapshot.pose is not None:
+            pos = {"x": round(snapshot.pose.x, 2), "y": round(snapshot.pose.y, 2)}
+        nav = state.nav_status
         return {
             "mode": state.system_mode.mode,
             "task": {"type": task.task_type, "state": task.state, "prog": task.progress},
             "fpga": slim_motion,
+            "nav": {"goal": nav.current_goal, "remain_m": nav.remaining_distance, "pos": pos},
             "bat": state.device_status.battery_percent,
             "see": {"objs": [{"c": o["class_name"], "color": o["color"], "d": o["distance_m"]}
                              for o in detection_objects][:5],
@@ -84,7 +90,8 @@ class RobotStatusProvider:
     def _status_llm_reply(self, question: str, context: dict) -> str | None:
         system_prompt = (
             "你是云拓轮腿机器人的车载助手。用户问你的状态时，只根据给定 JSON 上下文回答，"
-            "涵盖：正在做什么任务、是否在动（速度）、定位是否可靠、看到了什么，有异常必须提醒。"
+            "涵盖：正在做什么任务(task)、是否在动(fpga.vx)、定位是否可靠(fpga.loc)、在哪/去哪(nav.pos/nav.goal/nav.remain_m)、"
+            "看到了什么(see.objs)，有异常必须提醒。用户问在哪就报 nav.pos 的坐标（米，场地原点系）。"
             "2 到 4 句话，口语化，不要罗列字段名、接口名、频率、时间戳或模型名，不要编造上下文里没有的东西，"
             "不能声称已经执行了什么动作。出现数字时必须原样照抄上下文里的数字，不许换算或估读。"
             "不要提电量或电池，电量由系统另行播报。有故障、急停时必须明确说出来。"

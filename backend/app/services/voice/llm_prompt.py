@@ -83,6 +83,10 @@ def build_compact_prompts(recognized_text: str, history: list[tuple[str, str]] |
         "confidence": 0.9}))
     examples.append(("太阳为什么是热的", {"intent": "open_chat", "confidence": 0.9,
                                          "reply_text": "太阳内部一直在发生核聚变，释放出大量的光和热。"}))
+    examples.append(("你累不累", {"intent": "open_chat", "confidence": 0.9,
+                                "reply_text": "不累，我电量充足，随时可以开工。"}))
+    examples.append(("一加一等于几", {"intent": "open_chat", "confidence": 0.9,
+                                     "reply_text": "一加一等于二。"}))
     shots = "\n".join(f"用户：{q}\n{json.dumps(a, ensure_ascii=False, separators=(',', ':'))}" for q, a in examples)
     system_prompt = f"{COMPACT_SYSTEM_PROMPT}\n示例：\n{shots}"
     history_lines = "".join(f"用户：{u}\n助手：{a}\n" for u, a in (history or [])[-3:])

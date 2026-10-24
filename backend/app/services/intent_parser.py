@@ -122,7 +122,7 @@ class IntentParser:
         if dt_reply is not None:
             return dt_reply
 
-        if self._contains_any(normalized, ["天气", "下雨", "温度", "湿度", "环境适合", "适合巡检", "冷吗", "热吗", "冷不冷", "热不热", "会下雨", "要不要带伞", "紫外线", "风大", "刮不刮风"]):
+        if self._contains_any(normalized, ["天气", "下雨", "温度", "湿度", "环境适合", "适合巡检", "冷吗", "热吗", "冷不冷", "热不热", "会下雨", "要不要带伞", "紫外线", "风大", "刮不刮风", "晒不晒", "防晒", "晒吗"]):
             return self._remember("query_weather", ParsedIntent(
                 intent="query_weather",
                 confidence=0.94,
@@ -201,7 +201,7 @@ class IntentParser:
 
         if self._contains_any(normalized, ["当前状态", "现在在哪", "现在位置", "在哪", "状态", "正常吗",
                                             "状态怎么样", "还好吗", "在干什么", "在做什么", "感觉怎么样",
-                                            "你现在怎么样", "你怎么样"]):
+                                            "你现在怎么样", "你怎么样", "忙吗", "忙不忙", "闲着吗"]):
             return ParsedIntent(
                 intent="query_robot_status",
                 confidence=0.92,
