@@ -96,8 +96,8 @@ class RobotStatusProvider:
         reply = response.content.strip()
         # 小模型对电量数字不稳（实测同一上下文一次 86% 一次“低于20%”）：模型说的电量句子一律丢弃
         import re
-        reply = "。".join(part for part in re.split(r"(?<=[。！？])", reply) if part.strip()
-                         and not re.search(r"电量|电池|充电", part))
+        reply = "".join(part for part in re.split(r"(?<=[。！？])", reply) if part.strip()
+                        and not re.search(r"电量|电池|充电", part))   # 分句保留原标点，直接拼接
         battery = context.get("battery_percent")
         if isinstance(battery, (int, float)):
             reply += f"电量 {battery:.0f}%。" + ("有点低了，记得充电。" if battery < 20 else "")
