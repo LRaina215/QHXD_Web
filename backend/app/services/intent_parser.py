@@ -3,7 +3,8 @@ from dataclasses import dataclass, field
 from app.schemas import JsonScalar, VoiceIntentValue
 from app.services.waypoint_resolver import waypoint_resolver
 
-FOLLOW_KEYWORDS = ["跟着我", "跟随我", "跟我走", "跟上我", "跟着他", "跟着她", "跟随人员", "跟随行人", "跟着人"]
+FOLLOW_KEYWORDS = ["跟着我", "跟随我", "跟我走", "跟上我", "跟着他", "跟着她", "跟随人员", "跟随行人", "跟着人",
+                  "跟着前面", "跟着那个", "跟着走", "跟上去", "跟紧"]
 SEARCH_KEYWORDS = ["找到", "寻找", "去找", "找一下", "找找", "找个", "找一个", "帮我找", "搜索", "找"]
 # 长词在前，避免「水瓶」被「瓶」截胡；英文名与感知模型（COCO 标签）一致
 TARGET_CLASS_WORDS = [
@@ -74,7 +75,8 @@ class IntentParser:
 
         if self._contains_any(normalized, ["向前走", "往前走", "开快", "快一点", "走一米", "撞过去", "速度", "底盘速度",
                                            "撞", "全速", "最快", "高速", "加速", "冲过去", "跑快",
-                                           "关掉急停", "关闭急停", "关急停", "解除急停", "取消急停", "忽略"]):
+                                           "关掉急停", "关闭急停", "关急停", "解除急停", "取消急停", "忽略",
+                                           "别管", "直接冲", "不管避障", "撞一下"]):
             return ParsedIntent(
                 intent="unknown",
                 confidence=0.95,
@@ -84,7 +86,9 @@ class IntentParser:
 
         if self._contains_any(normalized, ["关机", "重启", "删除", "格式化", "写代码", "写一段代码", "编程",
                                             "黑客", "病毒", "下载", "发邮件", "拍照", "录像", "播放音乐",
-                                            "删文件", "删掉", "清除", "脚本", "命令行", "终端"]):
+                                            "删文件", "删掉", "清除", "脚本", "命令行", "终端",
+                                            "订个外卖", "外卖", "放首歌", "放个歌", "播放", "上网", "联网",
+                                            "wifi", "连一下网", "购物", "买张"]):
             return ParsedIntent(
                 intent="unknown",
                 confidence=0.95,
@@ -104,6 +108,16 @@ class IntentParser:
                 detail="你好，我在，有什么可以帮你的？",
             )
 
+        if self._contains_any(normalized, ["看到", "看见", "视野", "眼前", "画面里", "几个人", "多少个人",
+                                            "什么颜色", "穿什么", "离你最近", "离我最近", "有多远的东西"]):
+            if not self._contains_any(normalized, ["还要走多远", "剩余距离", "还有多远到", "还要多久"]):
+                return ParsedIntent(
+                    intent="query_perception_status",
+                    confidence=0.92,
+                    need_confirm=False,
+                    detail="已解析为视觉状态查询。",
+                )
+
         dt_reply = self._datetime_reply(normalized)
         if dt_reply is not None:
             return dt_reply
@@ -120,7 +134,8 @@ class IntentParser:
         if follow_up is not None:
             return follow_up
 
-        if self._contains_any(normalized, ["当前导航", "导航状态", "导航怎么样", "导航正常", "还要走多远", "剩余距离"]):
+        if self._contains_any(normalized, ["当前导航", "导航状态", "导航怎么样", "导航正常", "还要走多远", "剩余距离",
+                                   "还有多远", "还有多久", "还要多久"]):
             return self._remember("query_navigation_status", ParsedIntent(
                 intent="query_navigation_status",
                 confidence=0.94,
@@ -160,7 +175,7 @@ class IntentParser:
                 detail="已解析为视觉状态查询。",
             )
 
-        if self._contains_any(normalized, ["当前任务", "任务是什么", "任务状态", "任务进度"]):
+        if self._contains_any(normalized, ["当前任务", "任务是什么", "任务状态", "任务进度", "做到哪", "做到哪里", "进展"]):
             return ParsedIntent(
                 intent="query_task_status",
                 confidence=0.93,
@@ -279,7 +294,8 @@ class IntentParser:
         """日期 / 时间问答：直接读系统时钟（北京时区），不走大模型，秒回。"""
         hit = any(k in normalized for k in ("几号", "几日", "日期", "星期几", "周几", "礼拜几", "哪一天",
                                             "几点", "什么时间", "现在时间", "现在几点", "哪一年", "几年了",
-                                            "多少号", "今天是哪天"))
+                                            "多少号", "今天是哪天", "上午还是下午", "下午吗", "上午吗",
+                                            "晚上吗", "中午吗", "凌晨吗", "傍晚吗"))
         if not hit:
             return None
         from datetime import datetime
@@ -301,6 +317,11 @@ class IntentParser:
             d = now + timedelta(days=2)
             return ParsedIntent(intent="open_chat", confidence=0.95, need_confirm=False,
                                 detail=f"后天是{d.month}月{d.day}日 星期{weekdays[d.weekday()]}。")
+        if any(k in normalized for k in ("上午", "下午", "晚上", "中午", "凌晨", "傍晚")):
+            h = now.hour
+            period = "凌晨" if h < 5 else "早上" if h < 9 else "上午" if h < 12 else "中午" if h < 14 else "下午" if h < 18 else "晚上"
+            return ParsedIntent(intent="open_chat", confidence=0.95, need_confirm=False,
+                                detail=f"现在是{period}，{h:02d}点{now.minute:02d}分。")
         if any(k in normalized for k in ("几点", "什么时间", "现在时间")):
             return ParsedIntent(intent="open_chat", confidence=0.95, need_confirm=False,
                                 detail=f"现在是{now.hour:02d}点{now.minute:02d}分。今天是{day_info(now)}。")

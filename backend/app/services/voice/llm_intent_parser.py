@@ -120,6 +120,22 @@ class LLMIntentParser:
 
         self._remember(text, llm_result.intent, llm_result.reply_text or llm_result.reason)
         safe = llm_safety_validator.validate(self._fill_target_slots(llm_result, rule_result))
+
+        # 查询意图防劫持：小模型把"你累不累/你几岁了"这类闲聊错标成 query_self_identity/query_robot_status，
+        # 结果用户听到身份/状态模板。查询意图必须在原话里有对应触发词；没有就用模型自己的 reply_text 当闲聊答
+        hijacked = self._hijacked_query(text, safe)
+        if hijacked is not None:
+            self._remember(text, "open_chat", hijacked)
+            return ParsedIntent(
+                intent="open_chat",
+                confidence=0.8,
+                need_confirm=False,
+                detail=hijacked,
+                parser="llm",
+                llm_backend=client_response.backend,
+                llm_model=client_response.model,
+            )
+
         grounded = self._check_grounded(text, safe)
         if safe.ok and grounded is not None:
             if self._rule_can_back_up(rule_result) and rule_result.intent == grounded[0]:
@@ -137,6 +153,16 @@ class LLMIntentParser:
             # 板载小模型常漏掉 confidence（解析成 0）：规则有把握时用规则结果；模型明确判 unknown 且有把握时仍以模型为准
             if self._rule_can_back_up(rule_result) and llm_result.confidence < confidence_threshold():
                 return rule_result
+            if llm_result.reply_text and llm_result.intent not in {"unknown", ""}:
+                reply = llm_result.reply_text.strip()          # 意图没过白名单但模型写了回答（如"海南省会是海口"）：当闲聊用，别丢
+                for marker in ("\n用户：", "用户：", "\n助手：", "助手："):
+                    reply = reply.split(marker)[0].rstrip()
+                if 2 <= len(reply) <= 200:
+                    self._remember(text, "open_chat", reply)
+                    return ParsedIntent(
+                        intent="open_chat", confidence=0.7, need_confirm=False, detail=reply,
+                        parser="llm", llm_backend=client_response.backend, llm_model=client_response.model,
+                    )
             detail = safe.detail
             normalized_text = "".join(text.lower().split())
             if (rule_result.intent == "go_to_waypoint" and not rule_result.payload.get("waypoint_id")
@@ -196,6 +222,38 @@ class LLMIntentParser:
             target_color=llm_result.target_color or (str(rule_result.payload["color"]) if rule_result.payload.get("color") else None),
             target_label=llm_result.target_label or (str(rule_result.payload["label"]) if rule_result.payload.get("label") else None),
         )
+
+    # 各查询意图在用户原话里的触发词：模型标了 query_* 但原话一个触发词都没有 → 当闲聊劫持处理
+    _QUERY_TRIGGERS = {
+        "query_self_identity": ("你是谁", "叫什么", "自我介绍", "介绍一下", "名字"),
+        "query_assistant_model": ("模型", "什么模型", "大模型", "deepseek"),
+        "query_robot_status": ("状态", "正常吗", "还好", "怎么样", "在干", "在做什么", "忙", "还好吗"),
+        "query_battery": ("电量", "多少电", "电池"),
+        "query_emergency_stop": ("急停",),
+        "query_task_status": ("任务", "做到哪", "进展", "进度"),
+        "query_navigation_status": ("导航", "多远", "多久", "在哪", "位置", "到哪"),
+        "query_perception_status": ("看到", "看见", "视野", "颜色", "几个", "多人", "最近", "画面"),
+        "query_weather": ("天气", "下雨", "冷", "热", "伞", "晒", "温度", "湿度", "风"),
+        "query_capability": ("能做什么", "会做什么", "能力", "功能"),
+        "query_safety_rule": ("安全", "规则"),
+    }
+
+    @classmethod
+    def _hijacked_query(cls, text: str, safe) -> str | None:
+        """safe 是通过的查询意图但原话没有该意图的触发词、且模型写了 reply_text → 返回 reply_text 当闲聊答。"""
+        intent = getattr(safe, "intent", "")
+        triggers = cls._QUERY_TRIGGERS.get(intent)
+        if not triggers:
+            return None
+        normalized = "".join(text.lower().split())
+        if any(k in normalized for k in triggers):
+            return None
+        reply = (getattr(safe, "detail", "") or "").strip()
+        if not reply or reply.startswith("已解析为"):
+            return None
+        for marker in ("\n用户：", "用户：", "\n助手：", "助手："):
+            reply = reply.split(marker)[0].rstrip()
+        return reply if 2 <= len(reply) <= 200 else None
 
     @staticmethod
     def _check_grounded(text: str, safe) -> tuple[str, str] | None:

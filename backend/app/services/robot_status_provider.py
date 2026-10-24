@@ -60,22 +60,25 @@ class RobotStatusProvider:
                 "body_height_cmd_m": platform.height_cmd_m,
                 "telemetry_rate_hz": platform.telemetry_rate_hz,
             }
-        objects = []
+        detection_objects = []
         if detection is not None:
             age_s = max(0.0, (now - detection.timestamp).total_seconds())
-            objects = [
-                {"class_name": obj.class_name, "confidence": round(obj.confidence, 2)}
+            detection_objects = [
+                {"class_name": obj.class_name, "color": obj.color, "distance_m": obj.distance_m}
                 for obj in detection.objects[:6]
             ]
             motion["vision_fresh"] = age_s <= 5.0
+        # 短键 + 去 None：板上模型的预填 token 数直接决定首字延迟，上下文越短答得越快
+        slim_motion = {k: v for k, v in motion.items() if v not in (None, [], False)}
         return {
-            "system_mode": state.system_mode.mode,
-            "task": {"type": task.task_type, "state": task.state, "progress": task.progress},
-            "motion": motion,
-            "battery_percent": state.device_status.battery_percent,
-            "vision": {"objects": objects,
-                       "recent_events": [self._visual_event_context(e, now) for e in persistence.list_visual_events(limit=3)]},
-            "recent_alerts": [a.message for a in self.alerts()[:3]],
+            "mode": state.system_mode.mode,
+            "task": {"type": task.task_type, "state": task.state, "prog": task.progress},
+            "fpga": slim_motion,
+            "bat": state.device_status.battery_percent,
+            "see": {"objs": [{"c": o["class_name"], "color": o["color"], "d": o["distance_m"]}
+                             for o in detection_objects][:5],
+                    "persons": sum(1 for o in detection_objects if o["class_name"] == "person")},
+            "ev": [e.message[:40] for e in persistence.list_visual_events(limit=2)],
         }
 
     def _status_llm_reply(self, question: str, context: dict) -> str | None:
@@ -98,35 +101,36 @@ class RobotStatusProvider:
         import re
         reply = "".join(part for part in re.split(r"(?<=[。！？])", reply) if part.strip()
                         and not re.search(r"电量|电池|充电", part))   # 分句保留原标点，直接拼接
-        battery = context.get("battery_percent")
+        battery = context.get("battery_percent", context.get("bat"))
         if isinstance(battery, (int, float)):
             reply += f"电量 {battery:.0f}%。" + ("有点低了，记得充电。" if battery < 20 else "")
         return reply[:320] if reply else None
 
     def _status_fallback_reply(self, context: dict) -> str:
         task = context["task"]
-        motion = context["motion"]
+        motion = context.get("fpga", context.get("motion", {}))
         parts = []
         if task.get("state") in {"running", "pending"}:
-            prog = f"（{task['progress']}%）" if task.get("progress") else ""
+            prog = f"（{task.get('prog', task.get('progress'))}%）" if task.get("prog", task.get("progress")) else ""
             parts.append(f"正在执行{task['type']}{prog}")
         elif task.get("state") == "paused":
             parts.append("任务暂停中")
         else:
             parts.append("没有在跑的任务")
-        speed = motion.get("cmd_speed_mps")
+        speed = motion.get("cmd_speed_mps", motion.get("vx"))
         if isinstance(speed, (int, float)) and abs(speed) > 0.05:
             parts.append(f"正在以约 {speed:.2f} 米每秒移动")
-        loc = motion.get("loc_state")
+        loc = motion.get("loc_state", motion.get("loc"))
         if loc == "ok":
             parts.append("定位正常")
         elif loc in {"degraded", "lost"}:
             parts.append(f"定位{ '退化' if loc == 'degraded' else '丢失' }，走慢点")
-        objects = context["vision"]["objects"]
+        raw_objects = context.get("see", {}).get("objs", context.get("vision", {}).get("objects", []))
+        objects = [{"class_name": o.get("c", o.get("class_name"))} for o in raw_objects]
         if objects:
             names = "、".join(sorted({o["class_name"] for o in objects}))
             parts.append(f"现在能看到{names}")
-        battery = context.get("battery_percent")
+        battery = context.get("battery_percent", context.get("bat"))
         if isinstance(battery, (int, float)):
             parts.append(f"电量 {battery:.0f}%")
         if motion.get("estop"):
@@ -181,18 +185,57 @@ class RobotStatusProvider:
             return "现在处于急停状态，机器人不动了，先人工检查一下。"
         return "没有触发急停，一切正常。"
 
-    def perception_reply(self) -> str:
+    def perception_reply(self, question: str | None = None) -> str:
+        """视觉问答：把检测目标（类别/颜色/距离）+ 人数 + 近期事件交给本地大模型，
+        按问题答（几个 / 什么颜色 / 多远），失败退确定性摘要。"""
         detection = self.latest_state().detection_status
-        if detection is None:
-            return "我这边还没拿到视觉状态。"
-        objects = self._objects_text(detection.objects)
-        persisted = persistence.list_visual_events(limit=3)
-        history = "、".join(f"{event.message}（{self._age_text(event.last_seen_at)}）" for event in persisted)
-        if not history and not detection.objects:
-            return "现在画面里没识别到什么目标。"
-        if detection.objects:
-            return f"现在能看到：{objects}。"
-        return f"现在画面里没目标，之前看到过：{history}。"
+        now = datetime.now(timezone.utc)
+        objs, persons, fresh = [], 0, True
+        if detection is not None:
+            fresh = max(0.0, (now - detection.timestamp).total_seconds()) <= 5.0
+            for obj in detection.objects[:6]:
+                entry = {"class": obj.class_name}
+                if obj.color:
+                    entry["color"] = obj.color
+                if obj.distance_m is not None:
+                    entry["distance_m"] = round(obj.distance_m, 2)
+                objs.append(entry)
+                if obj.class_name == "person":
+                    persons += 1
+        context = {
+            "vision_fresh": fresh,
+            "objects": objs,
+            "person_count": persons,
+            "recent_events": [e.message for e in persistence.list_visual_events(limit=3)],
+        }
+        if os.getenv("STATUS_LLM_ENABLE", "true").strip().lower() in {"1", "true", "yes", "on"}:
+            system_prompt = (
+                "你是云拓机器人的车载视觉助手，只根据给定 JSON 上下文回答用户关于看到什么的问题。"
+                "问几个人就答 person_count；问颜色用 objects 里的 color，没有就说这个目标没识别出颜色；"
+                "问距离用 distance_m（单位米），为空就说这个目标没测到距离，不要把别的数字当距离。"
+                "1 到 2 句话，不要提置信度、框、接口或字段名，vision_fresh 为 false 时说明画面可能不是最新的，"
+                "不要编造上下文里没有的目标。"
+            )
+            response = llm_client.chat_text(
+                system_prompt=system_prompt,
+                user_prompt=json.dumps({"question": question or "你看到了什么", "context": context},
+                                       ensure_ascii=False, separators=(",", ":")),
+            )
+            if response.success and response.content and response.content.strip():
+                reply = response.content.strip()
+                for marker in ("\n用户：", "用户：", "\n助手：", "助手："):
+                    reply = reply.split(marker)[0].rstrip()
+                if reply:
+                    return reply[:220]
+        if not objs:
+            history = "；".join(e.message for e in persistence.list_visual_events(limit=2))
+            return f"现在画面里没识别到目标。{('之前：' + history) if history else ''}"
+        names = "、".join(sorted({o["class"] for o in objs}))
+        nearest = next((o for o in objs if "distance_m" in o), None)
+        tail = f"，最近的约 {nearest['distance_m']} 米" if nearest else ""
+        if persons:
+            return f"现在能看到 {persons} 个人，还有：{names}{tail}。"
+        return f"现在能看到：{names}{tail}。"
 
     def front_status_reply(self, question: str | None = None, *, use_llm: bool = True) -> str:
         context = self.front_status_context()

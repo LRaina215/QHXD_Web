@@ -463,8 +463,9 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
             reply = rsp.robot_status_provider.status_reply("你的状态怎么样")
         self.assertIn("电量", reply)
         self.assertIn("task", captured["context"])                    # 上下文带任务
-        self.assertIn("battery_percent", captured["context"])
-        self.assertIn("vision", captured["context"])
+        self.assertIn("bat", captured["context"])                     # 瘦身上下文：短键
+        self.assertIn("fpga", captured["context"])
+        self.assertIn("see", captured["context"])
         self.assertIn("只根据", captured["system"])
 
         with mock.patch.object(llm_client, "chat_text",

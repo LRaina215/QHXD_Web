@@ -59,7 +59,7 @@ class DataService:
         if intent == "query_emergency_stop":
             return "state_store", robot_status_provider.emergency_stop_reply()
         if intent in {"query_perception_status", "query_detection"}:
-            return "state_store", robot_status_provider.perception_reply()
+            return "state_store+vision+llm", robot_status_provider.perception_reply(question)
         if intent in {"query_weather", "query_environment"}:
             weather = weather_provider.latest()
             if weather.source == "unavailable":
