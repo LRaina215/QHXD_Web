@@ -310,6 +310,7 @@ class TTSService:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+                threading.Thread(target=self._last_player.wait, daemon=True).start()   # 播完自动回收，不留僵尸
             except Exception:
                 self._last_player = None
 
