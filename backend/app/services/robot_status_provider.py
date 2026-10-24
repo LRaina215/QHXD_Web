@@ -81,9 +81,10 @@ class RobotStatusProvider:
     def _status_llm_reply(self, question: str, context: dict) -> str | None:
         system_prompt = (
             "你是云拓轮腿机器人的车载助手。用户问你的状态时，只根据给定 JSON 上下文回答，"
-            "涵盖：正在做什么任务、是否在动（速度）、定位是否可靠、看到了什么、电量，有异常必须提醒。"
+            "涵盖：正在做什么任务、是否在动（速度）、定位是否可靠、看到了什么，有异常必须提醒。"
             "2 到 4 句话，口语化，不要罗列字段名、接口名、频率、时间戳或模型名，不要编造上下文里没有的东西，"
-            "不能声称已经执行了什么动作。电量低于 20% 或有故障、急停时要明确说出来。"
+            "不能声称已经执行了什么动作。出现数字时必须原样照抄上下文里的数字，不许换算或估读。"
+            "不要提电量或电池，电量由系统另行播报。有故障、急停时必须明确说出来。"
         )
         response = llm_client.chat_text(
             system_prompt=system_prompt,
@@ -93,7 +94,14 @@ class RobotStatusProvider:
         if not response.success or not response.content:
             return None
         reply = response.content.strip()
-        return reply[:300] if reply else None
+        # 小模型对电量数字不稳（实测同一上下文一次 86% 一次“低于20%”）：模型说的电量句子一律丢弃
+        import re
+        reply = "。".join(part for part in re.split(r"(?<=[。！？])", reply) if part.strip()
+                         and not re.search(r"电量|电池|充电", part))
+        battery = context.get("battery_percent")
+        if isinstance(battery, (int, float)):
+            reply += f"电量 {battery:.0f}%。" + ("有点低了，记得充电。" if battery < 20 else "")
+        return reply[:320] if reply else None
 
     def _status_fallback_reply(self, context: dict) -> str:
         task = context["task"]
