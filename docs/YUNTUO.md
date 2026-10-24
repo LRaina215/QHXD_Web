@@ -134,7 +134,7 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 | 环节 | 实现 | 模型（`~/models`） | 板上实测 |
 |---|---|---|---|
 | 识别 | `ASR_BACKEND=sherpa`，sherpa-onnx 版 SenseVoice int8 | `asr/sherpa-onnx-sense-voice-zh-2024-07-17`（hf-mirror csukuangfj/…） | 加载 3 s，一句 0.15–0.2 s |
-| 大模型 | `yuntuo-llm`：自写 ctypes 绑定 `librkllmrt.so` 1.3.1 + OpenAI 兼容子集；`LLM_BACKEND=local` | `llm/qwen2.5-1.5b-instruct-w8a8/Qwen2.5-1.5B-Instruct.rkllm`（ModelScope RKNNAI，toolkit 1.2.4，上下文 1024） | 加载 6 s，内存 1.7 GB；意图 JSON 约 2–4 s |
+| 大模型 | `yuntuo-llm`：自写 ctypes 绑定 `librkllmrt.so` 1.3.1 + OpenAI 兼容子集；`LLM_BACKEND=local`；Qwen3 自动加 `/no_think` 软开关并剥掉思考段（自定义模板会绕过运行库的 enable_thinking） | 现役 `llm/qwen3-1.7b-w8a8/Qwen3-1.7B.rkllm`（16K 文件、初始化 1K；备用 1.5B 在 `qwen2.5-1.5b-instruct-w8a8/`，改 .env 两行即回退） | 加载 4 s，内存约 2.4 GB；意图 JSON 2–3 s，状态问答 5–9 s（NPU 与感知共用） |
 | 合成 | `yuntuo-tts`：sherpa-onnx 常驻服务；`TTS_BACKEND=local` + `TTS_LOCAL_URL` | `tts/matcha-icefall-zh-en` + `tts/vocoders/vocos-16khz-univ.onnx` | 加载 3.4 s，一句 0.5–0.7 s（RTF≈0.16），中英混读 |
 
 要点：

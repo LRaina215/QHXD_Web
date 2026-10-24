@@ -109,7 +109,7 @@ class IntentParser:
             )
 
         if self._contains_any(normalized, ["看到", "看见", "视野", "眼前", "画面里", "几个人", "多少个人",
-                                            "什么颜色", "穿什么", "离你最近", "离我最近", "有多远的东西"]):
+                                            "什么颜色", "穿什么", "离你最近", "离我最近", "有个", "有没有"]):
             if not self._contains_any(normalized, ["还要走多远", "剩余距离", "还有多远到", "还要多久"]):
                 return ParsedIntent(
                     intent="query_perception_status",
