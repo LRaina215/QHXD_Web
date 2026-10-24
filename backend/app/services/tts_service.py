@@ -3,6 +3,7 @@ import hashlib
 import os
 import shlex
 import subprocess
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,8 @@ class TTSService:
         self._latest: TTSStatus | None = None
         self._recent_event_keys: dict[str, datetime] = {}
         self._last_normal_at: datetime | None = None
+        self._player_lock: threading.Lock | None = None    # 惰性建：Windows 测试环境无 threading 需求差异
+        self._last_player: subprocess.Popen | None = None
 
     # ------------------------------------------------------------------
     # public API
@@ -291,14 +294,24 @@ class TTSService:
         # Always fix ES8388 output before playing — some process keeps resetting it to 0%
         self._fix_es8388_output()
         player_cmd = os.getenv("TTS_PLAYER_CMD", "aplay -D plughw:2,0").strip()
-        try:
-            subprocess.Popen(
-                player_cmd.split() + [str(audio_path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
+        if self._player_lock is None:
+            self._player_lock = threading.Lock()
+        # 同一音响串行播放：上一句没播完就等它（最多 30s），否则两句会混在一起
+        with self._player_lock:
+            previous = self._last_player
+            if previous is not None and previous.poll() is None:
+                try:
+                    previous.wait(timeout=30)
+                except Exception:
+                    previous.terminate()
+            try:
+                self._last_player = subprocess.Popen(
+                    player_cmd.split() + [str(audio_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                self._last_player = None
 
     @staticmethod
     def _fix_es8388_output() -> None:
