@@ -1,4 +1,5 @@
 """云拓分支新增契约：视觉目标任务、FPGA 平台状态、急停 / 位姿接口。"""
+import json
 import os
 import tempfile
 import unittest
@@ -443,6 +444,37 @@ class YunTuoTests(unittest.IsolatedAsyncioTestCase):
             self.assertRegex(parsed.detail, r"202\d年|\d+月\d+日|\d+点\d+分")
         self.assertIn("星期", intent_parser.parse("明天星期几").detail)
         self.assertIsNone(intent_parser._datetime_reply("去a点"))      # 普通指令不能被误判成时间问答
+
+    def test_status_query_feeds_sensor_context_to_llm_with_fallback(self) -> None:
+        from unittest import mock
+
+        from app.services.voice.llm_client import LLMClientResponse, llm_client
+        from app.services import robot_status_provider as rsp
+
+        captured = {}
+
+        def fake_chat_text(*, system_prompt, user_prompt, force_enable=None):
+            captured["system"] = system_prompt
+            captured["context"] = json.loads(user_prompt)["context"]
+            return LLMClientResponse(success=True, content="我一切正常，正在待命，电量 90%。", backend="local",
+                                     model="qwen2.5-1.5b-instruct")
+
+        with mock.patch.object(llm_client, "chat_text", side_effect=fake_chat_text):
+            reply = rsp.robot_status_provider.status_reply("你的状态怎么样")
+        self.assertIn("电量", reply)
+        self.assertIn("task", captured["context"])                    # 上下文带任务
+        self.assertIn("battery_percent", captured["context"])
+        self.assertIn("vision", captured["context"])
+        self.assertIn("只根据", captured["system"])
+
+        with mock.patch.object(llm_client, "chat_text",
+                               return_value=LLMClientResponse(success=False, error="down", backend="local")):
+            fallback = rsp.robot_status_provider.status_reply("你的状态怎么样")
+        self.assertTrue(fallback)                                     # 模型挂了也有摘要
+        self.assertRegex(fallback, r"任务|待命")
+
+        self.assertEqual(intent_parser.parse("你在干什么").intent, "query_robot_status")
+        self.assertEqual(intent_parser.parse("还好吗").intent, "query_robot_status")
 
     def test_confirm_request_accepts_miniprogram_source(self) -> None:
         request = VoiceConfirmCommandRequest(pending_command_id="p1", confirmed=False, source="miniprogram")

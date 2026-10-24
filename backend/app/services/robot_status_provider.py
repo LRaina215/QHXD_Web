@@ -31,6 +31,102 @@ class RobotStatusProvider:
             return f"机器人报故障了（故障码 {device.fault_code}），先看一眼再动。"
         return "机器人现在正常，没有急停，也没报故障。"
 
+    def status_reply(self, question: str | None = None) -> str:
+        """“你的状态怎么样”这类开放状态问题：把 FPGA 遥测 + 任务 + 视觉 + 电量打包给本地大模型组织语言，
+        模型不可用时退回确定性摘要（比单句“正常”信息多）。"""
+        context = self.status_context()
+        if os.getenv("STATUS_LLM_ENABLE", "true").strip().lower() in {"1", "true", "yes", "on"}:
+            llm_reply = self._status_llm_reply(question or "你的状态怎么样", context)
+            if llm_reply:
+                return llm_reply
+        return self._status_fallback_reply(context)
+
+    def status_context(self) -> dict:
+        state = self.latest_state()
+        platform = state.platform_status
+        detection = state.detection_status
+        task = state.task_status
+        now = datetime.now(timezone.utc)
+        motion: dict = {}
+        if platform is not None:
+            motion = {
+                "fpga_link": platform.nav_link,
+                "fpga_mode": platform.fpga_mode, "fpga_state": platform.fpga_state,
+                "loc_state": platform.loc_state, "loc_quality_percent": platform.loc_quality,
+                "cmd_speed_mps": platform.cmd_vx_mps, "cmd_turn_radps": platform.cmd_wz_radps,
+                "estop": platform.control_estop or state.device_status.emergency_stop,
+                "faults": platform.control_faults or [],
+                "pitch_deg": platform.pitch_deg, "roll_deg": platform.roll_deg,
+                "body_height_cmd_m": platform.height_cmd_m,
+                "telemetry_rate_hz": platform.telemetry_rate_hz,
+            }
+        objects = []
+        if detection is not None:
+            age_s = max(0.0, (now - detection.timestamp).total_seconds())
+            objects = [
+                {"class_name": obj.class_name, "confidence": round(obj.confidence, 2)}
+                for obj in detection.objects[:6]
+            ]
+            motion["vision_fresh"] = age_s <= 5.0
+        return {
+            "system_mode": state.system_mode.mode,
+            "task": {"type": task.task_type, "state": task.state, "progress": task.progress},
+            "motion": motion,
+            "battery_percent": state.device_status.battery_percent,
+            "vision": {"objects": objects,
+                       "recent_events": [self._visual_event_context(e, now) for e in persistence.list_visual_events(limit=3)]},
+            "recent_alerts": [a.message for a in self.alerts()[:3]],
+        }
+
+    def _status_llm_reply(self, question: str, context: dict) -> str | None:
+        system_prompt = (
+            "你是云拓轮腿机器人的车载助手。用户问你的状态时，只根据给定 JSON 上下文回答，"
+            "涵盖：正在做什么任务、是否在动（速度）、定位是否可靠、看到了什么、电量，有异常必须提醒。"
+            "2 到 4 句话，口语化，不要罗列字段名、接口名、频率、时间戳或模型名，不要编造上下文里没有的东西，"
+            "不能声称已经执行了什么动作。电量低于 20% 或有故障、急停时要明确说出来。"
+        )
+        response = llm_client.chat_text(
+            system_prompt=system_prompt,
+            user_prompt=json.dumps({"question": question, "context": context}, ensure_ascii=False,
+                                   separators=(",", ":")),
+        )
+        if not response.success or not response.content:
+            return None
+        reply = response.content.strip()
+        return reply[:300] if reply else None
+
+    def _status_fallback_reply(self, context: dict) -> str:
+        task = context["task"]
+        motion = context["motion"]
+        parts = []
+        if task.get("state") in {"running", "pending"}:
+            prog = f"（{task['progress']}%）" if task.get("progress") else ""
+            parts.append(f"正在执行{task['type']}{prog}")
+        elif task.get("state") == "paused":
+            parts.append("任务暂停中")
+        else:
+            parts.append("没有在跑的任务")
+        speed = motion.get("cmd_speed_mps")
+        if isinstance(speed, (int, float)) and abs(speed) > 0.05:
+            parts.append(f"正在以约 {speed:.2f} 米每秒移动")
+        loc = motion.get("loc_state")
+        if loc == "ok":
+            parts.append("定位正常")
+        elif loc in {"degraded", "lost"}:
+            parts.append(f"定位{ '退化' if loc == 'degraded' else '丢失' }，走慢点")
+        objects = context["vision"]["objects"]
+        if objects:
+            names = "、".join(sorted({o["class_name"] for o in objects}))
+            parts.append(f"现在能看到{names}")
+        battery = context.get("battery_percent")
+        if isinstance(battery, (int, float)):
+            parts.append(f"电量 {battery:.0f}%")
+        if motion.get("estop"):
+            return "现在处于急停状态，先处理急停再继续。"
+        if motion.get("faults"):
+            return f"控制侧有故障标志（{ '、'.join(motion['faults'][:3]) }），建议先检查。"
+        return "，".join(parts) + "。"
+
     def task_reply(self) -> str:
         task = self.current_task()
         events = persistence.list_task_events(limit=3, task_id=None if task.task_id == "mock-task" else task.task_id)

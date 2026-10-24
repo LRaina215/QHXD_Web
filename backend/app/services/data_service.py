@@ -45,7 +45,7 @@ class DataService:
         if intent == "query_assistant_model":
             return "llm_config", self.assistant_model_reply()
         if intent in {"query_robot_status", "query_status"}:
-            return "state_store", robot_status_provider.robot_status_reply()
+            return "state_store+platform+vision+llm", robot_status_provider.status_reply(question)
         if intent in {"query_task_status", "query_task"}:
             return "state_store", robot_status_provider.task_reply()
         if intent == "query_navigation_status":

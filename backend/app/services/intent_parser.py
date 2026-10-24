@@ -184,7 +184,9 @@ class IntentParser:
                 detail="已解析为急停状态查询。",
             )
 
-        if self._contains_any(normalized, ["当前状态", "现在在哪", "现在位置", "在哪", "状态", "正常吗"]):
+        if self._contains_any(normalized, ["当前状态", "现在在哪", "现在位置", "在哪", "状态", "正常吗",
+                                            "状态怎么样", "还好吗", "在干什么", "在做什么", "感觉怎么样",
+                                            "你现在怎么样", "你怎么样"]):
             return ParsedIntent(
                 intent="query_robot_status",
                 confidence=0.92,
