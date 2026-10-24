@@ -221,6 +221,7 @@ class RobotStatusProvider:
                 "问几个人就答 person_count；问颜色用 objects 里的 color，没有就说这个目标没识别出颜色；"
                 "问距离用 distance_m（单位米），为空就说这个目标没测到距离，不要把别的数字当距离。"
                 "person_count 为 0 就直接说没看到人，不要解释原因。"
+                "用户问‘有没有/有个 X 吗’这类是非题，就检查 objects 里有没有 X 的类别，直接回答有或没有，不要复述问题。"
                 "1 到 2 句话，不要提置信度、框、接口或字段名，vision_fresh 为 false 时说明画面可能不是最新的，"
                 "不要编造上下文里没有的目标。"
             )
