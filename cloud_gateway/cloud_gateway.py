@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ import uuid
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Deque
+from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 
 import httpx
 import websockets
@@ -30,6 +32,8 @@ MEDIA_STREAM_PATH = os.getenv("MEDIA_STREAM_PATH", "robot/front").strip("/")
 VIDEO_SESSION_SECRET = os.getenv("VIDEO_SESSION_SECRET", PUBLIC_API_TOKEN)
 VIDEO_SESSION_TTL_SECONDS = int(os.getenv("VIDEO_SESSION_TTL_SECONDS", "600"))
 VIDEO_SESSION_COOKIE = "qhxd_video_session"
+MEDIA_HLS_BASE_URL = os.getenv("MEDIA_HLS_BASE_URL", "http://127.0.0.1:8888").rstrip("/")
+MINIPROGRAM_VIDEO_PREFIX = "/api/video/miniprogram/hls/"
 PUBLIC_CONTROL_ENABLED = os.getenv("PUBLIC_CONTROL_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 PUBLIC_RATE_LIMIT_PER_MINUTE = int(os.getenv("PUBLIC_RATE_LIMIT_PER_MINUTE", "60"))
 PUBLIC_AUDIO_MAX_MB = float(os.getenv("PUBLIC_AUDIO_MAX_MB", "20"))
@@ -228,6 +232,72 @@ def _video_session_valid(value: str, now: int | None = None) -> bool:
         return False
     expected = hmac.new(VIDEO_SESSION_SECRET.encode("utf-8"), expires_raw.encode("ascii"), hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
+
+
+def _mini_video_lease(now: int | None = None) -> str:
+    expires = int(now if now is not None else time.time()) + max(30, VIDEO_SESSION_TTL_SECONDS)
+    message = f"miniprogram-hls:{MEDIA_STREAM_PATH}:{expires}"
+    signature = hmac.new(VIDEO_SESSION_SECRET.encode(), message.encode(), hashlib.sha256).hexdigest()
+    return f"{expires}.{signature}"
+
+
+def _mini_video_lease_valid(lease: str, now: int | None = None) -> bool:
+    if not VIDEO_SESSION_SECRET or not re.fullmatch(r"[0-9]{1,12}\.[0-9a-f]{64}", lease):
+        return False
+    expires, signature = lease.split(".", 1)
+    current = int(now if now is not None else time.time())
+    if not current < int(expires) <= current + max(30, VIDEO_SESSION_TTL_SECONDS) + 5:
+        return False
+    message = f"miniprogram-hls:{MEDIA_STREAM_PATH}:{expires}"
+    expected = hmac.new(VIDEO_SESSION_SECRET.encode(), message.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
+def _mini_video_media_path(path: str) -> bool:
+    # Only the configured stream's playlists and chunks, never arbitrary proxy URLs.
+    return (
+        len(path) <= 512
+        and path.startswith(MEDIA_STREAM_PATH + "/")
+        and all(re.fullmatch(r"[A-Za-z0-9_.-]+", p) and p not in {".", ".."} for p in path.split("/"))
+        and path.endswith((".m3u8", ".mp4", ".m4s", ".ts"))
+    )
+
+
+def _mini_video_query(query: str) -> bool:
+    if len(query) > 200:
+        return False
+    values = parse_qsl(query, keep_blank_values=True)
+    return len(values) <= 5 and len({k for k, _ in values}) == len(values) and all(
+        (k in {"_HLS_msn", "_HLS_part"} and re.fullmatch(r"[0-9]{1,12}", v))
+        or (k == "_HLS_skip" and v in {"YES", "v2"})
+        or (k == "session" and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", v))
+        or (k == "cookieCheck" and v == "1")
+        for k, v in values
+    )
+
+
+def _mini_video_playlist(text: str, media_path: str, lease: str) -> str:
+    if not text.startswith("#EXTM3U"):
+        raise ValueError("not an HLS playlist")
+
+    def uri(value: str) -> str:
+        raw = urlsplit(value)
+        if raw.scheme or raw.netloc or raw.fragment or not _mini_video_query(raw.query):
+            raise ValueError("unexpected HLS URI")
+        resolved = urlsplit(urljoin("http://media/" + media_path, value))
+        path = resolved.path.lstrip("/")
+        if not _mini_video_media_path(path):
+            raise ValueError("HLS URI outside configured stream")
+        return MINIPROGRAM_VIDEO_PREFIX + lease + "/" + quote(path, safe="/") + ("?" + raw.query if raw.query else "")
+
+    lines = []
+    for line in text.splitlines():
+        if line.startswith("#"):
+            line = re.sub(r'URI="([^"]+)"', lambda m: 'URI="' + uri(m.group(1)) + '"', line)
+        elif line.strip():
+            line = uri(line.strip())
+        lines.append(line)
+    return "\n".join(lines) + "\n"
 
 
 def _check_rate_limit(request: Request) -> bool:
@@ -473,6 +543,87 @@ async def create_video_session(request: Request) -> JSONResponse:
         samesite="strict",
     )
     return response
+
+
+@app.post("/api/video/miniprogram/session")
+async def create_miniprogram_video_session(request: Request) -> JSONResponse:
+    request_id = str(uuid.uuid4())
+    if not _check_rate_limit(request):
+        return _reject(429, "rate_limited", request, request_id)
+    if not _auth_ok(request):
+        return _reject(401, "unauthorized", request, request_id)
+    if not VIDEO_SESSION_SECRET:
+        return _reject(503, "video_unavailable", request, request_id)
+    lease = _mini_video_lease()
+    # Relative URL stays on the already registered API origin, including all chunks.
+    return JSONResponse(
+        content={"success": True, "data": {
+            "protocol": "hls",
+            "playback_url": f"{MINIPROGRAM_VIDEO_PREFIX}{lease}/{MEDIA_STREAM_PATH}/index.m3u8",
+            "expires_in": max(30, VIDEO_SESSION_TTL_SECONDS),
+        }},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.api_route(MINIPROGRAM_VIDEO_PREFIX + "{lease}/{media_path:path}", methods=["GET", "HEAD"])
+async def miniprogram_video_hls(lease: str, media_path: str, request: Request) -> Response:
+    headers = {
+        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+        # WeChat's video webview origin differs from the API origin. This route
+        # authenticates every media request by lease and never uses cookies.
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges",
+    }
+    if not _mini_video_lease_valid(lease):
+        # Do not put playback leases in operation logs or error bodies.
+        return JSONResponse(status_code=401, content={"success": False, "error": "video_session_expired"}, headers=headers)
+    if not _mini_video_media_path(media_path) or not _mini_video_query(request.url.query):
+        return Response(status_code=404, headers=headers)
+    upstream_headers = {"Accept-Encoding": "identity"}
+    byte_range = request.headers.get("range", "")
+    if byte_range and re.fullmatch(r"bytes=[0-9]*-[0-9]*", byte_range) and len(byte_range) <= 80:
+        upstream_headers["Range"] = byte_range
+    url = f"{MEDIA_HLS_BASE_URL}/{quote(media_path, safe='/')}"
+    if request.url.query:
+        url += "?" + request.url.query
+    try:
+        async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+            upstream = await client.request(request.method, url, headers=upstream_headers)
+            # MediaMTX first redirects the same playlist to ?cookieCheck=1.
+            # Follow only that bounded, same-origin/same-file handshake.
+            for _ in range(2):
+                if upstream.status_code not in {301, 302, 303, 307, 308}:
+                    break
+                location = upstream.headers.get("location", "")
+                target = urlsplit(urljoin(url, location))
+                origin = urlsplit(url)
+                if not location or (target.scheme, target.netloc, target.path) != (origin.scheme, origin.netloc, origin.path) \
+                        or target.fragment or not _mini_video_query(target.query):
+                    return Response(status_code=503, headers=headers)
+                url = target.geturl()
+                # Keep MediaMTX in query-session mode; native players need no cookies.
+                client.cookies.clear()
+                upstream = await client.request(request.method, url, headers=upstream_headers)
+    except httpx.HTTPError:
+        return JSONResponse(status_code=503, content={"success": False, "error": "video_unavailable"}, headers=headers)
+    if upstream.status_code not in {200, 206}:
+        # Upstream diagnostic pages and redirect targets are not public media.
+        return Response(status_code=404 if upstream.status_code == 404 else 503, headers=headers)
+    content = upstream.content
+    media_type = "video/mp2t" if media_path.endswith(".ts") else "video/mp4"
+    if media_path.endswith(".m3u8"):
+        media_type = "application/vnd.apple.mpegurl"
+        if request.method != "HEAD":
+            try:
+                content = _mini_video_playlist(content.decode("utf-8"), media_path, lease).encode("utf-8")
+            except (UnicodeError, ValueError):
+                return Response(status_code=502, headers=headers)
+    else:
+        for name in ("content-range", "accept-ranges"):
+            if name in upstream.headers:
+                headers[name] = upstream.headers[name]
+    return Response(content=content, status_code=upstream.status_code, media_type=media_type, headers=headers)
 
 
 @app.get("/internal/video-session-check", include_in_schema=False)
