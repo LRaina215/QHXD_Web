@@ -2,6 +2,8 @@
 
 本改动复用 `robot/front` 的现有 MediaMTX 流。RK3588 继续只采集、编码和上传一路；小程序增加一个云端观看连接，增加云出口流量，不占用或替换 WebRTC 观看会话，不经过 FPGA。未修改 MediaMTX、RK 推流、浏览器视频会话或任务桥接。
 
+上线后只读查询实际 MediaMTX 控制 API：默认配置和 `robot/front` 的 `maxReaders` 均为 0（不限制观看连接数），流为 ready，当时同时列出 3 个 HLS 观看会话。没有“只能一个客户端观看”的配置限制；这不等于无限带宽，也不替代 Web 与手机同时播放的真机验收。
+
 ## 接口契约
 
 `POST /api/video/miniprogram/session` 使用现有 `Authorization: Bearer <PUBLIC_API_TOKEN>`，受现有会话创建限流保护，不要求开启公网运动控制。返回：
