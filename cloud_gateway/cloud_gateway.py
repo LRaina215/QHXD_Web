@@ -276,7 +276,7 @@ def _mini_video_query(query: str) -> bool:
     )
 
 
-def _mini_video_playlist(text: str, media_path: str, lease: str) -> str:
+def _hls_playlist(text: str, media_path: str, public_prefix: str) -> str:
     if not text.startswith("#EXTM3U"):
         raise ValueError("not an HLS playlist")
 
@@ -288,7 +288,7 @@ def _mini_video_playlist(text: str, media_path: str, lease: str) -> str:
         path = resolved.path.lstrip("/")
         if not _mini_video_media_path(path):
             raise ValueError("HLS URI outside configured stream")
-        return MINIPROGRAM_VIDEO_PREFIX + lease + "/" + quote(path, safe="/") + ("?" + raw.query if raw.query else "")
+        return public_prefix + quote(path, safe="/") + ("?" + raw.query if raw.query else "")
 
     lines = []
     for line in text.splitlines():
@@ -298,6 +298,10 @@ def _mini_video_playlist(text: str, media_path: str, lease: str) -> str:
             line = uri(line.strip())
         lines.append(line)
     return "\n".join(lines) + "\n"
+
+
+def _mini_video_playlist(text: str, media_path: str, lease: str) -> str:
+    return _hls_playlist(text, media_path, MINIPROGRAM_VIDEO_PREFIX + lease + "/")
 
 
 def _check_rate_limit(request: Request) -> bool:
@@ -566,18 +570,30 @@ async def create_miniprogram_video_session(request: Request) -> JSONResponse:
     )
 
 
+@app.api_route("/video/hls/{media_path:path}", methods=["GET", "HEAD"])
+async def browser_video_hls(media_path: str, request: Request) -> Response:
+    headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+    if not _video_session_valid(request.cookies.get(VIDEO_SESSION_COOKIE, "")):
+        return JSONResponse(status_code=401, content={"success": False, "error": "video_session_expired"}, headers=headers)
+    return await _hls_media_response(media_path, request, headers, "/video/hls/")
+
+
 @app.api_route(MINIPROGRAM_VIDEO_PREFIX + "{lease}/{media_path:path}", methods=["GET", "HEAD"])
 async def miniprogram_video_hls(lease: str, media_path: str, request: Request) -> Response:
     headers = {
         "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-        # WeChat's video webview origin differs from the API origin. This route
-        # authenticates every media request by lease and never uses cookies.
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges",
     }
     if not _mini_video_lease_valid(lease):
-        # Do not put playback leases in operation logs or error bodies.
         return JSONResponse(status_code=401, content={"success": False, "error": "video_session_expired"}, headers=headers)
+    return await _hls_media_response(media_path, request, headers, MINIPROGRAM_VIDEO_PREFIX + lease + "/")
+
+
+async def _hls_media_response(media_path: str, request: Request, headers: dict[str, str],
+                              playlist_prefix: str) -> Response:
+    # Both clients retain their own credentials on every media request. Only
+    # bounded, same-file MediaMTX redirects and configured-stream paths pass.
     if not _mini_video_media_path(media_path) or not _mini_video_query(request.url.query):
         return Response(status_code=404, headers=headers)
     upstream_headers = {"Accept-Encoding": "identity"}
@@ -616,7 +632,7 @@ async def miniprogram_video_hls(lease: str, media_path: str, request: Request) -
         media_type = "application/vnd.apple.mpegurl"
         if request.method != "HEAD":
             try:
-                content = _mini_video_playlist(content.decode("utf-8"), media_path, lease).encode("utf-8")
+                content = _hls_playlist(content.decode("utf-8"), media_path, playlist_prefix).encode("utf-8")
             except (UnicodeError, ValueError):
                 return Response(status_code=502, headers=headers)
     else:
