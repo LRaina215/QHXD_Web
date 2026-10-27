@@ -4,6 +4,10 @@
 导航（雷达定位、规划、安全限速）与运动控制（强化学习轮腿策略）都在 FPGA 上；RK3588 只做任务层：
 RGB-D 视觉、离线语音、任务编排、Web 控制台与公网中继。
 
+**2026-10-27架构对账：** RK已采用Qwen3-1.7B、SenseVoice、YOLO26n、Matcha/Vocos及USB音响；任务层通过CH导航串口和P11-40独立遥测接PNR61，不向底盘直接发速度。Web已部署地图上传/ACK进度和“预览 · 未下发FPGA”，小程序HLS与WebRTC复用同一路云视频。22:01只读公网为网关/RK在线、real，导航和遥测offline；最近测试回hold，不能以网页在线代表整车导航运行。地图接收/命令受理与落地站稳、长期反馈、定位精度分别验收。
+
+完整系统介绍见[总体架构](https://github.com/LRaina215/SOC_FPGA_NAV/blob/codex/integration-g2-20261022/docs/system_architecture.md)，本仓库操作与当前边界见[RK说明](docs/YUNTUO.md)、[真FPGA联调](docs/REAL_FPGA_INTEGRATION_20261027.md)和[地图上传](docs/MAP_UPLOAD_20261027.md)。本次仅文档同步，不重新部署或触发运动。
+
 ```
 网页 / 语音 ─► 后端 FastAPI :8000 ─► fpga_bridge :9101 ──NV 报文──► FPGA 导航 ──► FPGA 运动控制（RL）
               任务预检 / 状态 / WS     任务状态机         目标点 / 模式 / 视觉目标    限幅后的速度

@@ -1,5 +1,13 @@
 # QHXD independent video path
 
+## Current yuntuo-fpga source (2026-10-27)
+
+The active robot uses Astra Pro Plus RGB-D and the `yuntuo/perception` publisher. Rockchip MPP encodes one stream to cloud MediaMTX `robot/front`; Web uses WebRTC/WHEP with HLS/image fallback, and the mini-program reads signed same-origin HLS with image fallback. Viewers share the source without reopening the camera or running inference/encoding again. Extra viewers consume cloud egress bandwidth.
+
+The observed HLS stream uses roughly two-second MPEG-TS segments; do not infer deployed LL-HLS or measured end-to-end latency from configuration templates. Browser HLS proxying was repaired on 2026-10-27; the mini-program buffering fix is in source, while new-package phone acceptance remains unverified. See [mini-program contract](../cloud_gateway/MINIPROGRAM_VIDEO.md) and the [current system design](https://github.com/LRaina215/SOC_FPGA_NAV/blob/codex/integration-g2-20261022/docs/system_architecture.md). Video bypasses FPGA and continues to be independent of the held/offline navigation interface.
+
+## Historical MVS adapter and reusable transport
+
 The public video path is separate from FastAPI state and YOLO inference:
 
 ```text
@@ -11,7 +19,7 @@ Hikrobot MVS camera
   -> WebRTC/WHEP (primary) or LL-HLS (fallback)
 ```
 
-The current `MV-CS020-10UC` is a USB MVS camera, not an IP camera with an RTSP
+The historical `MV-CS020-10UC` adapter targets a USB MVS camera, not an IP camera with an RTSP
 substream. RK3588 therefore encodes its raw RGB frames with Rockchip MPP. A
 future Hik network camera can publish/copy H.264 into the same MediaMTX path
 without changing the browser contract.

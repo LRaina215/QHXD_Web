@@ -1,5 +1,7 @@
 # 网页地图上传
 
+本功能是当前[总体架构](https://github.com/LRaina215/SOC_FPGA_NAV/blob/codex/integration-g2-20261022/docs/system_architecture.md)的Web入口；服务已部署，实际机器人在线/地图READY/定位质量仍各自核对。2026-10-27 22:01只读为RK在线、FPGA导航/控制遥测offline，演示3×5米地图只在预览路径；本次未下发地图或改镜像。
+
 场地视图右上角新增“上传地图”。选择已转换好的 `.nvmp` 后，点击“上传并下发”，即可通过云网关和RK桥接写入FPGA地图RAM，不需要再SSH拷文件。
 
 ## 使用流程

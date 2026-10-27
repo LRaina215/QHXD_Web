@@ -1,14 +1,16 @@
 # Lingxun Cloud Gateway
 
-Cloud Gateway runs on the cloud server and forwards public Dashboard/API traffic to the RK3588 QHXD backend. The full QHXD backend stays on RK3588 because ASR, YOLO NPU, camera, microphone, Navi, and C-board communication depend on the robot environment.
+Cloud Gateway runs on the cloud server and forwards public Dashboard/API traffic to the RK3588 backend. Model inference, RGB-D perception, audio and the FPGA task bridge stay on RK3588. Cloud services provide access control and media delivery; they do not run the FPGA navigation or balance loop.
+
+**2026-10-27 architecture sync:** Web map upload/ACK progress and explicitly labelled preview are deployed. Browser HLS and mini-program signed HLS use the same MediaMTX source as WebRTC. A reachable gateway/RK does not prove FPGA availability: the 22:01 read-only snapshot was real mode with both FPGA data links offline. See [system architecture](https://github.com/LRaina215/SOC_FPGA_NAV/blob/codex/integration-g2-20261022/docs/system_architecture.md), [map upload](../docs/MAP_UPLOAD_20261027.md), [mini-program video](MINIPROGRAM_VIDEO.md) and [hardware integration evidence](../docs/REAL_FPGA_INTEGRATION_20261027.md). No service deployment is part of this documentation update.
 
 ## Public Entrypoints
 
 - Web frontend: `https://lingxunrobot.cn`
 - Web same-origin API: `https://lingxunrobot.cn/api`
-- Web same-origin WS: `wss://lingxunrobot.cn/ws/state`, `wss://lingxunrobot.cn/ws/imu`
+- Web same-origin WS: `wss://lingxunrobot.cn/ws/state`, `wss://lingxunrobot.cn/ws/navigation` (`/ws/imu` is a retained diagnostic route)
 - External API: `https://api.lingxunrobot.cn`
-- External WS: `wss://api.lingxunrobot.cn/ws/state`, `wss://api.lingxunrobot.cn/ws/imu`
+- External WS: `wss://api.lingxunrobot.cn/ws/state`, `wss://api.lingxunrobot.cn/ws/navigation`
 
 Both public entrypoints proxy to Cloud Gateway on `127.0.0.1:9000`.
 

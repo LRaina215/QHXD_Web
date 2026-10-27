@@ -1,5 +1,7 @@
 # 微信小程序连续视频（2026-10-25）
 
+**2026-10-27说明对账：** 本文保留初次接口和部署记录。小程序b8ed624已加入原生启动/手动播放入口及有限缓冲恢复，开发者工具公网同一播放器可跨三次缓冲错误继续播放；新版手机和微信新包发布尚未取得验收记录。Web侧10月27日补齐Cookie保护的浏览器HLS代理，不能再将旧/video/hls的404当作当前全局状态。两端仍复用同一robot/front，媒体不经过FPGA；不因视频HTTP200或RK在线推定整车运动可用。当前系统关系见[总体架构](https://github.com/LRaina215/SOC_FPGA_NAV/blob/codex/integration-g2-20261022/docs/system_architecture.md)。
+
 本改动复用 `robot/front` 的现有 MediaMTX 流。RK3588 继续只采集、编码和上传一路；小程序增加一个云端观看连接，增加云出口流量，不占用或替换 WebRTC 观看会话，不经过 FPGA。未修改 MediaMTX、RK 推流、浏览器视频会话或任务桥接。
 
 上线后只读查询实际 MediaMTX 控制 API：默认配置和 `robot/front` 的 `maxReaders` 均为 0（不限制观看连接数），流为 ready，当时同时列出 3 个 HLS 观看会话。没有“只能一个客户端观看”的配置限制；这不等于无限带宽，也不替代 Web 与手机同时播放的真机验收。
