@@ -36,21 +36,21 @@
 | 5 | 实STATUS 5Hz、Web/小程序real来源 | 待真链路 |
 | 6 | 实100Hz控制遥测、拔插超时/恢复 | 既有软件新鲜度检查通过；物理拔插待现场 |
 | 7 | 俯仰/横滚手动倾斜 | 待现场配合 |
-| 8 | 无真实来源字段不可用 | 软件通过；real部署后核API与界面 |
-| 9 | robot/front带框连续视频 | 与FPGA无关，可独立观察，结果另记 |
-| 10 | 最大/坏地图、清图、版本 | 本地协议通过；真实桥接→FPGA待做 |
-| 11 | set_pose及有图对准标志 | 待真链路；架空不评价对准性能 |
-| 12 | 定点/返航、暂停/继续/取消 | 软件回放通过；真板控制锁存下应安全拒绝，不绕过预检 |
+| 8 | 无真实来源字段不可用 | 软件及RK在线API通过：电量/温湿度为null；不是现场传感器测量 |
+| 9 | robot/front带框连续视频 | 公网健康ok、相机帧fresh；浏览器工具启动失败，实际网页播放未验 |
+| 10 | 最大/坏地图、清图、版本 | 本地协议与RK→mock在线通过；真实桥接→FPGA待做 |
+| 11 | set_pose及有图对准标志 | RK后端→mock位姿+对准标志通过；真实链路待做 |
+| 12 | 定点/返航、暂停/继续/取消 | RK后端→mock在线通过；真板控制锁存下应安全拒绝，不绕过预检 |
 | 13 | 巡逻首GOAL与取消 | 软件回放通过；真板链路待做，到点切换留落地 |
 | 14 | 探索/识别TARGET/跟踪/丢失 | 软件回放通过；实际相机及FPGA合测待做 |
 | 15 | 语音回家/找红瓶/停下 | 真实麦克风与FPGA端到端待做；文字解析不能冒称语音实测 |
-| 16 | Web急停/零SAFE/显式解除 | 软件通过；真板待做 |
+| 16 | Web急停/零SAFE/显式解除 | 软件及RK→mock急停/显式解除通过；真板SAFE待做 |
 | 17 | 停bridge约250ms锁存、重启不恢复任务 | 软件无自动IDLE/旧任务复用通过；真实截止时间待做 |
 | 18 | CH9102物理拔插/2–3s重连 | 软件重连逻辑通过；物理拔插待现场 |
 | 19 | FPGA复位、时间回退、先验丢失 | 软件隔离/旧任务失效/地图缓存失效通过；真板复位待现场，重装固件和重新IR5 |
 | 20 | 雷达网线断开10s及恢复 | 待真链路/现场拔插 |
 | 21 | 真实30min浸泡/速率/CRC/内存 | 待真链路；不会用mock替代 |
-| 22 | 小程序真机代表项 | 待现场；原tests/live.js仅允许双mock，不修改保护硬跑真实板卡 |
+| 22 | 小程序真机代表项 | 小程序代码公网只读17项通过；手机/真实FPGA待现场。原tests/live.js保护保持 |
 
 ## 部署和回退
 
@@ -64,6 +64,14 @@ YUNTUO_CONTROL_TELEMETRY=serial:/dev/ttyUSB0@230400
 YUNTUO_FPGA_IS_MOCK=false
 ```
 
-回退时先停桥接并确认远端没有新的独立修改，再切回备份提交，恢复备份`.env`和原服务状态，重启后端/mock/桥接。实际备份位置、提交和健康结果会在部署后补入本页。禁止把真实串口与bench/nav_host同时打开。
+RK已从`862a9a9`快进部署到`398393a`；原配置和服务定义保存在`/home/robomaster/backups/yuntuo_software_20261027-140325/`，`env.mock`为原配置，`env.real-ready`为未启用的真串口配置，两者权限600。只重启后端/mock/桥接，感知/LLM/TTS保持active；后端原real运行模式恢复，导航和控制来源仍明确mock，STATUS约4.98–5.02Hz。原`.env`逐字保持，未跑切真安装步骤。
+
+回退时先停桥接并确认远端没有新的独立修改，再将RK工作区切回`862a9a9`，恢复上述`env.mock`为`.env`和原服务状态，重启后端/mock/桥接。禁止把真实串口与bench/nav_host同时打开。
+
+在线API工具`scripts/bench_mock_api.py`每个写请求前严格确认双mock；9项通过：86064B READY且后端版本一致、坏CRC/profile拒绝、位姿(1.25,−0.35,0.2)、清图无图、定点暂停/继续/取消、返航取消、急停/显式解除、未知字段null。地图耗时0.377s仅为UDP mock，不能当真实UART吞吐。首轮测试用`software-bench`地图ID，被点位的`yuntuo_field`不一致保护正确拒绝；只修夹具ID，原结果保留。收尾mock恢复IDLE、清合成地图并请求恢复初始位姿。原始结果`F:/nav_integration_g2_20261023/QHXD_software_deploy_20261027_1/`。
+
+小程序`tests/smoke.js`对`https://api.lingxunrobot.cn`只读17项通过，含8个读接口、4项业务字段、两条WebSocket及3页Node渲染；没有POST、Token或手机真机验收。公网视频健康ok、检测帧fresh；Computer Use在打开网页前报告`failed to write kernel assets / os error3`，未做浏览器播放验收。
+
+**公网静态前端尚未更新。** `lingxunrobot.cn`实读仍引用旧`index-BeZmKxod.js`，RK构建/部署已是`index-BdtanrPA.js`。新后端API可用不等于公网中文阶段标签已发布。静态包已准备在`F:/nav_integration_g2_20261023/QHXD_frontend_stop_feedback_20261027.tar.gz`；云端现有本机密钥登录被拒绝，已向用户索取可用云SSH方式。未关闭主机身份校验、未猜静态站点目录，也未改Nginx/MediaMTX/云网关。取得访问后先核Nginx真实目录，备份旧index和受影响资源，上传新资源并最后原子替换index，保留旧缓存资源及备案注入。
 
 真实镜像阶段结束后恢复`D:/tools/hold_servo1500_motoroff_20261027.fs`，只SRAM。届时RK保留真配置还是回mock由用户决定；不会自行选择为整车运动模式。
