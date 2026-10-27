@@ -131,4 +131,3 @@ def test_mock_and_bridge_unavailable_are_explicit(rig, monkeypatch):
     monkeypatch.setattr(state_store, "get_system_mode", lambda: SimpleNamespace(mode="mock"))
     assert post(c).status_code == 409
     assert c.get("/api/navigation/map/upload").json()["data"]["state"] == "unavailable"
-
