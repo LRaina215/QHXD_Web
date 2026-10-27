@@ -52,6 +52,7 @@ async function show() {
   await nextTick()
   dialog.value?.focus()
 }
+async function preview() { if (file.value && await props.yt.previewMap(file.value)) close() }
 onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
 </script>
 
@@ -80,6 +81,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
         <p v-if="unavailable" class="hint">{{ unavailable }}</p>
         <p class="note">地图会保存在机器人上；FPGA复位后需重新下发。关闭此窗口不会中断上传。</p>
         <footer><button class="btn" type="button" @click="close">关闭</button>
+          <button class="btn" type="button" :disabled="!file || !!fileError || sending" @click="preview">仅预览</button>
           <button class="btn primary" type="button" :disabled="!file || !!fileError || !!unavailable || sending"
             @click="file && yt.uploadMap(file)"><Upload :size="17" />{{ sending ? '下发中…' : '上传并下发' }}</button></footer>
       </section>

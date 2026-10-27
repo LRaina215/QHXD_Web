@@ -16,6 +16,8 @@ from yuntuo.tests.test_real_link_contracts import AckLink, Clock, bridge_with
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     monkeypatch.setenv("YUNTUO_MAP_UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("YUNTUO_MAP_PREVIEW_FILE", str(tmp_path / "preview.json"))
+    monkeypatch.setattr(map_upload_service, "preview_map", None)
     monkeypatch.setattr(state_store, "get_system_mode", lambda: SimpleNamespace(mode="real"))
     clock = Clock()
     link = AckLink(clock)
@@ -28,8 +30,8 @@ def rig(tmp_path, monkeypatch):
     return TestClient(app), b, link, clock, tmp_path
 
 
-def post(client, data=None, filename="field.nvmp", map_id="yuntuo_field", **kwargs):
-    return client.post("/api/navigation/map/upload", params={"filename": filename, "map_id": map_id},
+def post(client, data=None, filename="field.nvmp", map_id="yuntuo_field", preview=False, **kwargs):
+    return client.post("/api/navigation/map/upload", params={"filename": filename, "map_id": map_id, "preview": preview},
                        content=data if data is not None else build_test_package(0, 0, [[0, 254], [255, 0]]),
                        headers=kwargs.pop("headers", {"Content-Type": "application/octet-stream"}), **kwargs)
 
@@ -131,3 +133,39 @@ def test_mock_and_bridge_unavailable_are_explicit(rig, monkeypatch):
     monkeypatch.setattr(state_store, "get_system_mode", lambda: SimpleNamespace(mode="mock"))
     assert post(c).status_code == 409
     assert c.get("/api/navigation/map/upload").json()["data"]["state"] == "unavailable"
+
+
+def test_preview_is_PNG_and_never_changes_live_navigation_or_FPGA(rig, monkeypatch):
+    import base64
+    import struct
+    from app.services.navigation_store import navigation_store
+    c, b, link, clock, folder = rig
+    before = navigation_store.map_metadata()
+    monkeypatch.setattr(state_store, "get_system_mode", lambda: SimpleNamespace(mode="mock"))
+    r = post(c, preview=True)
+    assert r.status_code == 200
+    m = r.json()["data"]
+    assert m["kind"] == "preview" and m["version"].startswith("preview-")
+    image = base64.b64decode(m["image_url"].split(",", 1)[1])
+    assert image.startswith(b"\x89PNG") and struct.unpack_from(">II", image, 16) == (2, 2)
+    assert b.pending_map is None and b.prior_map is None and link.count[nv.MAP_BEGIN] == 0
+    assert navigation_store.map_metadata() == before
+    map_upload_service.preview_map = None  # Recreate an empty process cache, preserving its saved preview.
+    assert c.get("/api/navigation/map/upload?preview=true").json()["data"]["version"] == m["version"]
+
+
+def test_actual_upload_exits_preview_only_after_bridge_acceptance(rig):
+    c, b, link, clock, folder = rig
+    assert post(c, preview=True).status_code == 200
+    b.status_quarantined = True
+    assert post(c).status_code == 409
+    assert c.get("/api/navigation/map/upload?preview=true").json()["data"] is not None
+    b.status_quarantined = False
+    assert post(c).status_code == 200
+    assert c.get("/api/navigation/map/upload?preview=true").json()["data"] is None
+
+
+def test_empty_costmap_preview_is_rejected(rig):
+    c, b, link, clock, folder = rig
+    assert post(c, build_test_package(0, 0, []), preview=True).status_code == 422
+    assert b.pending_map is None

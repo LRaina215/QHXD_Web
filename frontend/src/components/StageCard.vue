@@ -39,7 +39,7 @@ const hud = computed(() => [
           <Video :size="16" />相机
         </button>
       </div>
-      <span class="ctx">{{ main === 'map' ? (mapless ? '无先验图 · 里程计坐标系' : '先验地图坐标系') : 'Orbbec Astra Pro Plus · RKNN 检测' }}</span>
+      <span class="ctx">{{ main === 'map' ? (yt.mapPreview.value ? '地图预览 · 未下发FPGA' : mapless ? '无先验图 · 里程计坐标系' : '先验地图坐标系') : 'Orbbec Astra Pro Plus · RKNN 检测' }}</span>
       <MapUpload :yt="yt" />
       <span v-if="target" class="lock"><Crosshair :size="15" />目标已锁定</span>
     </header>

@@ -1200,7 +1200,7 @@ async def platform_set_pose(request: PlatformSetPoseRequest) -> PlatformCommandR
 
 
 @app.post("/api/navigation/map/upload")
-async def upload_navigation_map(request: Request, filename: str = "", map_id: str = "yuntuo_field"):
+async def upload_navigation_map(request: Request, filename: str = "", map_id: str = "yuntuo_field", preview: bool = False):
     if request.headers.get("content-type", "").split(";", 1)[0] != "application/octet-stream":
         raise HTTPException(415, "请上传 .nvmp 二进制地图文件。")
     try:
@@ -1214,12 +1214,12 @@ async def upload_navigation_map(request: Request, filename: str = "", map_id: st
         if len(data) + len(chunk) > MAX_MAP_BYTES:
             raise HTTPException(413, "地图包超过当前FPGA容量（最大86064字节）。")
         data.extend(chunk)
-    return await asyncio.to_thread(map_upload_service.submit, bytes(data), filename, map_id)
+    return await asyncio.to_thread(map_upload_service.submit, bytes(data), filename, map_id, preview)
 
 
 @app.get("/api/navigation/map/upload")
-async def navigation_map_upload_status():
-    return await asyncio.to_thread(map_upload_service.status)
+async def navigation_map_upload_status(preview: bool = False):
+    return await asyncio.to_thread(map_upload_service.status, preview)
 
 
 @app.post("/api/internal/nuc/state", response_model=NucStateUpdateResponse)

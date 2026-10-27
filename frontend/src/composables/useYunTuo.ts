@@ -5,6 +5,7 @@ import type {
   AlertEvent,
   LogLine,
   MapMetadata,
+  MapPreview,
   MapUploadStatus,
   NavigationSnapshot,
   PayloadValue,
@@ -45,6 +46,7 @@ export function useYunTuo() {
   const mapMeta = ref<MapMetadata | null>(null)
   const mapUpload = ref<MapUploadStatus>({ state: 'idle', detail: '选择场地的 .nvmp 地图包。' })
   const mapUploadError = ref('')
+  const mapPreview = ref<MapPreview | null>(null)
   const mapUploading = computed(() => ['queued', 'uploading'].includes(mapUpload.value.state))
   let mapPollBusy = false
   let lastMapPoll = 0
@@ -135,6 +137,8 @@ export function useYunTuo() {
     lastMapPoll = Date.now()
     try {
       const payload = await getJson<{ data: MapUploadStatus }>('/api/navigation/map/upload')
+      const preview = await getJson<{ data: MapPreview | null }>('/api/navigation/map/upload?preview=true')
+      if (preview) mapPreview.value = preview.data?.version === window.sessionStorage.getItem('dismissed_map_preview') ? null : preview.data
       if (!payload) return
       const previous = mapUpload.value
       mapUpload.value = payload.data
@@ -171,6 +175,32 @@ export function useYunTuo() {
     } finally {
       busy.map = false
     }
+  }
+
+  async function previewMap(file: File): Promise<boolean> {
+    busy.map = true
+    mapUploadError.value = ''
+    try {
+      const query = new URLSearchParams({ filename: file.name, map_id: mapMeta.value?.map_id || 'yuntuo_field', preview: 'true' })
+      const response = await fetch(apiUrl(`/api/navigation/map/upload?${query}`), {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() }, body: file,
+      })
+      if (!response.ok) throw new Error(await readApiError(response, '地图预览失败'))
+      mapPreview.value = (await response.json() as { data: MapPreview }).data
+      window.sessionStorage.removeItem('dismissed_map_preview')
+      log('地图已打开预览，尚未下发FPGA。', 'ok', '地图')
+      return true
+    } catch (error) {
+      mapUploadError.value = error instanceof Error ? error.message : '地图预览失败'
+      return false
+    } finally {
+      busy.map = false
+    }
+  }
+
+  function dismissMapPreview() {
+    if (mapPreview.value) window.sessionStorage.setItem('dismissed_map_preview', mapPreview.value.version)
+    mapPreview.value = null
   }
 
   function pushTrail(snapshot: NavigationSnapshot) {
@@ -441,10 +471,10 @@ export function useYunTuo() {
   })
 
   return {
-    state, nav, mapMeta, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
+    state, nav, mapMeta, mapPreview, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
     voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline,
     start, stop, mission, goTo, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
-    recordOnboard, confirm, uploadMap, log,
+    recordOnboard, confirm, uploadMap, previewMap, dismissMapPreview, log,
   }
 }
 

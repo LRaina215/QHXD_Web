@@ -7,6 +7,7 @@ import type { Point } from '../types'
 
 const props = defineProps<{ yt: YunTuo; selected?: string; compact?: boolean }>()
 const emit = defineEmits<{ pick: [waypointId: string] }>()
+const map = computed(() => props.yt.mapPreview.value ?? props.yt.mapMeta.value)
 
 const wrap = ref<HTMLDivElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -28,12 +29,12 @@ const pose = computed(() => props.yt.nav.value?.pose ?? (props.yt.state.value
   : null))
 
 async function loadRaster() {
-  const meta = props.yt.mapMeta.value
+  const meta = map.value
   if (!meta || meta.version === rasterVersion) return
   rasterVersion = meta.version
   if (meta.version.startsWith('canvas')) { raster = null; return }
   try {
-    const response = await fetch(apiUrl(`/api/navigation/map/image?v=${encodeURIComponent(meta.version)}`))
+    const response = await fetch(props.yt.mapPreview.value?.image_url ?? apiUrl(`/api/navigation/map/image?v=${encodeURIComponent(meta.version)}`))
     if (!response.ok) throw new Error('map')
     const bitmap = await createImageBitmap(await response.blob())
     const off = document.createElement('canvas')
@@ -61,10 +62,11 @@ async function loadRaster() {
 type View = { s: number; ox: number; oy: number; w: number; h: number }
 
 function bounds() {
-  const meta = props.yt.mapMeta.value
+  const meta = map.value
   const b = meta && !meta.version.startsWith('canvas')
     ? { x0: meta.origin.x, y0: meta.origin.y, x1: meta.origin.x + meta.width * meta.resolution, y1: meta.origin.y + meta.height * meta.resolution }
     : { ...FIELD }
+  if (props.yt.mapPreview.value) return b
   const pts: Point[] = [...props.yt.trail.value]
   if (pose.value) pts.push(pose.value)
   props.yt.waypoints.value.forEach((w) => w.pose && pts.push(w.pose))
@@ -116,7 +118,7 @@ function drawBase(ctx: CanvasRenderingContext2D, v: View) {
     ctx.font = '600 11px "Inter Variable", sans-serif'; ctx.fillStyle = C.label
     ctx.fillText('x', zx + 0.5 * v.s + 4, zy + 4); ctx.fillText('y', zx - 3, zy - 0.5 * v.s - 6)
   }
-  const meta = props.yt.mapMeta.value
+  const meta = map.value
   if (raster && meta) {
     const [rx, ry] = px(v, { x: meta.origin.x, y: meta.origin.y + meta.height * meta.resolution })
     ctx.imageSmoothingEnabled = false
@@ -134,6 +136,7 @@ function drawScale(ctx: CanvasRenderingContext2D, v: View) {
 }
 
 function drawScene(ctx: CanvasRenderingContext2D, v: View, t: number) {
+  if (props.yt.mapPreview.value) return  // Preview never invents a robot pose or usable task points.
   const trail = props.yt.trail.value
   if (trail.length > 1) {
     ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = props.compact ? 2 : 3
@@ -217,6 +220,7 @@ function resize() {
 }
 
 function onClick(event: MouseEvent) {
+  if (props.yt.mapPreview.value) return
   const c = canvas.value
   if (!c || props.compact) return
   const rect = c.getBoundingClientRect()
@@ -229,7 +233,7 @@ function onClick(event: MouseEvent) {
   if (hit) emit('pick', hit.waypoint_id)
 }
 
-watch(() => props.yt.mapMeta.value?.version, () => void loadRaster(), { immediate: true })
+watch(() => map.value?.version, () => void loadRaster(), { immediate: true })
 onMounted(() => {
   observer = new ResizeObserver(resize)
   if (wrap.value) observer.observe(wrap.value)
@@ -241,11 +245,17 @@ onBeforeUnmount(() => { observer?.disconnect(); window.cancelAnimationFrame(raf)
 
 <template>
   <div ref="wrap" class="field-map">
-    <canvas ref="canvas" role="img" aria-label="场地态势：机器人、点位、轨迹与目标" @click="onClick"></canvas>
+    <canvas ref="canvas" role="img" :aria-label="yt.mapPreview.value ? '地图预览，未下发FPGA' : '场地态势：机器人、点位、轨迹与目标'" @click="onClick"></canvas>
+    <div v-if="yt.mapPreview.value && !compact" class="preview-label">
+      <strong>预览 · 未下发FPGA</strong><span>{{ yt.mapPreview.value.filename }}</span>
+      <button type="button" @click="yt.dismissMapPreview()">返回机器人地图</button>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .field-map { position: relative; width: 100%; height: 100%; }
 canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.preview-label { position: absolute; top: 14px; right: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 62%; padding: 9px 12px; border-radius: 10px; background: rgba(15,18,22,.88); color: #fbbf24; font-size: 12px; }
+.preview-label span { color: var(--stage-ink-2); overflow-wrap: anywhere; } .preview-label button { padding: 3px 0; border: 0; background: none; color: #b9c8ff; font-size: 12px; }
 </style>

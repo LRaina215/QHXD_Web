@@ -8,6 +8,8 @@ backend/data/*.sqlite
 backend/data/*.sqlite3
 backend/data/*.jsonl
 backend/data/prior_maps/
+backend/data/map_preview.json
+backend/data/map_preview.json.*.tmp
 backend/data/voice_records/*
 !backend/data/voice_records/.gitkeep
 

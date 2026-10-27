@@ -121,6 +121,8 @@ export type MapUploadStatus = {
   completed_at?: string | null
 }
 
+export type MapPreview = MapMetadata & { kind: 'preview'; filename: string; image_url: string }
+
 export type Waypoint = {
   waypoint_id: string
   name: string
