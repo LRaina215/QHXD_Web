@@ -4,11 +4,12 @@
   巡检点之间按路线 stop_seconds 停留；受阻持续超过 blocked_fail_s 判失败。
 目标类（search_target / follow_target）：发 MODE search，感知结果经筛选后以 TARGET 报文持续下发，FPGA 自主
   探索 -> 发现即跟踪 -> 停在目标前 0.7 m；search_target 稳定停在目标附近即完成，follow_target 一直跟到取消或超时。
-暂停 / 取消 = MODE idle（FPGA 停车），任务上下文留在本进程，恢复时重发。
+暂停 / 取消请求 MODE idle，业务状态与反馈停稳分开；上下文留在本进程，恢复时重发。
 """
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
@@ -16,6 +17,7 @@ from uuid import uuid4
 
 from yuntuo.bridge.config import BridgeConfig, Waypoint
 from yuntuo.bridge.inputs import DetectionFrame
+from yuntuo.bridge.feedback import MotionView, STOP_HOLD_S, STOP_V_MMPS, STOP_W_MRADPS
 from yuntuo.bridge.targets import TargetPick, TargetSpec, pick_target
 from yuntuo.fpga_link import nv_proto as nv
 
@@ -36,6 +38,7 @@ class StatusView:
     status: nv.NavStatus | None
     received_at: float          # 本机单调时钟
     fresh: bool
+    motion: MotionView = field(default_factory=MotionView)
 
 
 @dataclass
@@ -66,6 +69,10 @@ class Task:
     blocked_since: float | None = None
     lost_since: float | None = None
     near_since: float | None = None
+    near_track: int | None = None
+    arrival_wait_since: float | None = None
+    stop_requested_at: float | None = None
+    finish_after_stop: str | None = None
     locked_track: int | None = None
     last_pick: TargetPick | None = None
     last_pick_at: float = -1e9
@@ -73,6 +80,7 @@ class Task:
     last_target_seq: float | None = None      # 已处理的检测帧（按接收时刻区分）
     last_target_sent: float = -1e9
     last_progress_emit: float = -1e9
+    last_verify_emit: float = -1e9
     event_seq: int = 0
 
     @property
@@ -93,6 +101,7 @@ class TaskRunner:
         self.send = send            # send(msg, urgent)
         self.emit_payload = emit
         self.task: Task | None = None
+        self.now = 0.0
 
     # ---------------------------------------------------------------- 对外视图
     def task_status(self) -> dict:
@@ -160,19 +169,28 @@ class TaskRunner:
             return
         if stop:
             self.send(nv.encode_mode("idle"), True)
+        t.finish_after_stop = None
+        if not stop:
+            t.stop_requested_at = None
         t.state, t.phase = state, state
+        if stop:
+            t.phase, t.stop_requested_at = "waiting_stop", self.now
+            detail += " 已请求 FPGA 停止，停稳尚未确认。"
         if state == "completed":
             t.progress = 100
         t.dwell_until = None
         self._emit(event_type, detail)
         log.info("任务 %s %s：%s", t.task_id, state, detail)
 
-    def fail(self, detail: str, stop: bool = True) -> None:
+    def fail(self, detail: str, stop: bool = True, *, now: float | None = None) -> None:
+        if now is not None:
+            self.now = now
         if self.task is not None and self.task.active:
             self._end("failed", "failed", detail, stop)
 
     # ---------------------------------------------------------------- 命令
     def handle_command(self, command: str, args: dict, source: str, sv: StatusView, now: float) -> tuple[bool, str]:
+        self.now = now
         if command == "pause_task":
             return self._pause(now)
         if command == "resume_task":
@@ -247,6 +265,7 @@ class TaskRunner:
         yaw = nv.rad_to_cdeg(p.yaw) if self.cfg.send_goal_yaw else nv.YAW_DONT_CARE
         self.send(nv.encode_goal(gx, gy, yaw), False)
         t.sent_goal, t.sent_at, t.confirmed = (gx, gy), now, False
+        t.near_since = t.arrival_wait_since = None
         t.leg_start_m, t.blocked_since = None, None
         t.state = "pending" if not t.started_emitted else "running"
         t.phase, t.detail = "sending_goal", f"正在前往{p.name}。"
@@ -255,13 +274,16 @@ class TaskRunner:
         t = self.task
         if t is None or not t.active:
             return False, "当前没有可暂停的活动任务。"
+        if t.finish_after_stop is not None:
+            return False, "跟随时长已结束，正在等待停稳确认；可取消，不能暂停或恢复。"
         if t.state == "paused":
             return True, "任务已经处于暂停状态。"
         self.send(nv.encode_mode("idle"), True)
-        t.state, t.phase, t.paused_at = "paused", "paused", now
+        t.state, t.phase, t.paused_at = "paused", "waiting_stop", now
+        t.stop_requested_at = now
         t.near_since = t.blocked_since = None
-        self._emit("paused", "任务已暂停，FPGA 已停车。")
-        return True, "任务已暂停。"
+        self._emit("paused", "任务已暂停；已请求 FPGA 停止，等待反馈确认停稳。")
+        return True, t.detail
 
     def _resume(self, sv: StatusView, now: float) -> tuple[bool, str]:
         t = self.task
@@ -273,10 +295,12 @@ class TaskRunner:
         if t.deadline is not None and t.paused_at is not None:
             t.deadline += now - t.paused_at
         t.paused_at = None
+        t.stop_requested_at = t.finish_after_stop = t.near_since = t.arrival_wait_since = None
         t.state = "running"
         if t.task_type in GOTO_TYPES:
             if t.dwell_until is not None:
                 t.dwell_until = now
+                t.phase = "dwell"
             else:
                 self._send_goal(now)
                 t.state = "running"
@@ -290,8 +314,8 @@ class TaskRunner:
         t = self.task
         if t is None or not t.active:
             return False, "当前没有可取消的活动任务。"
-        self._end("cancelled", "cancelled", "任务已取消，FPGA 已停车。")
-        return True, "任务已取消。"
+        self._end("cancelled", "cancelled", "任务已取消。")
+        return True, t.detail
 
     def estop(self) -> None:
         """急停由 core 直接下发 MODE estop；这里只结束任务"""
@@ -300,21 +324,69 @@ class TaskRunner:
 
     # ---------------------------------------------------------------- 周期
     def on_tick(self, sv: StatusView, frame: DetectionFrame | None, now: float) -> None:
+        self.now = now
         t = self.task
+        if t is not None and t.phase == "waiting_stop":
+            self._tick_stop(sv, now)
+            return
         if t is None or t.state not in ("pending", "running"):
             return
         if not sv.fresh or sv.status is None:
+            t.near_since = None
             if t.lost_since is None:
                 t.lost_since = now
                 t.detail = "FPGA 导航状态中断，等待恢复。"
             elif now - t.lost_since > self.cfg.link_loss_fail_s:
-                self.fail(f"FPGA 导航链路中断超过 {self.cfg.link_loss_fail_s:.0f} s，任务中止。")
+                self.fail(f"FPGA 导航链路中断超过 {self.cfg.link_loss_fail_s:.0f} s，任务中止。", stop=False)
             return
         t.lost_since = None
         if t.task_type in GOTO_TYPES:
             self._tick_goto(sv, now)
         else:
             self._tick_target(sv, frame, now)
+
+    def _tick_stop(self, sv: StatusView, now: float) -> None:
+        t, s = self.task, sv.status
+        since = t.stop_requested_at
+        m = sv.motion
+        confirmed = (sv.fresh and s is not None and sv.received_at > since and s.mode == 0
+                     and abs(s.vx_mmps) <= STOP_V_MMPS and abs(s.wz_mradps) <= STOP_W_MRADPS
+                     and m.stopped and m.quiet_since is not None
+                     and now-max(since, m.quiet_since) >= STOP_HOLD_S
+                     and sv.received_at-since >= STOP_HOLD_S)
+        if confirmed:
+            t.stop_requested_at = None
+            if t.finish_after_stop:
+                detail, t.finish_after_stop = t.finish_after_stop, None
+                self._end("completed", "completed", detail + " 反馈已满足停稳条件。", stop=False)
+            else:
+                t.phase = t.state
+                self._emit("progress", {"paused": "任务已暂停", "cancelled": "任务已取消",
+                                        "failed": "任务已中止"}.get(t.state, "已请求停止") + "；反馈已满足停稳条件。")
+        elif now-since > self.cfg.link_loss_fail_s:
+            t.phase = "stop_unconfirmed"
+            if t.finish_after_stop:
+                t.state, t.finish_after_stop = "failed", None
+                self._emit("failed", "跟随时长已结束，但未能确认停稳；请检查控制反馈。")
+            else:
+                self._emit("progress", "停止已请求，但未能确认停稳；请检查控制反馈。")
+
+    def _arrival_ready(self, sv: StatusView, now: float, hold_s: float) -> bool:
+        t, m = self.task, sv.motion
+        if t.near_since is None:
+            t.near_since = now
+        self._verification_detail(f"到达条件待核验：{m.reason}。", now)
+        return (m.stopped and m.quiet_since is not None
+                and now-max(t.near_since, m.quiet_since) >= hold_s
+                and sv.received_at-t.near_since >= hold_s)
+
+    def _verification_detail(self, detail: str, now: float) -> None:
+        t = self.task
+        entering = t.phase != "verifying_arrival"
+        t.phase, t.detail = "verifying_arrival", detail
+        if entering or now-t.last_verify_emit >= 1.0:
+            t.last_verify_emit = now
+            self._emit("progress", detail)
 
     def _tick_goto(self, sv: StatusView, now: float) -> None:
         t, s = self.task, sv.status
@@ -324,6 +396,9 @@ class TaskRunner:
                 self._send_goal(now)
             return
         point = t.current_point
+        if t.confirmed and (abs(s.goal_x_mm-t.sent_goal[0]) > 30 or abs(s.goal_y_mm-t.sent_goal[1]) > 30):
+            self.fail("FPGA 当前目标与本任务目标不一致，任务中止。")
+            return
         if not t.confirmed:
             gx, gy = t.sent_goal
             same_goal = abs(s.goal_x_mm - gx) <= 30 and abs(s.goal_y_mm - gy) <= 30
@@ -342,8 +417,23 @@ class TaskRunner:
                 t.resend += 1
                 self._send_goal(now)
             return
+        if s.state != 2 or s.mode != 0:
+            t.near_since = t.arrival_wait_since = None
         if s.state == 2 and s.mode == 0:
-            self._arrived(now)
+            if math.hypot(s.x_mm-t.sent_goal[0], s.y_mm-t.sent_goal[1]) > self.cfg.goto_arrive_tol_m*1000:
+                self.fail("FPGA 报告到达，但估计位置仍超出目标容差。")
+                return
+            if t.arrival_wait_since is None:
+                t.arrival_wait_since = now
+            eligible = (abs(s.vx_mmps) <= STOP_V_MMPS and abs(s.wz_mradps) <= STOP_W_MRADPS
+                        and s.odom_ok and not self._preflight(sv, True))
+            if eligible and self._arrival_ready(sv, now, STOP_HOLD_S):
+                self._arrived(now)
+            elif now-t.arrival_wait_since > self.cfg.link_loss_fail_s:
+                self.fail("FPGA 报告到达，但位置/指令/反馈停稳条件未能确认。")
+            elif not eligible:
+                t.near_since = None
+                self._verification_detail("到达条件待核验：位置、定位质量或停止指令未满足。", now)
         elif s.state == 6:
             self.fail("FPGA 急停，任务中止。", stop=False)
         elif s.state == 3:
@@ -356,6 +446,7 @@ class TaskRunner:
         elif s.mode != 1:
             self.fail(f"FPGA 当前任务被外部改变（模式 {s.mode_name}，状态 {s.state_name}）。", stop=False)
         else:
+            t.near_since = t.arrival_wait_since = None
             if t.blocked_since is not None:
                 t.blocked_since, t.phase = None, "navigating"
             self._update_progress(s.distance_to_goal_mm() / 1000, now)
@@ -393,9 +484,12 @@ class TaskRunner:
             return
         if t.deadline is not None and now > t.deadline:
             if t.task_type == "follow_target":
-                self._end("completed", "completed", f"跟随「{t.spec.label}」达到时长上限，已停车。")
+                self.send(nv.encode_mode("idle"), True)
+                t.phase, t.stop_requested_at = "waiting_stop", now
+                t.finish_after_stop = f"跟随「{t.spec.label}」达到时长上限。"
+                self._emit("progress", t.finish_after_stop + " 已请求停止，等待反馈确认停稳。")
             else:
-                self.fail(f"{t.timeout_s:.0f} s 内未找到「{t.spec.label}」，已停车。")
+                self.fail(f"{t.timeout_s:.0f} s 内未找到「{t.spec.label}」。")
             return
         if not t.confirmed:
             if sv.received_at >= t.sent_at + 0.25 and s.mode in (2, 3):
@@ -414,7 +508,7 @@ class TaskRunner:
         self._forward_target(frame, now)
         tracking = s.mode == 2 and s.target_valid
         phase = "tracking" if tracking else "searching"
-        if phase != t.phase:
+        if phase != t.phase and not (tracking and t.phase == "verifying_arrival"):
             t.phase = phase
             t.near_since = None
             if tracking:
@@ -441,13 +535,15 @@ class TaskRunner:
             return
         near_goal = s.distance_to_goal_mm() / 1000 <= self.cfg.target_arrive_tol_m
         near_target = pick is not None and pick.distance_m <= self.cfg.target_arrive_dist_m
-        if near_goal and near_target and abs(s.vx_mmps) <= 30:
-            if t.near_since is None:
-                t.near_since = now
-            elif now - t.near_since >= self.cfg.arrive_hold_s:
+        if (near_goal and near_target and s.odom_ok and not self._preflight(sv, False)
+                and abs(s.vx_mmps) <= STOP_V_MMPS and abs(s.wz_mradps) <= STOP_W_MRADPS):
+            if t.near_track != pick.track_id:
+                t.near_since, t.near_track = None, pick.track_id
+            if self._arrival_ready(sv, now, max(STOP_HOLD_S, self.cfg.arrive_hold_s)):
                 t.remaining_m = 0.0
                 self._emit("arrived", f"已到达「{t.spec.label}」附近（约 {pick.distance_m:.2f} m）。", suffix="target")
-                self._end("completed", "completed", f"已找到「{t.spec.label}」并停在其附近。")
+                self.send(nv.encode_mode("idle"), True)
+                self._end("completed", "completed", f"已找到「{t.spec.label}」，反馈已满足停稳条件。", stop=False)
         else:
             t.near_since = None
 

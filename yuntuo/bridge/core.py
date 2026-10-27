@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from yuntuo.bridge.config import BridgeConfig, load_routes, load_waypoints
 from yuntuo.bridge.inputs import RateMeter
+from yuntuo.bridge.feedback import FEEDBACK_MAX_AGE_S, StopEvidence
 from yuntuo.bridge.poster import BackendPoster
 from yuntuo.bridge.tasks import StatusView, TaskRunner, utc_now
 from yuntuo.fpga_link import nv_proto as nv
@@ -22,6 +23,10 @@ from yuntuo.fpga_link.nvmp import MapPackageError, PriorMap, parse_package
 from yuntuo.fpga_link.telemetry import ControlFrame
 
 log = logging.getLogger("fpga_bridge")
+
+
+class MapUploadAborted(RuntimeError):
+    pass
 
 
 @dataclass
@@ -50,7 +55,12 @@ class FpgaBridge:
         self.status: nv.NavStatus | None = None
         self.status_at = -1e9
         self.status_rate = RateMeter()
+        self.status_candidate: tuple[nv.NavStatus, float] | None = None
+        self.status_quarantined = False
         self.map_ack: nv.MapAck | None = None
+        self.uploading_map = False
+        self.map_abort_requested = False
+        self.last_tx_at = -1e9
         self.poster = poster if poster is not None else BackendPoster(cfg.backend_url)
         self.perception = perception
         self.telemetry = telemetry
@@ -58,6 +68,7 @@ class FpgaBridge:
         self.nv_control_at = -1e9
         self.nv_control_rate = RateMeter()
         self.nv_control_seen = cfg.telemetry == "nv"
+        self.stop_evidence = StopEvidence()
         self.requests: queue.Queue[PendingRequest] = queue.Queue(maxsize=32)
         self.runner = TaskRunner(cfg, load_waypoints(cfg.waypoints_path), load_routes(cfg.routes_path),
                                  self._send, self._emit)
@@ -89,26 +100,52 @@ class FpgaBridge:
         """一次循环；返回是否有链路收发（无则调用方可小睡）"""
         now = self.clock()
         self._ensure_link(now)
-        while True:
+        self._service_requests(now)
+        if (self.pending_map is not None and self.link is not None
+                and self.status_view(now).fresh and self.status.mode == 0):
+            pkg, prior = self.pending_map
+            self.pending_map = None
+            self._upload_map(pkg, prior)
+        now = self.clock()
+        busy = self._io(now)
+        now = self.clock()
+        self.runner.on_tick(self.status_view(now), self._frame(), now)
+        busy = self._io(now, recv=False) or busy
+        self._publish(self.clock())
+        return busy
+
+    def _service_requests(self, now: float) -> None:
+        # Bounded even if HTTP producers keep filling the queue. Also called
+        # during map waits so ESTOP never waits for the whole package transfer.
+        for _ in range(32):
             try:
                 req = self.requests.get_nowait()
             except queue.Empty:
                 break
             req.response = self._handle_request(req, now)
             req.ready.set()
-        if self.pending_map is not None and self.link is not None:
-            pkg, prior = self.pending_map
-            self.pending_map = None
-            self._upload_map(pkg, prior)
-        busy = self._io(now)
-        self.runner.on_tick(self.status_view(now), self._frame(), now)
-        busy = self._io(now, recv=False) or busy
-        self._publish(now)
-        return busy
 
     def status_view(self, now: float) -> StatusView:
-        fresh = self.status is not None and now - self.status_at <= self.cfg.status_timeout_s
-        return StatusView(self.status, self.status_at, fresh)
+        self._refresh_legacy_feedback()
+        fresh = (self.status is not None and not self.status_quarantined
+                 and 0 <= now-self.status_at <= self.cfg.status_timeout_s)
+        age = self._control_age_us(self.stop_evidence.frame, now) if self.nv_control_seen else None
+        clock_ok = fresh and (not self.nv_control_seen or age is not None and -10000 <= age <= FEEDBACK_MAX_AGE_S*1e6)
+        return StatusView(self.status, self.status_at, fresh, self.stop_evidence.view(now, clock_ok=clock_ok))
+
+    def _control_age_us(self, frame: ControlFrame | None, now: float) -> int | None:
+        if frame is None or self.status is None:
+            return None
+        board_now = (self.status.t_us + int((now-self.status_at)*1e6)) & 0xFFFFFFFF
+        return ((board_now-frame.raw["timestamp_ms"]*1000+0x80000000) & 0xFFFFFFFF)-0x80000000
+
+    def _refresh_legacy_feedback(self) -> None:
+        if self.nv_control_seen or self.telemetry is None:
+            return
+        samples = self.telemetry.drain() if hasattr(self.telemetry, "drain") else [self.telemetry.latest()]
+        for frame, at in samples:
+            if frame is not None:
+                self.stop_evidence.ingest(frame, at)
 
     def _frame(self):
         return self.perception.latest() if self.perception is not None else None
@@ -116,6 +153,8 @@ class FpgaBridge:
     # ---------------------------------------------------------------- 链路
     def _send(self, msg: bytes, urgent: bool = False) -> None:
         if urgent:
+            if msg in (nv.encode_mode("idle"), nv.encode_mode("estop")):
+                self.outbox.clear()  # An older queued GOAL/TARGET must not follow a stop.
             self.outbox.appendleft(msg)
         else:
             self.outbox.append(msg)
@@ -143,19 +182,28 @@ class FpgaBridge:
             pass
         self.link = None
         self.reconnect_at = now + 2.0
+        self.outbox.clear()
+        self.pending_map = None
+        self.status_quarantined = True
+        self.runner.fail("FPGA 链路断开，原任务中止；重连后需显式解除锁定并重新下发任务。", stop=False, now=now)
+
+    def _transmit(self, msg: bytes) -> None:
+        self.link.send(msg)
+        self.last_tx_at = self.clock()
 
     def _io(self, now: float, recv: bool = True) -> bool:
         if self.link is None:
             return False
         busy = False
         try:
-            if (self.link.kind == "udp" and now - self.status_at > 1.0 and now - self.last_keepalive > 1.0
-                    and not self.outbox):
-                # 网口：FPGA 回发给最近一次的合法报文来源；found=0 的 TARGET 固件直接忽略，可当作保活
+            if now - self.last_tx_at >= 0.1 and not self.outbox:
+                # All transports must refresh the 250ms host lease. A heartbeat
+                # never unlocks ESTOP; first connection/reconnection needs an
+                # explicit operator MODE idle, rather than automatic re-arming.
                 self.last_keepalive = now
                 self.outbox.append(nv.encode_target(0, 0, found=False))
             while self.outbox:
-                self.link.send(self.outbox.popleft())
+                self._transmit(self.outbox.popleft())
                 busy = True
             if recv:
                 for i in range(4):
@@ -170,20 +218,48 @@ class FpgaBridge:
 
     def _on_message(self, msg, now: float) -> None:
         if isinstance(msg, nv.NavStatus):
-            if self.status is not None and ((msg.t_us - self.status.t_us) & 0xFFFFFFFF) >= 0x80000000:
-                # Reset/backward status: invalidate control until new samples arrive.
+            delta = (msg.t_us-self.status.t_us) & 0xFFFFFFFF if self.status is not None else 1
+            if delta == 0:
+                return  # receipt is not evidence that the FPGA clock is advancing
+            if delta >= 0x80000000:
+                # Could be reordering, reset, or another stream. Quarantine first;
+                # rebase only after the old stream expires and two advancing samples.
+                candidate = self.status_candidate
+                self.status_candidate = (msg, now)
+                self.status_quarantined = True
+                self.outbox.clear()
                 self.nv_control = None
                 self.nv_control_at = -1e9
+                self.stop_evidence.reset()
+                if candidate is None or now-self.status_at <= self.cfg.status_timeout_s:
+                    return
+                advance = ((msg.t_us-candidate[0].t_us) & 0xFFFFFFFF)/1e6
+                elapsed = now-candidate[1]
+                if not (0 < elapsed <= self.cfg.status_timeout_s and 0 < advance < self.cfg.status_timeout_s
+                        and abs(advance-elapsed) <= 0.1):
+                    return
+                self.runner.fail("FPGA 时钟重置或状态流切换，原任务中止；请显式解除锁定后重新发起任务。", stop=False, now=now)
+                self.prior_map, self.pending_map = None, None
+                self.map_detail = "FPGA 已复位，先验地图缓存失效；请重新下发。"
+                self.last_map_post = -1e9
+            self.status_candidate, self.status_quarantined = None, False
             self.status, self.status_at = msg, now
             self.status_rate.mark(now)
+            if msg.mode == 4 or msg.state == 6:
+                self.outbox.clear()
+                self.runner.fail("FPGA 已锁定急停，原任务中止；不会自动解除或继续任务。", stop=False, now=now)
         elif isinstance(msg, nv.MapAck):
             self.map_ack = msg
         elif isinstance(msg, ControlFrame):
-            previous = self.nv_control
-            if previous is not None:
-                delta = (msg.sequence - previous.sequence) & 0xFFFF
-                if delta == 0 or delta >= 0x8000:
-                    return  # duplicate/reordered samples do not refresh health
+            if self.status_quarantined:
+                return
+            if not self.nv_control_seen:
+                self.stop_evidence.reset()  # never join evidence from different transports
+            age = self._control_age_us(msg, now)
+            clock_ok = (self.status is not None and 0 <= now-self.status_at <= self.cfg.status_timeout_s
+                        and age is not None and -10000 <= age <= FEEDBACK_MAX_AGE_S*1e6)
+            if not self.stop_evidence.ingest(msg, now, clock_ok=clock_ok):
+                return
             self.nv_control, self.nv_control_at = msg, now
             self.nv_control_seen = True  # never fall back to a stale/mock secondary stream
             self.nv_control_rate.mark(now)
@@ -191,6 +267,10 @@ class FpgaBridge:
     # ---------------------------------------------------------------- 请求
     def _handle_request(self, req: PendingRequest, now: float) -> dict:
         p = req.payload
+        if self.uploading_map or self.pending_map is not None:
+            stopping = req.kind == "estop" or (req.kind == "mission" and p.get("command") in ("pause_task", "cancel_task"))
+            if not stopping:
+                return {"success": False, "data": {"accepted": False, "detail": "地图上传中，仅接受暂停、取消和急停。"}}
         if req.kind == "mission":
             command = str(p.get("command") or "")
             args = p.get("payload") if isinstance(p.get("payload"), dict) else {}
@@ -205,6 +285,9 @@ class FpgaBridge:
         if req.kind == "estop":
             engage = bool(p.get("engage", True))
             if engage:
+                self.outbox.clear()
+                self.pending_map = None
+                self.map_abort_requested = True
                 self._send(nv.encode_mode("estop"), urgent=True)
                 self.runner.estop()
                 detail = "已向 FPGA 下发急停（MODE estop）。"
@@ -226,6 +309,15 @@ class FpgaBridge:
             return {"success": True, "data": {"accepted": self.link is not None,
                                               "detail": f"已下发初始位姿 ({x:.2f}, {y:.2f}, {math.degrees(yaw):.0f}°)。"}}
         if req.kind == "map":
+            sv = self.status_view(now)
+            if not sv.fresh or sv.status.mode != 0:
+                return {"success": False, "data": {"accepted": False, "detail": "地图操作需要新鲜的FPGA空闲状态；请先显式解除导航急停。"}}
+            if p.get("clear"):
+                self._send(nv.encode_map_clear())
+                self.prior_map = None
+                self.map_detail = "已请求清除先验地图，等待FPGA无图状态。"
+                self.last_map_post = -1e9
+                return {"success": True, "data": {"accepted": True, "detail": self.map_detail}}
             try:
                 pkg = Path(str(p["path"])).read_bytes()
                 prior = parse_package(pkg)
@@ -242,35 +334,46 @@ class FpgaBridge:
         self.pending_map = (pkg, parse_package(pkg))
 
     def _upload_map(self, pkg: bytes, prior: PriorMap) -> bool:
-        """阻塞下发（数秒）。串口注入不丢包，直接顺序发；网口按 MAP_ACK 的期望偏移重发。"""
-        link = self.link
-        t0 = time.monotonic()
+        """Application ACK barrier/progress/terminal checks on every transport.
+
+        Poll heartbeats and urgent requests during waits. A UART transport ACK
+        is not proof of CPU application progress, and RECV is not terminal.
+        """
+        t0 = self.clock()
+        self.uploading_map, self.map_abort_requested = True, False
+        self.map_detail = f"正在下发先验地图（{prior.size} B）。"
+        def exchange(message: bytes, accept) -> nv.MapAck:
+            for _ in range(21):
+                self._transmit(message)
+                ack = self._wait_map_ack(0.35, 1, accept=accept)
+                if ack is not None:
+                    return ack
+            raise LinkError("地图应用应答超时（已完成有界重发）")
         try:
             self.map_ack = None
-            link.send(nv.encode_map_begin(len(pkg)))
-            off, tries = 0, 0
+            exchange(nv.encode_map_begin(len(pkg)), lambda a: a.map_state == 1 and a.next_offset == 0)
+            self.prior_map = None
+            off = 0
             while off < len(pkg):
-                link.send(nv.encode_map_data(off, pkg[off:off + nv.MAP_CHUNK]))
-                if link.reliable:
-                    off += nv.MAP_CHUNK
-                    continue
-                ack = self._wait_map_ack(0.3, 5)
-                if ack is not None and ack.next_offset > off:
-                    off, tries = ack.next_offset, 0
-                else:
-                    tries += 1
-                    if tries > 20:
-                        raise LinkError(f"地图下发在偏移 {off} 失败")
-            link.send(nv.encode_map_end())
-            ack = self._wait_map_ack(0.3, 20, final=True)
+                end = min(off + nv.MAP_CHUNK, len(pkg))
+                ack = exchange(nv.encode_map_data(off, pkg[off:end]), lambda a: a.map_state in (3, 4)
+                               or (a.map_state == 1 and a.next_offset == end))
+                if ack.map_state in (3, 4):
+                    self.map_detail = f"地图在偏移{off}被FPGA拒绝：{ack.map_state_name}"
+                    return False
+                off = end
+            ack = exchange(nv.encode_map_end(), lambda a: a.map_state in (2, 3, 4))
+        except MapUploadAborted:
+            self.map_detail = "地图上传已因急停中止。"
+            return False
         except (OSError, LinkError) as exc:
             self.map_detail = f"地图下发失败：{exc}"
             self._drop_link(exc, self.clock())
             return False
-        ok = ack is not None and ack.map_state == 2
-        if ack is None and self.status is not None and (self.status.loc_state or 0) != 0:
-            ok = True       # 串口只保留最新一条报文，MAP_ACK 可能被随后的 STATUS 覆盖：以 loc_state 离开"无图"为准
-        self.map_detail = (f"先验地图已加载（{prior.size} B，{time.monotonic() - t0:.1f} s），请下发初始位姿对准"
+        finally:
+            self.uploading_map = False
+        ok = ack.map_state == 2 and ack.next_offset == len(pkg)
+        self.map_detail = (f"先验地图已加载（{prior.size} B，{self.clock() - t0:.1f} s），请下发初始位姿对准"
                            if ok else f"地图下发后板上状态：{ack.map_state_name if ack else '无应答'}")
         log.info(self.map_detail)
         if ok:
@@ -278,13 +381,20 @@ class FpgaBridge:
             self.last_map_post = -1e9
         return ok
 
-    def _wait_map_ack(self, timeout: float, tries: int, final: bool = False) -> nv.MapAck | None:
-        deadline = time.monotonic() + timeout * tries
-        while time.monotonic() < deadline:
-            data = self.link.recv(min(timeout, max(0.0, deadline-time.monotonic())))
+    def _wait_map_ack(self, timeout: float, tries: int, *, accept) -> nv.MapAck | None:
+        deadline = self.clock() + timeout * tries
+        while self.clock() < deadline:
+            self._service_requests(self.clock())
+            self._io(self.clock(), recv=False)
+            if self.map_abort_requested:
+                raise MapUploadAborted()
+            if self.link is None:
+                raise LinkError("地图上传期间链路断开")
+            data = self.link.recv(min(0.025, max(0.0, deadline-self.clock())))
             msg = nv.decode(data) if data else None
             self._on_message(msg, self.clock())
-            if isinstance(msg, nv.MapAck) and (not final or msg.map_state != 1):
+            self._publish(self.clock())
+            if isinstance(msg, nv.MapAck) and accept(msg):
                 return msg
         return None
 
@@ -380,16 +490,15 @@ class FpgaBridge:
             if fresh:
                 # Both timestamps originate from the same FPGA reset/50MHz clock.
                 # Convert modulo the STATUS 32-bit microsecond timer, including wrap.
-                board_now = (s.t_us + int((now-self.status_at)*1e6)) & 0xFFFFFFFF
-                age_us = ((board_now-frame.raw["timestamp_ms"]*1000+0x80000000) & 0xFFFFFFFF)-0x80000000
+                age_us = self._control_age_us(frame, now)
                 fresh = -100000 <= age_us <= 1000000
             rate = self.nv_control_rate.rate(now)
         else:
             if self.telemetry is None:
                 return out
-            frame, at = self.telemetry.latest()
-            fresh = frame is not None and time.monotonic() - at <= 1.0
-            rate = self.telemetry.rate.rate(time.monotonic())
+            frame, at = self.stop_evidence.frame, self.stop_evidence.received_at
+            fresh = frame is not None and 0 <= now-at <= 1.0
+            rate = self.telemetry.rate.rate(now)
         out["control_link"] = (online if fresh else "offline")
         out["telemetry_rate_hz"] = round(rate, 1)
         if frame is not None:
@@ -397,7 +506,7 @@ class FpgaBridge:
                 "transport": "nv_udp" if self.nv_control_seen else "legacy_telemetry",
                 "source": "mock" if self.cfg.link_is_mock else "fpga",
                 "version": frame.version, "fresh": bool(fresh),
-                "receive_age_ms": max(0, round(((now if self.nv_control_seen else time.monotonic())-at)*1000, 1)),
+                "receive_age_ms": max(0, round((now-at)*1000, 1)),
                 "measurement_age_ms": round(age_us/1000, 1) if age_us is not None else None,
                 "raw": dict(frame.raw),
             }

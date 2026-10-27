@@ -44,10 +44,15 @@ class StateStore:
                 "updated_at": self._timestamp(),
             }
         )
+        real_fpga = (platform_status.source == "fpga_bridge" and
+                     (platform_status.nav_link == "online" or (platform_status.nav_link_kind or "").startswith("uart:")))
+        if real_fpga:
+            latest_state = self._without_unmeasured_fields(latest_state)
         self._latest_state = latest_state
         return self.get_latest_state()
 
     def switch_mode(self, system_mode: SystemMode) -> RobotState:
+        was_mock = self._system_mode.mode == "mock"
         self._system_mode = system_mode.model_copy(deep=True)
         latest_state = self.get_latest_state().model_copy(
             update={
@@ -55,8 +60,20 @@ class StateStore:
                 "updated_at": self._timestamp(),
             }
         )
+        if was_mock and system_mode.mode == "real":
+            latest_state = self._without_unmeasured_fields(latest_state)
         self._latest_state = latest_state
         return self.get_latest_state()
+
+    @staticmethod
+    def _without_unmeasured_fields(state: RobotState) -> RobotState:
+        # This FPGA profile has no battery/environment measurement channel.
+        # Do not preserve values from the previous mock snapshot.
+        return state.model_copy(update={
+            "device_status": state.device_status.model_copy(update={"battery_percent": None}),
+            "env_sensor": state.env_sensor.model_copy(update={
+                "temperature_c": None, "humidity_percent": None, "status": "offline"}),
+        })
 
     def publish_mock_state(self, state: RobotState) -> RobotState | None:
         if self._system_mode.mode != "mock":

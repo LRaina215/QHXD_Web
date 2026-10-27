@@ -1,7 +1,7 @@
 """先验地图包 .nvmp（导航仓库 model/prior_map.py 生成）的只读解析：校验 + 取出全局代价图给网页显示。
 
-包格式（小端）：头 40 B：'NVMP' | u16 版本 | u16 标志 | i32 ox, oy | u32 n_struct | i32 gox, goy | u16 gnx, gny
-              | u32 body_crc32 | u32 body_len；体：n_struct × 5 B 结构槽 + gnx×gny 字节代价
+包格式（小端）：头 48 B：'NVMP' | u16 版本 | u16 几何 | i32 ox, oy | u32 n_struct | i32 gox, goy | u16 gnx, gny
+              | u32 body_crc32 | u32 body_len | u32 profile | i16 ZHI, ZLO；体：n_struct × 5 B 结构槽 + gnx×gny 字节代价
               （行优先，0..200 可通行代价，254 致命，255 未知）。代价图一格 = 2 个全局 5 cm 格 = 10 cm。
 """
 from __future__ import annotations
@@ -11,9 +11,14 @@ import struct
 import zlib
 from dataclasses import dataclass
 
-HDR = struct.Struct("<4sHHiiIiiHHII")
+HDR = struct.Struct("<4sHHiiIiiHHIIIhh")
 MAGIC = b"NVMP"
-SUPPORTED_VERSIONS = (2,)
+SUPPORTED_VERSIONS = (3,)
+GEOMETRY_FLAGS = 0x0107
+PROFILE_ID = 0x33580001
+STRUCT_CELLS = 128 * 128
+GRID_MAX = 64
+ZHI_MM, ZLO_MM = 350, -300
 COST_CELL_M = 0.10
 COST_LETHAL = 254
 COST_UNKNOWN = 255
@@ -51,15 +56,26 @@ class PriorMap:
 
 def parse_package(data: bytes) -> PriorMap:
     if len(data) < HDR.size:
-        raise MapPackageError("地图包长度不足 40 字节")
-    magic, ver, _flags, _ox, _oy, n, gox, goy, gnx, gny, crc, blen = HDR.unpack_from(data)
+        raise MapPackageError("地图包长度不足 48 字节")
+    magic, ver, flags, _ox, _oy, n, gox, goy, gnx, gny, crc, blen, profile, zhi, zlo = HDR.unpack_from(data)
     if magic != MAGIC:
         raise MapPackageError("不是 .nvmp 地图包（魔数不符）")
     if ver not in SUPPORTED_VERSIONS:
         raise MapPackageError(f"地图包版本 {ver}，固件只接受版本 {SUPPORTED_VERSIONS}（用 tools/map_tool.py 重新生成）")
+    if (flags, profile, zhi, zlo) != (GEOMETRY_FLAGS, PROFILE_ID, ZHI_MM, ZLO_MM):
+        raise MapPackageError("地图几何/profile/ZHI/ZLO与当前SLF128固件不匹配")
+    if n > STRUCT_CELLS or gnx > GRID_MAX or gny > GRID_MAX:
+        raise MapPackageError("地图超出16384结构槽或64×64代价图容量")
+    if blen != 5 * n + gnx * gny or len(data) != HDR.size + blen:
+        raise MapPackageError("地图体长或整包长度不符")
     body = data[HDR.size:HDR.size + blen]
     if len(body) != blen or zlib.crc32(body) != crc:
         raise MapPackageError("地图包损坏（长度或 CRC 不符）")
+    for off in range(0, 5 * n, 5):
+        slot = int.from_bytes(body[off:off + 2], "little")
+        word = int.from_bytes(body[off + 2:off + 5], "little")
+        if slot >= STRUCT_CELLS or word > 0x3FFFF:
+            raise MapPackageError("地图结构槽地址或18位结构字越界")
     cost = body[5 * n:]
     if len(cost) != gnx * gny:
         raise MapPackageError(f"代价图大小 {len(cost)} 与 {gnx}×{gny} 不符")
@@ -81,4 +97,5 @@ def build_test_package(gox: int, goy: int, cost_rows: list[list[int]], n_struct:
     gny = len(cost_rows)
     gnx = len(cost_rows[0]) if gny else 0
     body = bytes(5 * n_struct) + bytes(v for row in cost_rows for v in row)
-    return HDR.pack(MAGIC, 2, 0, 0, 0, n_struct, gox, goy, gnx, gny, zlib.crc32(body), len(body)) + body
+    return HDR.pack(MAGIC, 3, GEOMETRY_FLAGS, 0, 0, n_struct, gox, goy, gnx, gny,
+                    zlib.crc32(body), len(body), PROFILE_ID, ZHI_MM, ZLO_MM) + body

@@ -422,7 +422,9 @@ class SqlitePersistence:
                 (
                     state.updated_at.isoformat(),
                     state.task_status.state,
-                    state.device_status.battery_percent,
+                    # Legacy index column is NOT NULL; -1 is internal unknown.
+                    # The canonical API/snapshot JSON retains null, never 0/100.
+                    state.device_status.battery_percent if state.device_status.battery_percent is not None else -1,
                     json.dumps(payload, ensure_ascii=False),
                 ),
             )

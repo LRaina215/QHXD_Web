@@ -35,7 +35,7 @@ class LinkError(IOError):
 
 class NavLink(Protocol):
     kind: str
-    reliable: bool               # True：报文不会在链路上丢（串口注入），地图下发无需逐块确认
+    reliable: bool               # Transport property only; application MAP_ACK is still required.
 
     def send(self, msg: bytes) -> None: ...
 

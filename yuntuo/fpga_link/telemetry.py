@@ -87,15 +87,15 @@ class ControlFrame:
     def roll_deg(self) -> float | None:
         if not self.calibrated:
             return None
-        gy, gz = self.raw["gravity_y_q12"] / Q12, self.raw["gravity_z_q12"] / Q12
-        return math.degrees(math.atan2(-gy, -gz))
+        gx, gz = self.raw["gravity_x_q12"] / Q12, self.raw["gravity_z_q12"] / Q12
+        return math.degrees(math.atan2(gx, -gz))
 
     @property
     def pitch_deg(self) -> float | None:
         if not self.calibrated:
             return None
         gx, gy, gz = (self.raw[f"gravity_{a}_q12"] / Q12 for a in "xyz")
-        return math.degrees(math.atan2(gx, math.hypot(gy, gz)))
+        return math.degrees(math.atan2(gy, math.hypot(gx, gz)))
 
     @property
     def yaw_rate_radps(self) -> float:

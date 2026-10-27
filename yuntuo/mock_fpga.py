@@ -301,7 +301,7 @@ class MockFpgaCore:
             "timestamp_ms": int((now - self.t0) * 1000) & 0xFFFFFFFF, "sequence": seq & 0xFFFF,
             "status": tm.ST_BMI_READY | (0 if self.mode == 4 else tm.ST_ACTIVE),
             "az_raw": -10920, "wz_q12": int(self.wz * 4096),
-            "gravity_x_q12": int(math.sin(pitch) * 4096), "gravity_z_q12": int(-math.cos(pitch) * 4096),
+            "gravity_y_q12": int(math.sin(pitch) * 4096), "gravity_z_q12": int(-math.cos(pitch) * 4096),
             "forward_q12": int(self.vx / V_MAX * 4096), "yaw_q12": int(self.wz / W_MAX * 4096),
             "height_q12": int(0.16 * 4096),
             "left_target_mmps": int(left * 1000), "right_target_mmps": int(right * 1000),

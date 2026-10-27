@@ -1,0 +1,47 @@
+{
+  "recorded_at": "2026-10-27T14:02:16.784012+08:00",
+  "stage": "software_only_operator_deferred_FPGA_switch",
+  "software_tests": {
+    "focused_initial_contracts": {
+      "passed": 93
+    },
+    "full_yuntuo": {
+      "passed": 117,
+      "skipped": 1,
+      "skip": "cv2 unavailable for existing stream test"
+    },
+    "targeted_after_mock_axis_fix": {
+      "passed": 39
+    },
+    "backend_full": {
+      "passed": 64,
+      "warnings": 1
+    },
+    "backend_final_unknown_fields_boundary": {
+      "passed": 5
+    },
+    "confirmed_clock_reset_map_cache": {
+      "passed": 1
+    }
+  },
+  "frontend": {
+    "typecheck": true,
+    "production_build": true,
+    "entry_asset": "index-BdtanrPA.js",
+    "warning": "existing HLS chunk exceeds500kB"
+  },
+  "scope": [
+    "No device access by tests",
+    "600s heartbeat cases use a simulated clock",
+    "ACK/CPU lease service are explicit test doubles",
+    "No real 10min/30min soak or physical standstill proof"
+  ],
+  "physical_state": {
+    "reported_image": "hold",
+    "JTAG_used": false,
+    "CPU_reset": false,
+    "actual_motion_commands": 0,
+    "Flash_written": false
+  },
+  "planned_RK_deployment": "Backup selected mock env, fast-forward committed bundle, restart backend/mock/bridge only; keep hardware profile unselected"
+}

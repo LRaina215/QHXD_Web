@@ -179,7 +179,7 @@ class DeviceStatus(ContractModel):
     # Real 模式映射约定：
     # device_status 由 RK3588 本机真实链路归一化后提供，
     # 后端继续复用该公开契约，不新增 C 板平行字段。
-    battery_percent: int | None = Field(default=100, ge=0, le=100, description="电量百分比")
+    battery_percent: int | None = Field(default=None, ge=0, le=100, description="电量百分比；无真实来源时为空")
     emergency_stop: bool = Field(default=False, description="急停状态")
     fault_code: str | None = Field(default=None, description="故障码")
     online: bool = Field(default=True, description="节点在线状态")
@@ -188,9 +188,9 @@ class DeviceStatus(ContractModel):
 class EnvSensor(ContractModel):
     # Real 模式映射约定：
     # 若真实环境传感器未就绪，允许上送 null 值占位，并以 status 表示可用性。
-    temperature_c: float | None = Field(default=25.0, description="温度，单位摄氏度")
-    humidity_percent: float | None = Field(default=45.0, description="湿度百分比")
-    status: SensorStatusValue = Field(default="mock", description="传感器状态")
+    temperature_c: float | None = Field(default=None, description="温度，单位摄氏度")
+    humidity_percent: float | None = Field(default=None, description="湿度百分比")
+    status: SensorStatusValue = Field(default="offline", description="传感器状态")
 
 
 class AlertEvent(ContractModel):

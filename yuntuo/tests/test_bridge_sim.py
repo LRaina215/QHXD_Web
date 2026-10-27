@@ -46,8 +46,9 @@ def test_nv_control_source_and_sample_freshness(tmp_path):
     assert bridge.platform_status(11.1)["wheel_left_mps"] is None
     assert not bridge.platform_status(11.1)["control_telemetry"]["fresh"]
     # Newly received but old measurement cannot restore health.
-    bridge._on_message(sample(1, 10), 10.5)
-    assert bridge.platform_status(10.5)["control_link"] == "offline"
+    bridge._on_message(sample(1, 10), 11.2)
+    assert bridge.nv_control_at == 10.01  # backward measurement is rejected, not installed
+    assert bridge.platform_status(11.2)["control_link"] == "offline"
 
 
 class SimLink:
@@ -58,6 +59,7 @@ class SimLink:
         self.core, self.clock = core, clock
         self.replies, self.sent = [], []
         self.next_status = 0.0
+        self.next_telemetry, self.telemetry_seq = 0.0, 0
         self.alive = True
 
     def send(self, msg):
@@ -75,6 +77,10 @@ class SimLink:
         if now >= self.next_status:
             self.next_status = now + 0.2
             return nv.encode_status(self.core.status(now))
+        if now >= self.next_telemetry:
+            self.next_telemetry = now + 0.02
+            self.telemetry_seq += 1
+            return b"NV\x01\x83" + self.core.telemetry_frame(self.telemetry_seq, now)
         return None
 
     def close(self):
@@ -217,7 +223,7 @@ def test_search_red_bottle_stops_near_it(sim):
     d = math.hypot(sim.core.x - red.x, sim.core.y - red.y)
     assert 0.5 < d < 1.05
     assert sim.core.mode == 0
-    sent_targets = [nv.decode_host(m) for m in sim.link.sent if m[3] == nv.TARGET]
+    sent_targets = [nv.decode_host(m) for m in sim.link.sent if m[3] == nv.TARGET and nv.decode_host(m).fields["found"]]
     assert sent_targets and all(t.fields["cls"] == 39 and t.fields["latency_ms"] <= 400 for t in sent_targets)
     assert "arrived" in sim.events()
 
@@ -227,7 +233,7 @@ def test_search_unknown_target_times_out(sim):
     sim.command("search_target", target_class="cup", timeout_s=15)
     sim.run(20)
     assert task_state(sim) == "failed" and sim.core.mode == 0
-    assert not any(m[3] == nv.TARGET for m in sim.link.sent)
+    assert not any(m[3] == nv.TARGET and nv.decode_host(m).fields["found"] for m in sim.link.sent)
 
 
 def test_follow_person_until_timeout(sim):
@@ -264,13 +270,14 @@ def test_link_loss_fails_active_task(sim):
 
 
 def test_prior_map_upload_and_localization_gate(sim):
-    pkg = build_test_package(-10, -30, [[0] * 70 for _ in range(60)])
+    sim.run(0.5)  # Current map operations require an observed fresh IDLE state.
+    pkg = build_test_package(-10, -30, [[0] * 64 for _ in range(60)])
     (sim.tmp / "field.nvmp").write_bytes(pkg)
     resp = sim.bridge._handle_request(PendingRequest("map", {"path": str(sim.tmp / "field.nvmp")}), sim.clock.t)
     assert resp["data"]["accepted"]
     sim.run(0.5)
     assert sim.bridge.prior_map is not None and sim.core.map_loaded
-    assert sim.poster.latest["map"][1]["width"] == 70
+    assert sim.poster.latest["map"][1]["width"] == 64
     assert "初始位姿" in sim.command("go_to_waypoint", waypoint_id="wp_a")["detail"]
     sim.bridge._handle_request(PendingRequest("set_pose", {"x": 0, "y": 0, "yaw": 0}), sim.clock.t)
     sim.run(2.5)

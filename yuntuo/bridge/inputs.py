@@ -109,20 +109,30 @@ class TelemetryReader(threading.Thread):
         self.lock = threading.Lock()
         self._latest: ControlFrame | None = None
         self._latest_at = 0.0
+        self._samples: deque[tuple[ControlFrame, float]] = deque(maxlen=256)
         self.rate = RateMeter()
 
     def latest(self) -> tuple[ControlFrame | None, float]:
         with self.lock:
             return self._latest, self._latest_at
 
+    def drain(self) -> list[tuple[ControlFrame, float]]:
+        """Keep intermediate motion/fault samples for the task stop gate."""
+        with self.lock:
+            samples = list(self._samples)
+            self._samples.clear()
+            return samples
+
     def _ingest(self, data: bytes) -> None:
         frames = self.decoder.feed(data)
         if frames:
             now = time.monotonic()
             with self.lock:
-                self._latest, self._latest_at = frames[-1], now
                 for _ in frames:
                     self.rate.mark(now)
+                for frame in frames:
+                    self._samples.append((frame, now))
+                self._latest, self._latest_at = frames[-1], now
 
     def run(self) -> None:
         kind, _, rest = self.spec.partition(":")

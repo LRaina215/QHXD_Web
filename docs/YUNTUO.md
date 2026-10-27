@@ -32,7 +32,7 @@ RK3588 只做任务层——视觉、语音、任务编排与 Web 中台。本�
 ```
 yuntuo/
   fpga_link/   nv_proto.py（NV 报文）· links.py（板载串口邮箱注入 / UDP）· telemetry.py（控制 V1/V2 遥测）· nvmp.py（先验地图包）
-  bridge/      config · core（链路与上送）· tasks（任务状态机）· targets（目标筛选）· inputs（感知 / 遥测输入）· server（HTTP）
+  bridge/      config · core（链路与上送）· tasks（任务状态机）· feedback（反馈停稳证据）· targets（目标筛选）· inputs（感知 / 遥测输入）· server（HTTP）
   perception/  sources（Astra / 回放）· detectors（RKNN / 颜色块）· geometry（深度 -> 机身系）· color · tracker · pipeline · node
   mock_fpga.py  按固件语义模拟 FPGA 导航 + 虚拟相机 + 控制遥测；mock_camera.py 合成画面
   tests/       协议、链路、遥测、感知、bridge + 模拟器闭环（仿真时钟，确定性）
@@ -45,11 +45,11 @@ systemd/  yuntuo-fpga-bridge.service · yuntuo-perception.service
 
 | 网页 / 语音任务 | fpga_bridge 下发 | 完成判据 |
 |---|---|---|
-| 定点 `go_to_waypoint`、返航 `return_home` | GOAL（地图系 mm，朝向发"不关心"，`YUNTUO_SEND_GOAL_YAW=true` 才发） | STATUS 的 goal 与下发一致且 state=到达、mode=空闲；1.2 s 未确认重发，3 次失败 |
+| 定点 `go_to_waypoint`、返航 `return_home` | GOAL（地图系 mm，朝向发"不关心"，`YUNTUO_SEND_GOAL_YAW=true` 才发） | 完成前重新核对 goal（每轴误差≤30 mm）、当前估计位置距本任务目标≤150 mm、state=到达、mode=空闲、定位/里程计有效，以及下述连续反馈停稳条件；1.2 s 未受理重发，3 次失败 |
 | 巡检 `start_patrol` | 逐点 GOAL，点间按路线 `stop_seconds` 停留 | 每点一个 arrived 事件，最后 completed |
-| 寻找目标 `search_target` | MODE 探索 + 持续 TARGET（只转发匹配类别 / 颜色的目标，≤12 Hz，时延 > 400 ms 的帧丢弃） | FPGA 转跟踪，站位点 0.25 m 内、目标距离 ≤ 1.05 m、速度≈0 持续 1 s；完成后 MODE 空闲 |
-| 跟随 `follow_target` | 同上，类别 person | 不自动完成，取消或超时（缺省 300 s）结束 |
-| 暂停 / 取消 | MODE 空闲（上下文保留在 bridge） | 恢复时重发当前 GOAL 或 MODE 探索 |
+| 寻找目标 `search_target` | MODE 探索 + 持续 TARGET（只转发匹配类别 / 颜色的目标，≤12 Hz，时延 > 400 ms 的帧丢弃） | 跟踪且目标有效，站位点0.25 m内、目标距离≤1.05 m、同一目标ID与合格反馈持续1 s；完成后MODE空闲 |
+| 跟随 `follow_target` | 同上，类别 person | 超时（缺省300 s）先请求停止，确认停稳后completed；10 s未确认则failed / stop_unconfirmed；取消为独立业务结果 |
+| 暂停 / 取消 | MODE 空闲（暂停上下文保留在 bridge） | 业务先paused / cancelled，phase=waiting_stop；新空闲状态及请求后的500 ms反馈满足后更新文案，10 s未确认则phase=stop_unconfirmed；恢复时重发GOAL或MODE探索 |
 | 急停 | MODE 急停（优先发送）；解除 = MODE 空闲 | 控制侧锁存的急停需在控制板上复位 |
 
 FPGA 自己负责：目标 1.5 s 未更新回到探索、站位 0.7 m、受阻重规划。bridge 只在受阻持续 `YUNTUO_BLOCKED_FAIL_SECONDS`（25 s）
@@ -96,7 +96,7 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 打开网页，右上角切到"实车"：链路显示"模拟"，地图上能看到车、点位与轨迹，视觉窗口是合成画面（SIMULATION）。
 可直接试"寻找红色水瓶""跟随我""前往 B 点""巡检"、急停。虚拟场景：红瓶 (3.6, 1.3)、蓝瓶 (1.6, −1.7)、绕圈走动的人。
 
-测试：`python -m pytest yuntuo/tests`（38 项，含 bridge + 模拟器闭环、大模型 / 语音合成服务）；`cd backend && python -m pytest`（48 项）。
+测试：`python -m pytest yuntuo/tests`（含bridge + 模拟器闭环、反馈/任务回放、大模型/语音服务）；`cd backend && python -m pytest`。2026-10-25结果见第10节，不将历史测试数量当作当前验收。
 
 ## 6. 上 RK3588（2026-10-23 已切换完成）
 
@@ -190,4 +190,35 @@ cd frontend && npm ci && npm run build && npx vite preview --port 4173   # 或 n
 
 验证：FPGA原UART位级对照和8个完整UDP遥测包/3个邮箱包共存通过，实际RTL包由生产Web解码后可还原原帧；桥接与协议46项通过、1项跳过；后端新增全字段请求/响应合同1项通过。测试环境`F:/yuntuo_test_env_20261023`按仓库依赖单独建立，不改变全局环境。首次后端整套在Windows出现SQLite连接未关闭的清理失败，并因进程探测os.kill(pid,0)在Windows发送CTRL_C_EVENT而中断。已在独立后续修复中补事务结束后的连接关闭、测试读连接关闭，并将Windows进程探测改为只读进程句柄查询；最终后端52项全通过（仅第三方TestClient弃用提示1项），失败记录保留。
 
+## 10. 任务完成、停止反馈与状态推进（2026-10-25，本地修复）
+
+完成依据由`bridge/feedback.py`提供，`StatusView.motion`传入任务状态机。两轮观测速度分别≤5 mm/s、融合偏航角速度≤20 mrad/s；现有cm/s字段因此只能为0，另用`left_delta/right_delta`非零作为运动否决。要求BMI就绪、融合完成、无校准中/零偏可疑/传感器/策略/执行器/电机故障或停止锁存。反馈接收年龄≤50 ms，NV还核对同板测量年龄（−10…50 ms，负向10 ms仅作时间对齐余量）。
+
+停稳证据需连续500 ms、控制序号逐次+1、板端毫秒时间前进且间隔≤50 ms，本机接收和板端时间跨度均满足；丢帧、超时、运动或故障重新计时。定点还需到达条件持续500 ms，找物保持原1 s；最终NAV状态须前进到该观察窗口末端，不能只轮询一份旧到达包。暂停、取消及跟随超时的停止观察从请求之后重新累计。定点到达状态出现后10 s仍未核验通过会失败并请求停止。
+
+到达/停止确认还要求STATUS的指令绝对值≤5 mm/s、≤20 mrad/s及相应模式/定位条件，指令条件不能替代上述实测条件。巡检停留期间可立即暂停再恢复；跟随达到时限后只能等待停止或取消，不通过暂停恢复重启已结束的时长。取消会清除待完成结果，后续停止确认不会再把它改成completed。
+
+**这些是现有遥测下的保守完成条件，不是物理停稳证明。** 轮速粒度10 mm/s，delta是10 ms门的净计数快照，不能把逐帧snapshot直接积分成独立物理路程；门内往返、亚计数运动、轮胎打滑和机身相对轮轴运动仍可能不可见。新增条件没有完成严格5 mm/s真值验收、2 s独立物理观察或150 mm真实定位精度验收，也不替代FPGA的停止监管器。原4500及导航/控制参数均未改变。
+
+STATUS时间相同的包直接丢弃，不更新在线年龄或频率。倒退包不覆盖已接受状态，而先隔离并清空控制/停稳证据；原时间线前进则解除隔离。原时间线超过1.5 s不再前进后，至少两份相继前进、间隔与本机时间差≤100 ms且各自<1.5 s的候选状态才重建时间基准，并中止旧活动任务，要求重新发起。32位微秒和16位控制序号正常回绕保留。NV缺少boot/session身份，时钟检查不能证明所有旧启动包都可识别；这里只修复已复现的刷新与隔离缺陷。
+
+旧串口/独立UDP遥测用有界队列保留中间帧，避免只读latest漏掉运动/故障；重复序号、倒退/冻结测量时间不刷新任务和平台使用的接受时间。独立遥测无法用NAV时钟证明端到端年龄，发生控制计时/序号复位需重启bridge重建接收基准，不自动拼接两个周期。
+
+新增phase为`verifying_arrival`（核验到达与停稳）、`waiting_stop`（等待停稳确认）、`stop_unconfirmed`（停稳未确认）；沿用原state、phase、detail契约。等待核验和停止结果经progress同步后端，Web显示中文阶段；暂停/取消先确认业务状态，文案只写“已请求停止”，不提前声称已停车。
+
+验证采用内存链路与冻结源码回放，不打开设备、不写线上后端。原32项检查修复后全部通过；健康反馈正例调整为50 Hz并持续观察，不能再将一份零速样本算作通过。原4500保存的零请求后6 mm/s里程计记录仍会运动，此回放现保持未完成；8帧既有RTL遥测仍可原样解码/编码。详细结果见导航文档`4_design/rk_task_layer_replay_20261025.md`和本机`reports/task_layer_fix_20261025/`。代码与前端构建仅在本地验证，尚未部署RK或重启其服务。
+
+最终回归：`yuntuo/tests` 89通过、1跳过（隔离环境无cv2，跳过既有视频流测试）；后端60通过；前端类型/生产构建及三种尺寸阶段截图通过。源码与机器结果见`reports/task_layer_fix_20261025/final_replay_v2/`，修复前记录单独保留。
+
 仍待逐项交付：PATH与COSTMAP_TILE、地图/坐标/启动代号、命令session/seq/有效期/ACK、区分命令速度与实测速度、真实模式准入、停止请求与实际停稳。视频/语音/感知仍由RK直接供Web，不经FPGA往返。
+
+## 11. 真FPGA系统联调准备（2026-10-27）
+
+用户最新选择为“先做软件，镜像切换稍后”。当前保留hold镜像和RK原mock链路；不下载、复位或把mock测试记成实板验收。逐项进度及回退见[系统联调记录](REAL_FPGA_INTEGRATION_20261027.md)。
+
+- UART/UDP均在100ms无发送时补`TARGET(found=0)`，实际发送其它报文重置计时。首次连接、重连、FPGA时钟复位都不自动发IDLE；由操作者明确解除导航急停后进入IDLE。这修正任务书“连上自动IDLE”与“重连不能自动解除”的冲突。原任务遇到串口异常、确认复位或导航ESTOP即结束，不排队恢复；停止前排队的GOAL/TARGET被丢弃。
+- 地图按PNR61实际NVMP v3/48B、flags=0x0107、profile=0x33580001、ZHI350/ZLO−300、16384结构槽/18位字、最大64×64粗格校验。保留10cm格，不接受旧v2或尾随数据。所有链路都等待BEGIN屏障、精确DATA进度和READY/错误终态，有限重发；STATUS/旧RECV不冒充READY。等待时继续心跳、状态上送并响应急停；急停可中断上传，上传期间拒绝新位姿/地图/运动任务。
+- 控制机体系X右/Y前：`pitch=atan2(gy,hypot(gx,gz))`、`roll=atan2(gx,-gz)`，保留标定有效性检查。模拟器重力字段一并按同一坐标约定产生；五组量化向量检查含+4.33°/−8.63°，不代替实际倾斜。
+- real状态默认未知电量/温湿度为null；mock→real和真实UART平台更新清除旧模拟数值。旧SQLite索引列保持兼容，用内部−1表示未知，API/完整快照仍为null，不把−1或0显示成电量。
+
+软件回归：桥接117通过/1跳过（当前环境缺cv2的既有视频流单测）；后端原整套加新增未知字段检查64通过，另新增缺省离线link_kind边界1项通过；前端类型检查/生产构建通过。新增心跳测试是10分钟**模拟时钟**，地图故障注入和复位/队列检查是软件夹具；没有据此宣称10分钟真串口、30分钟实板浸泡或物理停稳已完成。

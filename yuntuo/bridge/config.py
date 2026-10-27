@@ -44,6 +44,7 @@ class BridgeConfig:
     target_rate_hz: float = 12.0
     target_max_latency_ms: int = 400
     target_arrive_tol_m: float = 0.25           # 跟踪站位点容差
+    goto_arrive_tol_m: float = 0.15             # 当前估计位置，不代表独立真值精度
     target_arrive_dist_m: float = 1.05          # 判定"到达目标附近"的最大目标距离（站位 0.7 m + 余量）
     arrive_hold_s: float = 1.0
     blocked_fail_s: float = 25.0
