@@ -1,9 +1,9 @@
 {
   "date": "2026-10-27",
-  "implementation_commit": "49435d5",
+  "implementation_commit": "047c648",
   "feature": "Stage toolbar upload nvmp, bounded raw binary through public gateway and RK, real ACK progress and terminal state",
   "tests": {
-    "backend_bridge_protocol": 81,
+    "backend_bridge_protocol": 84,
     "gateway_health_HLS_and_map": 8,
     "gateway_map_final_guard_rerun": 3,
     "frontend_TypeScript_and_production_build": "pass",
@@ -14,31 +14,22 @@
     "Local gateway test environment lacked its pre-existing python-multipart dependency; installed in test venv only."
   ],
   "RK": {
-    "old_commit": "fdf3f4ada8a81c36a45237685cc56c5b9a385352",
-    "new_commit": "49435d522dec33961f60a4ef6eb12f07279ce8e8",
-    "backup": "/home/robomaster/backups/web-map-upload-20261027-181458",
+    "old_commit": "49435d522dec33961f60a4ef6eb12f07279ce8e8",
+    "new_commit": "047c6482bb0c1190878e08dfefc9c2ba1ea8a4cc",
+    "backup": "/home/robomaster/backups/web-map-upload-20261027-182935",
     "upload_status": {
       "success": true,
       "data": {
-        "state": "unavailable",
-        "detail": "模拟模式不下发真实地图。"
+        "state": "idle",
+        "detail": "尚未通过网页上传地图。"
       }
     },
     "services": "active\nactive\nactive",
     "env_changed": false,
     "FPGA_download": false,
     "Flash_write": false,
-    "runtime_mode_restored": {
-      "mode": "real",
-      "nav_link": "offline",
-      "upload": {
-        "success": true,
-        "data": {
-          "state": "idle",
-          "detail": "尚未通过网页上传地图。"
-        }
-      }
-    }
+    "mode_restored": "real",
+    "running_bridge_progress_schema": true
   },
   "cloud": {
     "backup": "/var/backups/lingxunrobot/web-map-upload-20261027-181550",
@@ -134,7 +125,8 @@
   "browser_interaction": "Unavailable: official computer-use runtime failed before creating a tab with kernel-assets/os error3. No browser selection-to-success acceptance claimed.",
   "deployment_recovery": [
     "First RK passwordless sudo restart was rejected; source returned to old commit, original services confirmed active; retried using existing user-authorized credential only in memory.",
-    "Cloud restart exceeded the local80s wait; no duplicate restart or redeployment. Readback confirmed the one release completed, gateway active, all21 files verified by bytes and rollback saved."
+    "Cloud restart exceeded the local80s wait; no duplicate restart or redeployment. Readback confirmed the one release completed, gateway active, all21 files verified by bytes and rollback saved.",
+    "Bridge progress source was omitted from the initial staged commit. Corrected in6327c67, deployed with047c648; actual running bridge now exposes map_upload, checked after restart. Initial rejection-only probes did not prove this success-path dependency."
   ],
   "runtime_state": "RK real mode restored after backend startup defaulted to mock; original .env preserved; bridge/backend/perception active. FPGA link offline under previously recorded hold.",
   "hardware_download": false,
@@ -143,5 +135,95 @@
   "Flash_write": false,
   "independent_FPGA_timing_or_serial_loss_fixed": false,
   "SHA_validation": false,
-  "raw_artifacts": "F:\\nav_integration_g2_20261023\\Web_map_upload_20261027"
+  "raw_artifacts": "F:\\nav_integration_g2_20261023\\Web_map_upload_20261027",
+  "initial_upload_commit": "49435d5",
+  "bridge_progress_commit": "6327c67",
+  "RK_initial_release": {
+    "old_commit": "fdf3f4ada8a81c36a45237685cc56c5b9a385352",
+    "new_commit": "49435d522dec33961f60a4ef6eb12f07279ce8e8",
+    "backup": "/home/robomaster/backups/web-map-upload-20261027-181458",
+    "upload_status": {
+      "success": true,
+      "data": {
+        "state": "unavailable",
+        "detail": "模拟模式不下发真实地图。"
+      }
+    },
+    "services": "active\nactive\nactive",
+    "env_changed": false,
+    "FPGA_download": false,
+    "Flash_write": false,
+    "runtime_mode_restored": {
+      "mode": "real",
+      "nav_link": "offline",
+      "upload": {
+        "success": true,
+        "data": {
+          "state": "idle",
+          "detail": "尚未通过网页上传地图。"
+        }
+      }
+    }
+  },
+  "preview_frontend_release": {
+    "backup": "/var/backups/lingxunrobot/web-map-upload-20261027-183001",
+    "stage": "/home/ubuntu/deployments/web-map-upload-20261027-183001",
+    "changed": [
+      "assets/index-Cd2Oo8BS.css",
+      "assets/index-CFCjQA9e.js",
+      "index.html"
+    ],
+    "all_files_verified_by_bytes": 21,
+    "gateway_changed": false,
+    "nginx_changed": false,
+    "old_assets_retained": true,
+    "upload_status": {
+      "success": true,
+      "data": {
+        "state": "idle",
+        "detail": "尚未通过网页上传地图。"
+      }
+    },
+    "rollback": "sudo python3 /var/backups/lingxunrobot/web-map-upload-20261027-183001/rollback.py"
+  },
+  "demo_preview": {
+    "preview": {
+      "kind": "preview",
+      "filename": "演示3×5米场地.nvmp",
+      "map_id": "demo_field_3x5",
+      "version": "preview-140cf6aec9ae",
+      "frame_id": "map",
+      "resolution": 0.1,
+      "width": 53,
+      "height": 34,
+      "origin": {
+        "x": -0.1,
+        "y": -1.7000000000000002,
+        "yaw": 0
+      },
+      "image_kind": "data:image/png;base64"
+    },
+    "packet_bytes": 11840,
+    "public_preview_confirmed": true,
+    "FPGA_upload_state": "idle",
+    "FPGA_map_loaded": false,
+    "FPGA_link": "offline",
+    "hardware_image_changed": false,
+    "motion_commands": false,
+    "real_survey": false,
+    "credentials_logged": false,
+    "first_verification_note": "POST and public GET completed; a later direct check of the loopback-only RK9101 port from cloud failed. Reconciled by GET only; did not repeat the POST."
+  },
+  "final_public_assets": [
+    {
+      "path": "assets/index-CFCjQA9e.js",
+      "bytes": 164629,
+      "matches_release": true
+    },
+    {
+      "path": "assets/index-Cd2Oo8BS.css",
+      "bytes": 35896,
+      "matches_release": true
+    }
+  ]
 }
