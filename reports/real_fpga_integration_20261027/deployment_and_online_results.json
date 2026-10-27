@@ -157,11 +157,15 @@
     "not_phone_or_real_FPGA": true
   },
   "public_frontend": {
-    "deployed": false,
-    "observed_entry": "index-BeZmKxod.js",
+    "deployed": true,
+    "observed_entry": "index-BdtanrPA.js",
     "prepared_entry": "index-BdtanrPA.js",
     "ready_archive": "F:\\nav_integration_g2_20261023\\QHXD_frontend_stop_feedback_20261027.tar.gz",
-    "blocker": "Cloud SSH auth unavailable with existing local key for documented ubuntu account and prior administrator root. No unknown host key was accepted; public DNS-known host identity checked via HostKeyAlias."
+    "blocker": null,
+    "previous_entry": "index-BeZmKxod.js",
+    "detail_report": "reports/real_fpga_integration_20261027/cloud_frontend_deployment.json",
+    "backup": "/var/backups/lingxunrobot/frontend-20261027-143742",
+    "rollback_command": "sudo python3 /var/backups/lingxunrobot/frontend-20261027-143742/rollback.py"
   },
   "browser_UI": {
     "attempted": true,
@@ -176,5 +180,5 @@
     "real_link_selected": false,
     "Flash_written": false
   },
-  "next": "Cloud static frontend requires usable SSH login; physical PNR61 switch, IR5, real UART 10min and30min/physical tests deferred by operator."
+  "next": "Physical PNR61 switch, IR5, real UART10min and30min/physical tests deferred by operator; actual browser playback unverified."
 }

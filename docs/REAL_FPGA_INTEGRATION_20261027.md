@@ -72,6 +72,8 @@ RK已从`862a9a9`快进部署到`398393a`；原配置和服务定义保存在`/h
 
 小程序`tests/smoke.js`对`https://api.lingxunrobot.cn`只读17项通过，含8个读接口、4项业务字段、两条WebSocket及3页Node渲染；没有POST、Token或手机真机验收。公网视频健康ok、检测帧fresh；Computer Use在打开网页前报告`failed to write kernel assets / os error3`，未做浏览器播放验收。
 
-**公网静态前端尚未更新。** `lingxunrobot.cn`实读仍引用旧`index-BeZmKxod.js`，RK构建/部署已是`index-BdtanrPA.js`。新后端API可用不等于公网中文阶段标签已发布。静态包已准备在`F:/nav_integration_g2_20261023/QHXD_frontend_stop_feedback_20261027.tar.gz`；云端现有本机密钥登录被拒绝，已向用户索取可用云SSH方式。未关闭主机身份校验、未猜静态站点目录，也未改Nginx/MediaMTX/云网关。取得访问后先核Nginx真实目录，备份旧index和受影响资源，上传新资源并最后原子替换index，保留旧缓存资源及备案注入。
+**公网静态前端已于2026-10-27 14:38发布，14:40公网核对通过。** 用户提供本机云端密钥位置后，以已记录主机身份登录`ubuntu@106.53.169.127`（通过Tailscale），确认Nginx真实站点为`/var/www/lingxunrobot`。21份构建文件逐字比较，19份原已相同，只新增`assets/index-BdtanrPA.js`并最后原子替换`index.html`；旧`index-BeZmKxod.js`保留。Nginx/MediaMTX/云网关配置未修改、未重启服务，备案号和公安备案图标注入保持。公网首页和3项停止标签、新JS/CSS/HLS/品牌资源、旧JS可用、API仍双mock约5.01Hz和新鲜相机健康，共8项只读检查通过；不是实际浏览器播放、真FPGA或实车通过。
+
+发布备份为`/var/backups/lingxunrobot/frontend-20261027-143742/`，保存旧入口及旧JS/CSS；回退命令为`sudo python3 /var/backups/lingxunrobot/frontend-20261027-143742/rollback.py`。脚本先要求当前入口仍为本次版本，再原子恢复旧入口，保留所有资源，不覆盖后续独立发布。完整结果在`reports/real_fpga_integration_20261027/cloud_frontend_deployment.json`，原始记录在`F:/nav_integration_g2_20261023/QHXD_cloud_frontend_20261027_1/`。系统SSH最初因密钥权限过宽拒绝使用，已收紧为当前用户访问；没有输出、复制到服务器或提交私钥内容。首个公网检查器误把API业务字段当顶层，被实际`success/data`结构拦截，修正取值后通过；未为检查改动产品。RK配置和FPGA镜像保持当前软件阶段状态。
 
 真实镜像阶段结束后恢复`D:/tools/hold_servo1500_motoroff_20261027.fs`，只SRAM。届时RK保留真配置还是回mock由用户决定；不会自行选择为整车运动模式。
