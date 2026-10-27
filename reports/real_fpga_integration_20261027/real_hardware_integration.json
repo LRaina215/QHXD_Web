@@ -1,0 +1,2319 @@
+{
+  "recorded_at": "2026-10-27T15:31:48.084445+08:00",
+  "stage": "full_load_real_soak_with_USB_capture_running",
+  "RK_code": "fdf3f4a",
+  "cloud_gateway_code": "ac7b706",
+  "stop_contract": "Cancel motion, keep original4500 balance, verify grounded stable standing separately; no all-wheel cutoff change",
+  "JTAG_SRAM_only": true,
+  "Flash_written": false,
+  "soak_complete": false,
+  "results": {
+    "PNR61_restore_job": {
+      "started_at": "2026-10-27T14:55:20.436370+08:00",
+      "authorization": "User confirmed continuously elevated and explicitly authorized autonomous wheel/motion testing; no IR5 required for this run",
+      "watch": {
+        "pid": 517272
+      },
+      "SRAM_only": true,
+      "Flash_written": false,
+      "expected_usercode": "0xC30F",
+      "programmed": true,
+      "usercode": "0xc30f",
+      "ended_at": "2026-10-27T14:55:31.851793+08:00"
+    },
+    "firmware_restore_result": {
+      "steps": [
+        {
+          "step": "soc",
+          "stdout": "RAM 128 KB  版本 1  状态字 0x00000A10  控制台 8455 字节  保持复位 0\n"
+        },
+        {
+          "step": "slf",
+          "stdout": "{'type': 'slf_ack', 'result': '查询', 'window': '前移 1000 mm', 'zhi_mm': 350, 'profile': '0x534C0108'}\n"
+        },
+        {
+          "step": "selftest",
+          "stdout": "{\"SYS_ID\": \"0x4E415630\", \"SYS_VERSION\": \"0x00010000\", \"soc\": {\"ram_kb\": 128, \"status\": \"0x00000E42\", \"hold_reset\": 0, \"console_bytes\": 8455}, \"sys_time_dt_s\": 4.054, \"lidar_fps\": 10.11, \"lidar_bad_delta\": 0, \"lidar_phy\": \"0x01860007\", \"odo_rate_hz\": 100.2, \"safe\": {\"SAFE_CTRL\": \"0x00000000\", \"SAFE_STAT\": \"0x5F1B0000\", \"SAFE_OUT_V\": \"0x00000000\", \"SAFE_OUT_W\": \"0x00040000\"}, \"telemetry\": {\"frames\": 403, \"rate_hz\": 100.8, \"bad_crc\": 0, \"skipped\": 0, \"last\": {\"time_s\": 89.859, \"sequence\": 8985, \"status\": 129, \"policy_fault\": 0, \"sensor_error\": 0, \"left_fault\": 0, \"right_fault\": 0, \"fusion_flags\": 0, \"gyro_x\": 0.0051, \"gyro_y\": 0.0095, \"gyro_z\": 0.0, \"accel_x_g\": 0.1278, \"accel_y_g\": -0.1038, \"accel_z_g\": 0.9816, \"pitch_deg\": -7.4627, \"roll_deg\": -5.7373, \"forward_command\": 0.0, \"yaw_command\": 0.0, \"height_command\": 0.1306, \"left_target\": -0.6, \"right_target\": -0.6, \"left_speed\": -0.6, \"right_speed\": -0.6, \"left_duty\": -1495, \"right_duty\": -1479, \"lh_us\": 1534, \"lk_us\": 1502, \"rh_us\": 1448, \"rk_us\": 1498, \"completed_frames\": 10965, \"inference_cycles\": 83534, \"left_delta\": -39, \"right_delta\": 39, \"active\": true}, \"left_speed_minmax\": [-0.62, -0.59], \"right_speed_minmax\": [-0.62, -0.59], \"left_duty_minmax\": [-1534, -1411], \"right_duty_minmax\": [-1521, -1405], \"pitch_deg_minmax\": [-7.547, -7.3076]}}\n"
+        }
+      ],
+      "slf": {
+        "type": "slf_ack",
+        "result": "查询",
+        "window": "前移 1000 mm",
+        "zhi_mm": 350,
+        "profile": "0x534C0108"
+      },
+      "telemetry": {
+        "frames": 5991,
+        "elapsed_s": 70.05974027502816,
+        "bad_crc": 1,
+        "last": {
+          "timestamp_ms": 59919,
+          "sequence": 5991,
+          "status": 129,
+          "policy_fault": 0,
+          "sensor_error": 0,
+          "left_fault": 0,
+          "right_fault": 0,
+          "fusion_flags": 0,
+          "ax_raw": 1384,
+          "ay_raw": -1029,
+          "az_raw": 10635,
+          "gx_raw": 0,
+          "gy_raw": -3,
+          "gz_raw": 13,
+          "wx_q12": -9,
+          "wy_q12": -18,
+          "wz_q12": 52,
+          "gravity_x_q12": -524,
+          "gravity_y_q12": 405,
+          "gravity_z_q12": -4043,
+          "forward_q12": 0,
+          "yaw_q12": 0,
+          "height_q12": 535,
+          "left_target_mmps": -600,
+          "right_target_mmps": -600,
+          "left_cms": -60,
+          "right_cms": -60,
+          "left_duty": -1495,
+          "right_duty": -1491,
+          "lh_us": 1535,
+          "lk_us": 1502,
+          "rh_us": 1448,
+          "rk_us": 1498,
+          "completed_frames": 7222,
+          "inference_cycles": 83534,
+          "left_delta": -39,
+          "right_delta": 39,
+          "left_reference_mmps": -600,
+          "right_reference_mmps": -600,
+          "left_error_mmps": 0,
+          "right_error_mmps": 0,
+          "left_control_sequence": 5776,
+          "right_control_sequence": 5777,
+          "protocol_version": 2,
+          "time_s": 59.919,
+          "gyro_x": -0.002197265625,
+          "accel_x_g": 0.12673992673992673,
+          "gyro_y": -0.00439453125,
+          "accel_y_g": -0.09423076923076923,
+          "gyro_z": 0.0126953125,
+          "accel_z_g": 0.9739010989010989,
+          "roll_deg": -5.7204148701472,
+          "pitch_deg": -7.3483803935764,
+          "forward_command": 0.0,
+          "yaw_command": 0.0,
+          "height_command": 0.130615234375,
+          "left_target": -0.6,
+          "left_speed": -0.6,
+          "left_pwm_percent": -59.8,
+          "left_reference": -0.6,
+          "left_error": 0.0,
+          "right_target": -0.6,
+          "right_speed": -0.6,
+          "right_pwm_percent": -59.64,
+          "right_reference": -0.6,
+          "right_error": 0.0,
+          "wheel_mean_speed": -0.6,
+          "active": true,
+          "host_elapsed_s": 70.04849961301079
+        },
+        "alarm": null
+      },
+      "firmware_bytes": 54164,
+      "firmware_load_repeated": false,
+      "first_checker_rejection": "Expected nonexistent forward_mm key; actual SLF ACK reports window string. Firmware load had returned0 and was not repeated."
+    },
+    "real_bridge_switch_result": {
+      "selected": {
+        "YUNTUO_FPGA_LINK": "uart:/dev/ttyACM0",
+        "YUNTUO_CONTROL_TELEMETRY": "serial:/dev/ttyUSB0@230400",
+        "YUNTUO_FPGA_IS_MOCK": "false"
+      },
+      "installer_exit": 0,
+      "health": {
+        "status": "ok",
+        "service": "yuntuo-fpga-bridge",
+        "link": "uart:/dev/ttyACM0",
+        "link_open": true,
+        "link_error": null,
+        "status_age_s": 0.01,
+        "map": "未下发先验地图",
+        "task": {
+          "task_id": "fpga-idle",
+          "task_type": "placeholder",
+          "state": "idle",
+          "progress": 0,
+          "source": "fpga_bridge",
+          "phase": "idle",
+          "current_waypoint_id": null,
+          "waypoint_index": null,
+          "waypoint_count": null,
+          "detail": "等待任务。",
+          "updated_at": "2026-10-27T06:58:07.924670+00:00"
+        },
+        "platform": {
+          "source": "fpga_bridge",
+          "updated_at": "2026-10-27T06:58:07.924206+00:00",
+          "nav_link": "online",
+          "nav_link_kind": "uart:/dev/ttyACM0",
+          "fpga_mode": "estop",
+          "fpga_state": "estop",
+          "loc_state": "mapless",
+          "loc_quality": null,
+          "map_loaded": false,
+          "target_valid": false,
+          "lidar_ok": true,
+          "odom_ok": true,
+          "cmd_vx_mps": 0.0,
+          "cmd_wz_radps": 0.0,
+          "fpga_uptime_s": 165.790427,
+          "status_rate_hz": 5.0,
+          "control_link": "online",
+          "policy_active": true,
+          "control_estop": false,
+          "control_faults": [],
+          "wheel_left_mps": -0.6,
+          "wheel_right_mps": -0.6,
+          "roll_deg": -7.4004998522429375,
+          "pitch_deg": 5.785805680669874,
+          "yaw_rate_radps": 0.009521484375,
+          "height_cmd_m": 0.130615234375,
+          "telemetry_rate_hz": 102.0,
+          "control_telemetry": {
+            "transport": "legacy_telemetry",
+            "source": "fpga",
+            "version": 2,
+            "fresh": true,
+            "receive_age_ms": 6.9,
+            "measurement_age_ms": null,
+            "raw": {
+              "timestamp_ms": 165799,
+              "sequence": 16579,
+              "status": 129,
+              "policy_fault": 0,
+              "sensor_error": 0,
+              "left_fault": 0,
+              "right_fault": 0,
+              "fusion_flags": 0,
+              "ax_raw": 1414,
+              "ay_raw": -1052,
+              "az_raw": 10665,
+              "gx_raw": 0,
+              "gy_raw": 19,
+              "gz_raw": 10,
+              "wx_q12": -9,
+              "wy_q12": 78,
+              "wz_q12": 39,
+              "gravity_x_q12": -525,
+              "gravity_y_q12": 413,
+              "gravity_z_q12": -4042,
+              "forward_q12": 0,
+              "yaw_q12": 0,
+              "height_q12": 535,
+              "left_target_mmps": -600,
+              "right_target_mmps": -600,
+              "left_cms": -60,
+              "right_cms": -60,
+              "left_duty": -1478,
+              "right_duty": -1479,
+              "lh_us": 1534,
+              "lk_us": 1502,
+              "rh_us": 1448,
+              "rk_us": 1498,
+              "completed_frames": 20457,
+              "inference_cycles": 83534,
+              "left_delta": -39,
+              "right_delta": 39,
+              "left_reference_mmps": -600,
+              "right_reference_mmps": -600,
+              "left_error_mmps": 0,
+              "right_error_mmps": 0,
+              "left_control_sequence": 16364,
+              "right_control_sequence": 16365
+            }
+          }
+        },
+        "updated_at": "2026-10-27T06:58:07.924693+00:00"
+      },
+      "link_check_exit": 0,
+      "mock_active": "inactive",
+      "mock_enabled": "disabled",
+      "FPGA_programmed_by_this_step": false
+    },
+    "real_tasks_result": {
+      "cases": [
+        {
+          "case": "web_goto_B",
+          "passed": true,
+          "accepted": true,
+          "goal": {
+            "x": 3.5,
+            "y": -1.5,
+            "yaw": 0.0
+          },
+          "mode": "goto",
+          "state": "moving",
+          "cmd_vx": 0.0,
+          "cmd_wz": 0.0,
+          "motion_scope": "elevated protocol test, original4500 balance still active"
+        },
+        {
+          "case": "pause_no_false_standstill",
+          "passed": true,
+          "response": {
+            "accepted": true,
+            "command": "pause",
+            "task_status": {
+              "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+              "task_type": "go_to_waypoint",
+              "state": "paused",
+              "progress": 0,
+              "source": "fpga_bridge",
+              "phase": "waiting_stop",
+              "current_waypoint_id": "wp_b",
+              "waypoint_index": 0,
+              "waypoint_count": 1,
+              "detail": "任务已暂停；已请求 FPGA 停止，等待反馈确认停稳。",
+              "updated_at": "2026-10-27T07:07:23.529508Z"
+            },
+            "received_at": "2026-10-27T07:07:23.529537Z",
+            "detail": "任务已暂停；已请求 FPGA 停止，等待反馈确认停稳。"
+          },
+          "task": {
+            "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+            "task_type": "go_to_waypoint",
+            "state": "pending",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "sending_goal",
+            "current_waypoint_id": "wp_b",
+            "waypoint_index": 0,
+            "waypoint_count": 1,
+            "detail": "正在前往B 点（斜坡区）。",
+            "updated_at": "2026-10-27T07:07:23.326762+00:00"
+          }
+        },
+        {
+          "case": "resume_observed",
+          "passed": true,
+          "response": {
+            "accepted": true,
+            "command": "resume",
+            "task_status": {
+              "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+              "task_type": "go_to_waypoint",
+              "state": "running",
+              "progress": 0,
+              "source": "fpga_bridge",
+              "phase": "sending_goal",
+              "current_waypoint_id": "wp_b",
+              "waypoint_index": 0,
+              "waypoint_count": 1,
+              "detail": "任务已恢复。",
+              "updated_at": "2026-10-27T07:07:23.844018Z"
+            },
+            "received_at": "2026-10-27T07:07:23.844042Z",
+            "detail": "任务已恢复。"
+          }
+        },
+        {
+          "case": "web_goto_B_cancel",
+          "passed": true,
+          "response": {
+            "accepted": true,
+            "command": "cancel",
+            "task_status": {
+              "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+              "task_type": "go_to_waypoint",
+              "state": "cancelled",
+              "progress": 0,
+              "source": "fpga_bridge",
+              "phase": "waiting_stop",
+              "current_waypoint_id": "wp_b",
+              "waypoint_index": 0,
+              "waypoint_count": 1,
+              "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+              "updated_at": "2026-10-27T07:07:23.942587Z"
+            },
+            "received_at": "2026-10-27T07:07:23.942629Z",
+            "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。"
+          },
+          "mode": "idle",
+          "task": {
+            "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+            "task_type": "go_to_waypoint",
+            "state": "paused",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "waiting_stop",
+            "current_waypoint_id": "wp_b",
+            "waypoint_index": 0,
+            "waypoint_count": 1,
+            "detail": "任务已暂停；已请求 FPGA 停止，等待反馈确认停稳。",
+            "updated_at": "2026-10-27T07:07:23.838198+00:00"
+          },
+          "observed_wheel_mps": [
+            -0.6,
+            -0.62
+          ]
+        },
+        {
+          "case": "return_home_API",
+          "passed": true,
+          "accepted": true,
+          "goal": {
+            "x": 0.0,
+            "y": 0.0,
+            "yaw": 0.0
+          },
+          "mode": "goto",
+          "state": "moving",
+          "cmd_vx": 0.0,
+          "cmd_wz": 0.0,
+          "motion_scope": "elevated protocol test, original4500 balance still active"
+        },
+        {
+          "case": "return_home_API_cancel",
+          "passed": true,
+          "response": {
+            "accepted": true,
+            "command": "cancel",
+            "task_status": {
+              "task_id": "fpga-return-home-6439d31535",
+              "task_type": "return_home",
+              "state": "cancelled",
+              "progress": 0,
+              "source": "fpga_bridge",
+              "phase": "waiting_stop",
+              "current_waypoint_id": "home",
+              "waypoint_index": 0,
+              "waypoint_count": 1,
+              "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+              "updated_at": "2026-10-27T07:07:24.449095Z"
+            },
+            "received_at": "2026-10-27T07:07:24.449208Z",
+            "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。"
+          },
+          "mode": "idle",
+          "task": {
+            "task_id": "fpga-return-home-6439d31535",
+            "task_type": "return_home",
+            "state": "cancelled",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "waiting_stop",
+            "current_waypoint_id": "home",
+            "waypoint_index": 0,
+            "waypoint_count": 1,
+            "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+            "updated_at": "2026-10-27T07:07:24.863580+00:00"
+          },
+          "observed_wheel_mps": [
+            -0.6,
+            -0.6
+          ]
+        },
+        {
+          "case": "patrol_first_goal",
+          "passed": true,
+          "accepted": true,
+          "goal": {
+            "x": 2.0,
+            "y": 1.5,
+            "yaw": 0.0
+          },
+          "mode": "goto",
+          "state": "moving",
+          "cmd_vx": 0.0,
+          "cmd_wz": 0.0,
+          "motion_scope": "elevated protocol test, original4500 balance still active"
+        },
+        {
+          "case": "patrol_first_goal_cancel",
+          "passed": true,
+          "response": {
+            "accepted": true,
+            "command": "cancel",
+            "task_status": {
+              "task_id": "fpga-start-patrol-9350c8d1b2",
+              "task_type": "start_patrol",
+              "state": "cancelled",
+              "progress": 0,
+              "source": "fpga_bridge",
+              "phase": "waiting_stop",
+              "current_waypoint_id": "wp_a",
+              "waypoint_index": 0,
+              "waypoint_count": 4,
+              "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+              "updated_at": "2026-10-27T07:07:25.521286Z"
+            },
+            "received_at": "2026-10-27T07:07:25.521374Z",
+            "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。"
+          },
+          "mode": "idle",
+          "task": {
+            "task_id": "fpga-start-patrol-9350c8d1b2",
+            "task_type": "start_patrol",
+            "state": "cancelled",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "waiting_stop",
+            "current_waypoint_id": "wp_a",
+            "waypoint_index": 0,
+            "waypoint_count": 4,
+            "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+            "updated_at": "2026-10-27T07:07:25.890012+00:00"
+          },
+          "observed_wheel_mps": [
+            -0.6,
+            -0.6
+          ]
+        },
+        {
+          "case": "text_to_actual_FPGA_return_home",
+          "passed": true,
+          "accepted": true,
+          "mode": "goto",
+          "mission_candidate": {
+            "command": "return_home",
+            "payload": {},
+            "pending_command_id": "voice_pending_3251fa02a3aa",
+            "detail": "已解析为返回起点任务。 请确认是否执行。"
+          },
+          "microphone_ASR_tested": false
+        },
+        {
+          "case": "text_to_actual_FPGA_search_target",
+          "passed": true,
+          "accepted": true,
+          "mode": "search",
+          "mission_candidate": {
+            "command": "search_target",
+            "payload": {
+              "target_class": "bottle",
+              "label": "红色水瓶",
+              "color": "red"
+            },
+            "pending_command_id": "voice_pending_d1a7b7b19496",
+            "detail": "已解析为寻找「红色水瓶」并移动到其附近的任务。 请确认是否执行。"
+          },
+          "microphone_ASR_tested": false
+        }
+      ],
+      "error": null,
+      "requests": [
+        {
+          "port": 8000,
+          "path": "/api/mission/go_to_waypoint",
+          "body": {
+            "waypoint_id": "wp_b",
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "go_to_waypoint",
+              "task_status": {
+                "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+                "task_type": "go_to_waypoint",
+                "state": "pending",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "sending_goal",
+                "current_waypoint_id": "wp_b",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "正在前往B 点（斜坡区）。",
+                "updated_at": "2026-10-27T07:07:23.014226Z"
+              },
+              "received_at": "2026-10-27T07:07:23.014282Z",
+              "detail": "已向 FPGA 下发目标点：B 点（斜坡区）。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/pause",
+          "body": {
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "pause",
+              "task_status": {
+                "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+                "task_type": "go_to_waypoint",
+                "state": "paused",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "waiting_stop",
+                "current_waypoint_id": "wp_b",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "任务已暂停；已请求 FPGA 停止，等待反馈确认停稳。",
+                "updated_at": "2026-10-27T07:07:23.529508Z"
+              },
+              "received_at": "2026-10-27T07:07:23.529537Z",
+              "detail": "任务已暂停；已请求 FPGA 停止，等待反馈确认停稳。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/resume",
+          "body": {
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "resume",
+              "task_status": {
+                "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+                "task_type": "go_to_waypoint",
+                "state": "running",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "sending_goal",
+                "current_waypoint_id": "wp_b",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "任务已恢复。",
+                "updated_at": "2026-10-27T07:07:23.844018Z"
+              },
+              "received_at": "2026-10-27T07:07:23.844042Z",
+              "detail": "任务已恢复。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/cancel",
+          "body": {
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "cancel",
+              "task_status": {
+                "task_id": "fpga-go-to-waypoint-5eda9ceb75",
+                "task_type": "go_to_waypoint",
+                "state": "cancelled",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "waiting_stop",
+                "current_waypoint_id": "wp_b",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+                "updated_at": "2026-10-27T07:07:23.942587Z"
+              },
+              "received_at": "2026-10-27T07:07:23.942629Z",
+              "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/return_home",
+          "body": {
+            "source": "miniprogram"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "return_home",
+              "task_status": {
+                "task_id": "fpga-return-home-6439d31535",
+                "task_type": "return_home",
+                "state": "pending",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "sending_goal",
+                "current_waypoint_id": "home",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "正在前往起点。",
+                "updated_at": "2026-10-27T07:07:24.001671Z"
+              },
+              "received_at": "2026-10-27T07:07:24.001707Z",
+              "detail": "已向 FPGA 下发目标点：起点。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/cancel",
+          "body": {
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "cancel",
+              "task_status": {
+                "task_id": "fpga-return-home-6439d31535",
+                "task_type": "return_home",
+                "state": "cancelled",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "waiting_stop",
+                "current_waypoint_id": "home",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+                "updated_at": "2026-10-27T07:07:24.449095Z"
+              },
+              "received_at": "2026-10-27T07:07:24.449208Z",
+              "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/start_patrol",
+          "body": {
+            "patrol_id": "default_patrol",
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "start_patrol",
+              "task_status": {
+                "task_id": "fpga-start-patrol-9350c8d1b2",
+                "task_type": "start_patrol",
+                "state": "pending",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "sending_goal",
+                "current_waypoint_id": "wp_a",
+                "waypoint_index": 0,
+                "waypoint_count": 4,
+                "detail": "正在前往A 点（台阶区）。",
+                "updated_at": "2026-10-27T07:07:24.928574Z"
+              },
+              "received_at": "2026-10-27T07:07:24.928662Z",
+              "detail": "已向 FPGA 下发目标点：A 点（台阶区）。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/cancel",
+          "body": {
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "cancel",
+              "task_status": {
+                "task_id": "fpga-start-patrol-9350c8d1b2",
+                "task_type": "start_patrol",
+                "state": "cancelled",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "waiting_stop",
+                "current_waypoint_id": "wp_a",
+                "waypoint_index": 0,
+                "waypoint_count": 4,
+                "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+                "updated_at": "2026-10-27T07:07:25.521286Z"
+              },
+              "received_at": "2026-10-27T07:07:25.521374Z",
+              "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/voice/confirm_command",
+          "body": {
+            "pending_command_id": "voice_pending_3251fa02a3aa",
+            "confirmed": true,
+            "requested_by": "operator-test"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "intent": "return_home",
+              "command": "return_home",
+              "payload": {},
+              "confidence": 0.95,
+              "need_confirm": false,
+              "detail": "已向 FPGA 下发目标点：起点。",
+              "task_status": {
+                "task_id": "fpga-return-home-e791cd5d16",
+                "task_type": "return_home",
+                "state": "pending",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "sending_goal",
+                "current_waypoint_id": "home",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "正在前往起点。",
+                "updated_at": "2026-10-27T07:07:25.984985Z"
+              },
+              "parser": "rule",
+              "llm_backend": null,
+              "llm_model": null,
+              "llm_raw_output": null,
+              "pending_command_id": "voice_pending_3251fa02a3aa"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/cancel",
+          "body": {
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "cancel",
+              "task_status": {
+                "task_id": "fpga-return-home-e791cd5d16",
+                "task_type": "return_home",
+                "state": "cancelled",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "waiting_stop",
+                "current_waypoint_id": "home",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+                "updated_at": "2026-10-27T07:07:26.572295Z"
+              },
+              "received_at": "2026-10-27T07:07:26.572330Z",
+              "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/voice/confirm_command",
+          "body": {
+            "pending_command_id": "voice_pending_d1a7b7b19496",
+            "confirmed": true,
+            "requested_by": "operator-test"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "intent": "search_target",
+              "command": "search_target",
+              "payload": {
+                "target_class": "bottle",
+                "label": "红色水瓶",
+                "color": "red"
+              },
+              "confidence": 0.93,
+              "need_confirm": false,
+              "detail": "已开始寻找「红色水瓶」。",
+              "task_status": {
+                "task_id": "fpga-search-target-5dde6513a8",
+                "task_type": "search_target",
+                "state": "running",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "searching",
+                "current_waypoint_id": null,
+                "waypoint_index": null,
+                "waypoint_count": null,
+                "detail": "开始寻找「红色水瓶」：FPGA 进入探索模式。",
+                "updated_at": "2026-10-27T07:07:27.027938Z"
+              },
+              "parser": "rule",
+              "llm_backend": null,
+              "llm_model": null,
+              "llm_raw_output": null,
+              "pending_command_id": "voice_pending_d1a7b7b19496"
+            }
+          }
+        },
+        {
+          "port": 8000,
+          "path": "/api/mission/cancel",
+          "body": {
+            "source": "web"
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "cancel",
+              "task_status": {
+                "task_id": "fpga-search-target-5dde6513a8",
+                "task_type": "search_target",
+                "state": "cancelled",
+                "progress": 5,
+                "source": "fpga_bridge",
+                "phase": "waiting_stop",
+                "current_waypoint_id": null,
+                "waypoint_index": null,
+                "waypoint_count": null,
+                "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。",
+                "updated_at": "2026-10-27T07:07:29.613894Z"
+              },
+              "received_at": "2026-10-27T07:07:29.613931Z",
+              "detail": "任务已取消。 已请求 FPGA 停止，停稳尚未确认。"
+            }
+          }
+        }
+      ],
+      "scope": "Actual RK backend/bridge and FPGA goal/mode messages. Browser clicks, phone and microphone not tested. Elevated wheels do not prove stop or grounded path following."
+    },
+    "real_loss_restart_result": {
+      "stop_service_return_s": 0.40111339796567336,
+      "first_ESTOP_after_last_sent_NV_s": 0.39534251601435244,
+      "state_observation_quantized_at_5Hz": true,
+      "statuses": [
+        {
+          "since_last_send_s": 0.04084946803050116,
+          "mode": "goto",
+          "state": "moving",
+          "t_us": 985452502,
+          "vx": 0,
+          "wz": 0
+        },
+        {
+          "since_last_send_s": 0.1337091340101324,
+          "mode": "goto",
+          "state": "moving",
+          "t_us": 985653056,
+          "vx": 0,
+          "wz": 0
+        },
+        {
+          "since_last_send_s": 0.0768274639849551,
+          "mode": "goto",
+          "state": "moving",
+          "t_us": 985854077,
+          "vx": 0,
+          "wz": 0
+        },
+        {
+          "since_last_send_s": 0.05358621198683977,
+          "mode": "goto",
+          "state": "moving",
+          "t_us": 986054640,
+          "vx": 0,
+          "wz": 0
+        },
+        {
+          "since_last_send_s": 0.04299090598942712,
+          "mode": "goto",
+          "state": "moving",
+          "t_us": 986255690,
+          "vx": 0,
+          "wz": 0
+        },
+        {
+          "since_last_send_s": 0.12118298996938393,
+          "mode": "goto",
+          "state": "moving",
+          "t_us": 986456982,
+          "vx": 0,
+          "wz": 0
+        },
+        {
+          "since_last_send_s": 0.1996011360315606,
+          "mode": "goto",
+          "state": "moving",
+          "t_us": 986657010,
+          "vx": 0,
+          "wz": 0
+        },
+        {
+          "since_last_send_s": 0.39534251601435244,
+          "mode": "estop",
+          "state": "estop",
+          "t_us": 986857104,
+          "vx": 0,
+          "wz": 0
+        }
+      ],
+      "safe_registers": {
+        "SAFE_CTRL": 0,
+        "SAFE_OUT_V": 0,
+        "SAFE_OUT_W": 262144
+      },
+      "physical_standstill_proven": false,
+      "software_commit": "1c1eb6d",
+      "restart_no_automatic_unlock_or_task_replay": true,
+      "restart_observations": [
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:49.870412+00:00"
+          },
+          "status_age": 0.08,
+          "telemetry_decoder": {
+            "frames": 60,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:49.870412+00:00"
+          },
+          "status_age": 0.08,
+          "telemetry_decoder": {
+            "frames": 80,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:49.870412+00:00"
+          },
+          "status_age": 0.08,
+          "telemetry_decoder": {
+            "frames": 104,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:50.439378+00:00"
+          },
+          "status_age": 0.0,
+          "telemetry_decoder": {
+            "frames": 125,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:50.439378+00:00"
+          },
+          "status_age": 0.0,
+          "telemetry_decoder": {
+            "frames": 146,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:50.964048+00:00"
+          },
+          "status_age": 0.17,
+          "telemetry_decoder": {
+            "frames": 170,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:50.964048+00:00"
+          },
+          "status_age": 0.17,
+          "telemetry_decoder": {
+            "frames": 190,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:50.964048+00:00"
+          },
+          "status_age": 0.17,
+          "telemetry_decoder": {
+            "frames": 211,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:51.479784+00:00"
+          },
+          "status_age": 0.09,
+          "telemetry_decoder": {
+            "frames": 231,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:51.479784+00:00"
+          },
+          "status_age": 0.09,
+          "telemetry_decoder": {
+            "frames": 251,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:51.989746+00:00"
+          },
+          "status_age": 0.0,
+          "telemetry_decoder": {
+            "frames": 271,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:51.989746+00:00"
+          },
+          "status_age": 0.0,
+          "telemetry_decoder": {
+            "frames": 292,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:51.989746+00:00"
+          },
+          "status_age": 0.0,
+          "telemetry_decoder": {
+            "frames": 312,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        {
+          "mode": "estop",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:11:52.507414+00:00"
+          },
+          "status_age": 0.11,
+          "telemetry_decoder": {
+            "frames": 332,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        }
+      ]
+    },
+    "serial_recovery_actual": {
+      "cases": [
+        {
+          "tty": "ttyUSB0",
+          "driver": "ch341",
+          "interface": "2-1.2:1.0",
+          "offline_after_unbind_s": 1.679534279042855,
+          "online_after_bind_s": 0.6516978510189801,
+          "physical_cable_unplug": false,
+          "method": "selected USB interface driver unbind/bind",
+          "states": [
+            {
+              "t": 0.2103585820295848,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.297885445994325,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.38199930102564394,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.46639522298937663,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.5513214830425568,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.6362246570060961,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.7220279939938337,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.8072330710128881,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.8945718760369346,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.9806896570371464,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 1.0663138949894346,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 1.151421880000271,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 1.2458196390070952,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 1.3341912850155495,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 1.420021458005067,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 1.509943782002665,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 1.5948043700191192,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 1.679534279042855,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 1.764366113988217,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 1.8497572480118833,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 1.938024219009094,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 2.1307774190208875,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 2.2367066930164583,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 2.3441455159918405,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 2.4605798380216584,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 2.5651894960319623,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 2.673760168021545,
+              "state": "offline",
+              "mode": "estop"
+            },
+            {
+              "t": 2.7796268950332887,
+              "state": "online",
+              "mode": "estop"
+            }
+          ],
+          "mode_after": "estop"
+        },
+        {
+          "tty": "ttyACM0",
+          "driver": "cdc_acm",
+          "interface": "2-1.4:1.0",
+          "offline_after_unbind_s": 0.49173490901011974,
+          "online_after_bind_s": 0.4301277410122566,
+          "physical_cable_unplug": false,
+          "method": "selected USB interface driver unbind/bind",
+          "states": [
+            {
+              "t": 0.14552125503541902,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.23232772201299667,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.3187229030299932,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.40670863998821005,
+              "state": "online",
+              "mode": "estop"
+            },
+            {
+              "t": 0.49173490901011974,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 0.5838505509891547,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 0.6692105160327628,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 0.7541883640224114,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 0.8399878669879399,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 0.9255412240163423,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.0130331679829396,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.0979469260200858,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.1822839259984903,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.2673061109962873,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.3595763089833781,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.4468888620031066,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.534034858981613,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.6213812479982153,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.705853217979893,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.7928343249950558,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 1.8779981900006533,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 2.04957277799258,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 2.1555971010238864,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 2.2619253679877147,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 2.3669232259853743,
+              "state": "offline",
+              "mode": null
+            },
+            {
+              "t": 2.4748333410243504,
+              "state": "online",
+              "mode": "estop"
+            }
+          ],
+          "mode_after": "estop"
+        }
+      ],
+      "automatic_unlock": false
+    },
+    "reset_recovery_result": {
+      "reset_observations": [
+        {
+          "mode": "idle",
+          "uptime": 23.282633,
+          "nav_link": "online",
+          "control": "online",
+          "map": "FPGA 已复位，先验地图缓存失效；请重新下发。",
+          "task": {
+            "task_id": "fpga-idle",
+            "task_type": "placeholder",
+            "state": "idle",
+            "progress": 0,
+            "source": "fpga_bridge",
+            "phase": "idle",
+            "current_waypoint_id": null,
+            "waypoint_index": null,
+            "waypoint_count": null,
+            "detail": "等待任务。",
+            "updated_at": "2026-10-27T07:21:01.325540+00:00"
+          }
+        }
+      ],
+      "slf": "{'type': 'slf_ack', 'result': '查询', 'window': '前移 1000 mm', 'zhi_mm': 350, 'profile': '0x534C0108'}\n",
+      "after_firmware_reload": {
+        "status": "ok",
+        "service": "yuntuo-fpga-bridge",
+        "link": "uart:/dev/ttyACM0",
+        "link_open": true,
+        "link_error": null,
+        "status_age_s": 0.06,
+        "map": "未下发先验地图",
+        "task": {
+          "task_id": "fpga-idle",
+          "task_type": "placeholder",
+          "state": "idle",
+          "progress": 0,
+          "source": "fpga_bridge",
+          "phase": "idle",
+          "current_waypoint_id": null,
+          "waypoint_index": null,
+          "waypoint_count": null,
+          "detail": "等待任务。",
+          "updated_at": "2026-10-27T07:21:06.280562+00:00"
+        },
+        "platform": {
+          "source": "fpga_bridge",
+          "updated_at": "2026-10-27T07:21:06.280230+00:00",
+          "nav_link": "online",
+          "nav_link_kind": "uart:/dev/ttyACM0",
+          "fpga_mode": "estop",
+          "fpga_state": "estop",
+          "loc_state": "mapless",
+          "loc_quality": null,
+          "map_loaded": false,
+          "target_valid": false,
+          "lidar_ok": true,
+          "odom_ok": true,
+          "cmd_vx_mps": 0.0,
+          "cmd_wz_radps": 0.0,
+          "fpga_uptime_s": 28.309509,
+          "status_rate_hz": 4.91,
+          "control_link": "online",
+          "policy_active": true,
+          "control_estop": false,
+          "control_faults": [],
+          "wheel_left_mps": -0.6,
+          "wheel_right_mps": -0.6,
+          "roll_deg": -9.490096366793658,
+          "pitch_deg": 6.685007565159923,
+          "yaw_rate_radps": -0.013916015625,
+          "height_cmd_m": 0.130615234375,
+          "telemetry_rate_hz": 102.2,
+          "control_telemetry": {
+            "transport": "legacy_telemetry",
+            "source": "fpga",
+            "version": 2,
+            "fresh": true,
+            "receive_age_ms": 26.6,
+            "measurement_age_ms": null,
+            "raw": {
+              "timestamp_ms": 28359,
+              "sequence": 2835,
+              "status": 129,
+              "policy_fault": 0,
+              "sensor_error": 0,
+              "left_fault": 0,
+              "right_fault": 0,
+              "fusion_flags": 0,
+              "ax_raw": 1806,
+              "ay_raw": -1365,
+              "az_raw": 10590,
+              "gx_raw": 37,
+              "gy_raw": 0,
+              "gz_raw": -12,
+              "wx_q12": 152,
+              "wy_q12": 0,
+              "wz_q12": -57,
+              "gravity_x_q12": -671,
+              "gravity_y_q12": 477,
+              "gravity_z_q12": -4014,
+              "forward_q12": 0,
+              "yaw_q12": 0,
+              "height_q12": 535,
+              "left_target_mmps": -600,
+              "right_target_mmps": -600,
+              "left_cms": -60,
+              "right_cms": -60,
+              "left_duty": -1521,
+              "right_duty": -1495,
+              "lh_us": 1526,
+              "lk_us": 1502,
+              "rh_us": 1448,
+              "rk_us": 1498,
+              "completed_frames": 3277,
+              "inference_cycles": 83534,
+              "left_delta": -39,
+              "right_delta": 39,
+              "left_reference_mmps": -600,
+              "right_reference_mmps": -600,
+              "left_error_mmps": 0,
+              "right_error_mmps": 0,
+              "left_control_sequence": 2621,
+              "right_control_sequence": 2621
+            }
+          }
+        },
+        "updated_at": "2026-10-27T07:21:06.280595+00:00",
+        "telemetry_decoder": {
+          "frames": 133,
+          "bad_crc": 0,
+          "skipped": 0
+        }
+      },
+      "balance_preserved": true,
+      "new_hard_stop_logic": false
+    },
+    "public_operational_stop_result": {
+      "passed_operational_stop_chain": true,
+      "source": "Actual public HTTPS endpoints used by Web -> cloud -> RK -> UART -> FPGA",
+      "observed_ESTOP_s_from_request_start": 0.9877219367772341,
+      "before_mode": "goto",
+      "before_motion_commands": {
+        "forward_q12": 0,
+        "yaw_q12": 0
+      },
+      "samples": [
+        {
+          "mode": "estop",
+          "active": true,
+          "control_stop_latch": false,
+          "forward_q12": 0,
+          "yaw_q12": 0,
+          "left_mps": -0.6,
+          "right_mps": -0.6,
+          "completed_frames": 12323,
+          "servo_us": [
+            1526,
+            1502,
+            1448,
+            1498
+          ]
+        }
+      ],
+      "refused_new_goal_while_locked": true,
+      "explicit_release_required": true,
+      "balance_kept_active": true,
+      "motion_inputs_zero": true,
+      "physical_stable_standing_or_braking_tested": false,
+      "limitation": "Elevated fixed body with spinning wheels; commands were already zero before ESTOP. This proves mode lock, command-zero contract and preserved healthy balance, not grounded stable standing or nonzero-to-zero braking.",
+      "requests": [
+        {
+          "path": "/api/platform/estop",
+          "body": {
+            "engage": false,
+            "source": "web"
+          },
+          "http": 200,
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "estop_release",
+              "detail": "已解除导航急停（MODE idle）；底盘控制侧锁存的急停需在控制板上复位。",
+              "received_at": "2026-10-27T07:22:12.536687Z"
+            }
+          }
+        },
+        {
+          "path": "/api/mission/go_to_waypoint",
+          "body": {
+            "waypoint_id": "wp_a",
+            "source": "web"
+          },
+          "http": 200,
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "go_to_waypoint",
+              "task_status": {
+                "task_id": "fpga-go-to-waypoint-1ce48d2c82",
+                "task_type": "go_to_waypoint",
+                "state": "pending",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "sending_goal",
+                "current_waypoint_id": "wp_a",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "正在前往A 点（台阶区）。",
+                "updated_at": "2026-10-27T07:22:14.741325Z"
+              },
+              "received_at": "2026-10-27T07:22:14.741381Z",
+              "detail": "已向 FPGA 下发目标点：A 点（台阶区）。"
+            }
+          }
+        },
+        {
+          "path": "/api/platform/estop",
+          "body": {
+            "engage": true,
+            "source": "web"
+          },
+          "http": 200,
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "estop",
+              "detail": "已向 FPGA 下发急停（MODE estop）。",
+              "received_at": "2026-10-27T07:22:16.429139Z"
+            }
+          }
+        },
+        {
+          "path": "/api/mission/go_to_waypoint",
+          "body": {
+            "waypoint_id": "wp_b",
+            "source": "web"
+          },
+          "http": 200,
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": false,
+              "command": "go_to_waypoint",
+              "task_status": {
+                "task_id": "fpga-go-to-waypoint-1ce48d2c82",
+                "task_type": "go_to_waypoint",
+                "state": "failed",
+                "progress": 0,
+                "source": "fpga_bridge",
+                "phase": "failed",
+                "current_waypoint_id": "wp_a",
+                "waypoint_index": 0,
+                "waypoint_count": 1,
+                "detail": "急停触发，任务中止。",
+                "updated_at": "2026-10-27T07:22:16.452347Z"
+              },
+              "received_at": "2026-10-27T07:22:19.556659Z",
+              "detail": "FPGA 导航处于急停状态，请先解除急停（模式切回空闲）。"
+            }
+          }
+        },
+        {
+          "path": "/api/platform/estop",
+          "body": {
+            "engage": false,
+            "source": "web"
+          },
+          "http": 200,
+          "response": {
+            "success": true,
+            "data": {
+              "accepted": true,
+              "command": "estop_release",
+              "detail": "已解除导航急停（MODE idle）；底盘控制侧锁存的急停需在控制板上复位。",
+              "received_at": "2026-10-27T07:22:20.345506Z"
+            }
+          }
+        }
+      ],
+      "final_mode": "idle",
+      "credentials_logged": false
+    },
+    "video_actual_transport_result": {
+      "passed": true,
+      "video_session_http": 200,
+      "expires_in_s": 600,
+      "cookie_secure": true,
+      "hls_master_and_media_playlists": true,
+      "media_segment_bytes": 255116,
+      "media_segment_http": 200,
+      "unauthenticated_http": 401,
+      "browser_playback_verified": false,
+      "credentials_logged": false,
+      "decoded_frames": 3,
+      "decoder_exit": 0
+    },
+    "HLS_gateway_deployment": {
+      "deployed_at": "2026-10-27T06:52:55.708248+00:00",
+      "code_commit": "ac7b706",
+      "target": "/opt/lingxun-cloud-gateway/cloud_gateway.py",
+      "backup": "/opt/lingxun-cloud-gateway/backups/cloud_gateway.pre-browserHLS-20261027-1455.py",
+      "gateway_health": {
+        "status": "ok",
+        "service": "lingxun-cloud-gateway",
+        "rk_backend_base_url": "http://100.113.173.115:8000",
+        "rk_online": true,
+        "public_control_enabled": true
+      },
+      "cloud_gateway_restarted": true,
+      "mediamtx_restarted": false,
+      "RK_control_changed": false,
+      "FPGA_changed": false
+    }
+  },
+  "limitations": [
+    "Known intermittent telemetry CRC/truncation origin; do not declare resolved from a clean finite capture.",
+    "Ten-minute real IDLE and thirty-minute full-load observation final result.",
+    "Actual browser/phone playback and controls, physical tilt and microphone ASR.",
+    "Real target identification/follow latency and target loss, physical lidar cable recovery.",
+    "Grounded stable standing, nonzero-to-zero braking, navigation completion and physical stop.",
+    "Maximum map upload caused a STATUS gap >1s; no continuous-status claim during the entire upload."
+  ],
+  "updated_at": "2026-10-27T16:32:41.896908+08:00",
+  "soak_result": {
+    "duration_s": 33.050062060006894,
+    "requested_duration_s": 1800.0,
+    "error": "AssertionError: CRC error during soak",
+    "completed": false,
+    "samples": 66,
+    "first_decoder": {
+      "frames": 41502,
+      "bad_crc": 0,
+      "skipped": 2
+    },
+    "last_decoder": {
+      "frames": 44802,
+      "bad_crc": 1,
+      "skipped": 3
+    },
+    "websockets": {
+      "state": {
+        "messages": 274,
+        "errors": [],
+        "last_received_s": 32.98019730602391
+      },
+      "navigation": {
+        "messages": 158,
+        "errors": [],
+        "last_received_s": 32.941567019035574
+      }
+    },
+    "memory": [
+      {
+        "elapsed_s": 0.02112203201977536,
+        "processes": {
+          "yuntuo-fpga-bridge": {
+            "pid": 521478,
+            "rss_kib": 21944,
+            "start_ticks": "39324815"
+          },
+          "qhxd-backend": {
+            "pid": 512269,
+            "rss_kib": 70632,
+            "start_ticks": "38863544"
+          }
+        }
+      },
+      {
+        "elapsed_s": 10.022463091998361,
+        "processes": {
+          "yuntuo-fpga-bridge": {
+            "pid": 521478,
+            "rss_kib": 21988,
+            "start_ticks": "39324815"
+          },
+          "qhxd-backend": {
+            "pid": 512269,
+            "rss_kib": 70632,
+            "start_ticks": "38863544"
+          }
+        }
+      },
+      {
+        "elapsed_s": 20.030859191028867,
+        "processes": {
+          "yuntuo-fpga-bridge": {
+            "pid": 521478,
+            "rss_kib": 21988,
+            "start_ticks": "39324815"
+          },
+          "qhxd-backend": {
+            "pid": 512269,
+            "rss_kib": 70632,
+            "start_ticks": "38863544"
+          }
+        }
+      },
+      {
+        "elapsed_s": 30.046273368003312,
+        "processes": {
+          "yuntuo-fpga-bridge": {
+            "pid": 521478,
+            "rss_kib": 21988,
+            "start_ticks": "39324815"
+          },
+          "qhxd-backend": {
+            "pid": 512269,
+            "rss_kib": 70632,
+            "start_ticks": "38863544"
+          }
+        }
+      }
+    ],
+    "scope": "Real UART/control telemetry, original4500 active, public WebSocket consumers. Elevated fixed body; no browser video or grounded standing acceptance.",
+    "status_rate_range_hz": [
+      4.96,
+      5.06
+    ],
+    "telemetry_rate_range_hz": [
+      101.0,
+      102.1
+    ],
+    "maximum_status_age_s": 0.17,
+    "idle_continuous_s": 33.050062060006894,
+    "telemetry_frames_observed": 3300,
+    "CRC_delta": 1,
+    "skipped_delta": 1
+  },
+  "soak_cleanup": {
+    "started_at": "2026-10-27T15:28:43.540315+08:00",
+    "failure": "AssertionError: CRC error during soak",
+    "reason": "Bench cleanup; operational ESTOP remains balance-preserving.",
+    "Flash_written": false,
+    "hold_verified": true,
+    "ended_at": "2026-10-27T15:28:55.606430+08:00"
+  },
+  "diagnostic_scope": "Raw identical-byte three-decoder comparison, no blind hardware changes. No validated physical root cause yet.",
+  "current_board": {
+    "verified": "PNR61 C30F",
+    "during": "finite full-load real-link soak with USB capture",
+    "firmware": "g3c 54164B, forward1000/ZHI350",
+    "Flash_written": false,
+    "evidence": "F:\\nav_integration_g2_20261023\\QHXD_real_hw_integration_20261027_1\\usbmon_full_soak1\\PNR61_identity.log"
+  },
+  "latest_integration_summary": {
+    "recorded_at": "2026-10-27T16:32:41.896908+08:00",
+    "task_complete": false,
+    "current_board": {
+      "verified": "PNR61 C30F",
+      "during": "finite full-load real-link soak with USB capture",
+      "firmware": "g3c 54164B, forward1000/ZHI350",
+      "Flash_written": false,
+      "evidence": "F:\\nav_integration_g2_20261023\\QHXD_real_hw_integration_20261027_1\\usbmon_full_soak1\\PNR61_identity.log"
+    },
+    "RK_code": "fdf3f4a",
+    "cloud_gateway_code": "ac7b706",
+    "Flash_written": false,
+    "operational_stop_contract": "Cancel movement targets, retain original4500 balance, and verify stable standing separately; never substitute all-wheel cutoff.",
+    "operational_stop_actual": {
+      "passed_operational_stop_chain": true,
+      "observed_ESTOP_s_from_request_start": 0.9877219367772341,
+      "balance_kept_active": true,
+      "motion_inputs_zero": true,
+      "refused_new_goal_while_locked": true,
+      "explicit_release_required": true,
+      "physical_stable_standing_or_braking_tested": false,
+      "limitation": "Elevated fixed body with spinning wheels; commands were already zero before ESTOP. This proves mode lock, command-zero contract and preserved healthy balance, not grounded stable standing or nonzero-to-zero braking."
+    },
+    "stop_wording_deployment": {
+      "code": "fdf3f4a",
+      "link": "uart:/dev/ttyACM0",
+      "nav_link": "offline",
+      "control_link": "offline",
+      "usbmon_loaded": false,
+      "dirty": "",
+      "deployed_at": "2026-10-27T16:27:26.128043+08:00",
+      "before": "569fb39",
+      "scope": "Only operational stop receipt wording; NV commands, balance controller and RTL unchanged",
+      "hold_F322_verified": true,
+      "Flash_written": false,
+      "first_checker_failure": "Health socket was listening before its first platform publication; retried read-only, did not redeploy or repeat hardware test"
+    },
+    "telemetry_disconnect_actual": {
+      "code_commit": "569fb39",
+      "bridge_offline_after_unbind_s": 0.3640225700219162,
+      "backend_card_offline_after_unbind_s": 0.3640225700219162,
+      "online_after_bind_s": 0.7486539639648981,
+      "physical_cable_unplug": false,
+      "method": "selected ch341 interface unbind/bind",
+      "healthy_recovery": true
+    },
+    "map_loaded_reset_actual": {
+      "passed": true,
+      "package_bytes": 4224,
+      "upload_s": 1.6552211020025425,
+      "version": "c43359e93ceb",
+      "same_bridge_pid": true,
+      "uptime_before_s": 45.022519,
+      "uptime_after_s": 5.061303,
+      "map_loaded_after": false,
+      "no_old_task_replayed_in_observation": true,
+      "g3c_restored_forward1000_ZHI350": true,
+      "cleanup": {
+        "Flash_written": false,
+        "hold_verified": true,
+        "bridge_restarted": true,
+        "ended_at": "2026-10-27T16:14:42.631562+08:00"
+      },
+      "scope": "State/cache test with synthetic map and elevated body; no navigation accuracy or grounded standing proof."
+    },
+    "preserved_soak_failures": [
+      {
+        "duration_s": 33.050062060006894,
+        "CRC_delta": 1,
+        "skipped_delta": 1,
+        "source": "F:\\nav_integration_g2_20261023\\QHXD_real_hw_integration_20261027_1\\soak_result.json"
+      },
+      {
+        "duration_s": 52.0711051489925,
+        "CRC_delta": 0,
+        "skipped_delta": 1,
+        "source": "F:\\nav_integration_g2_20261023\\QHXD_real_hw_integration_20261027_1\\trace_attempt2\\soak_result.json"
+      }
+    ],
+    "application_input_truncation": {
+      "expected_frame_bytes": 126,
+      "received_gap_bytes": 45,
+      "difference_bytes": 81,
+      "raw_analysis": {
+        "bytes": 760832,
+        "valid_frames": 6037,
+        "CRC_bad_candidates": [],
+        "sequence_or_byte_anomalies": [
+          {
+            "previous": {
+              "offset": 704666,
+              "timestamp_ms": 61649,
+              "sequence": 6164
+            },
+            "next": {
+              "offset": 704837,
+              "timestamp_ms": 61669,
+              "sequence": 6166
+            },
+            "sequence_delta": 2,
+            "timestamp_delta_ms": 20,
+            "byte_span": 171,
+            "gap_bytes": 45,
+            "gap_hex": "a55a05a805da05101d00004e460100d9ffffff27000000a8fdffffa8fdffff00000000000000003f173f17a616"
+          }
+        ]
+      },
+      "location_of_loss_proven": false
+    },
+    "standalone_serial_observation": {
+      "duration_s": 180.0752795219887,
+      "bytes": 2268525,
+      "frames": 18004,
+      "bad_crc": 0,
+      "skipped": 0,
+      "scope": "No reproduction in a finite standalone run; not a fix or full-system acceptance."
+    },
+    "USB_application_finite_observation": {
+      "common_interval": {
+        "first_frame": {
+          "offset": 0,
+          "timestamp_ms": 5969,
+          "sequence": 596
+        },
+        "last_frame": {
+          "offset": 3038994,
+          "timestamp_ms": 247159,
+          "sequence": 24715
+        },
+        "USB_start": 64,
+        "application_start": 0,
+        "USB_bytes": 3039120,
+        "application_bytes": 3039120,
+        "exact_byte_equal": true
+      },
+      "monitor_capture_complete": true,
+      "common_valid_frames": 24120,
+      "common_CRC_errors": 0,
+      "common_sequence_or_byte_anomalies": 0,
+      "only_end_cancellations": true,
+      "conclusion": "No anomaly reproduced in this finite capture; prior failures remain unresolved and long soak is not accepted.",
+      "public_WebSocket_consumers_present": false,
+      "sources": [
+        "https://docs.kernel.org/usb/usbmon.html",
+        "https://github.com/torvalds/linux/blob/v5.10/drivers/usb/mon/mon_bin.c"
+      ]
+    },
+    "physical_context_from_user": {
+      "recorded_at": "2026-10-27T16:12:06.433348+08:00",
+      "source": "direct user answer",
+      "TTL_ground_shared_with_FPGA": true,
+      "TTL_signal_wiring_separate_from_motor_and_servo_harness": true,
+      "voltage_waveform_or_TX_pin_capture_available": false,
+      "inference": "No current evidence of missing shared ground or bundled signal/power harness; does not identify the point of data truncation."
+    },
+    "current_full_load_soak": {
+      "controller_identity_verified_live": true,
+      "runtime": {
+        "pid": 8136,
+        "created": 1793089882.0967307,
+        "started_at": "2026-10-27T16:31:22.620833+08:00",
+        "directory": "F:\\nav_integration_g2_20261023\\QHXD_real_hw_integration_20261027_1\\usbmon_full_soak1",
+        "bridge_process": {
+          "pid": 531654,
+          "start_ticks": "39747825"
+        },
+        "USB_monitor": {
+          "ready": true,
+          "pid": 531652,
+          "bus": 2,
+          "device": 4,
+          "start_ticks": "39747806"
+        },
+        "soak_process": {
+          "pid": 531672,
+          "start_ticks": "39747955"
+        },
+        "duration_s": 1800
+      },
+      "launch": {
+        "started_at": "2026-10-27T16:31:22.620833+08:00",
+        "scope": "HCD USB bulk-IN versus same-run application serial bytes; original bridge/protocol/hardware unchanged",
+        "passed_soak": false,
+        "requested_s": 1800,
+        "Flash_written": false,
+        "initial": {
+          "module": false,
+          "bus": 2,
+          "dev": 4,
+          "driver": "/sys/bus/usb/drivers/ch341",
+          "code": "fdf3f4a",
+          "bridge_env": {
+            "YUNTUO_BLOCKED_FAIL_SECONDS": "25",
+            "WAYPOINTS_CONFIG_PATH": "/home/robomaster/QHXD/backend/app/config/yuntuo/waypoints.json",
+            "YUNTUO_MAP_ID": "yuntuo_field",
+            "YUNTUO_FPGA_LINK": "uart:/dev/ttyACM0",
+            "YUNTUO_REQUIRE_LOCALIZATION": "true",
+            "YUNTUO_TARGET_RATE_HZ": "12",
+            "YUNTUO_TARGET_MAX_LATENCY_MS": "400",
+            "YUNTUO_PERCEPTION_UDP": "127.0.0.1:9102",
+            "YUNTUO_CONTROL_TELEMETRY": "serial:/dev/ttyUSB0@230400",
+            "YUNTUO_ALLOW_MAPLESS_GOTO": "true",
+            "PATROL_ROUTES_CONFIG_PATH": "/home/robomaster/QHXD/backend/app/config/yuntuo/patrol_routes.json",
+            "YUNTUO_FIELD_BOUNDS": "-1,-3,6,3",
+            "YUNTUO_PRIOR_MAP": "",
+            "NAV_MISSION_EXECUTOR_PORT": "9101",
+            "YUNTUO_FPGA_IS_MOCK": "false"
+          },
+          "disk_free_bytes": 71159590912
+        },
+        "USB_monitor": {
+          "ready": true,
+          "pid": 531652,
+          "bus": 2,
+          "device": 4,
+          "start_ticks": "39747806"
+        },
+        "bridge_process": {
+          "pid": 531654,
+          "start_ticks": "39747825"
+        },
+        "explicit_bench_release": {
+          "mode": "idle"
+        },
+        "soak_process": {
+          "pid": 531672,
+          "start_ticks": "39747955"
+        }
+      },
+      "progress": {
+        "elapsed_s": 55.57705956703285,
+        "remaining_s": 1744.4229404329672,
+        "samples": 112,
+        "decoder": {
+          "frames": 5684,
+          "bad_crc": 0,
+          "skipped": 0
+        },
+        "websockets": {
+          "state": {
+            "messages": 465,
+            "errors": [],
+            "last_received_s": 55.54892418300733
+          },
+          "navigation": {
+            "messages": 267,
+            "errors": [],
+            "last_received_s": 55.395184513996355
+          }
+        },
+        "idle_10min_complete": false,
+        "last": {
+          "elapsed_s": 55.57705956703285,
+          "status_age_s": 0.14,
+          "status_rate_hz": 5.01,
+          "telemetry_rate_hz": 101.7,
+          "mode": "idle",
+          "uptime_s": 62.641874,
+          "left_mps": -0.6,
+          "right_mps": -0.6,
+          "decoder": {
+            "frames": 5684,
+            "bad_crc": 0,
+            "skipped": 0
+          }
+        },
+        "last_memory": {
+          "elapsed_s": 50.070359987032134,
+          "processes": {
+            "yuntuo-fpga-bridge": {
+              "pid": 531654,
+              "rss_kib": 22520,
+              "start_ticks": "39747825"
+            },
+            "qhxd-backend": {
+              "pid": 512269,
+              "rss_kib": 70836,
+              "start_ticks": "38863544"
+            }
+          }
+        },
+        "error": null
+      },
+      "result": null,
+      "adds_public_WebSocket_consumers": true,
+      "automatic_hold_cleanup": true,
+      "idle_10min_accepted": false,
+      "soak_30min_accepted": false
+    },
+    "remaining": [
+      "Known intermittent telemetry CRC/truncation origin; do not declare resolved from a clean finite capture.",
+      "Ten-minute real IDLE and thirty-minute full-load observation final result.",
+      "Actual browser/phone playback and controls, physical tilt and microphone ASR.",
+      "Real target identification/follow latency and target loss, physical lidar cable recovery.",
+      "Grounded stable standing, nonzero-to-zero braking, navigation completion and physical stop."
+    ],
+    "raw_artifact_directory": "F:\\nav_integration_g2_20261023\\QHXD_real_hw_integration_20261027_1",
+    "hardware_or_balance_RTL_changed_for_stop_clarification": false
+  }
+}
