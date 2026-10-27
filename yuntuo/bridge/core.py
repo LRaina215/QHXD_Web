@@ -6,6 +6,7 @@ import math
 import queue
 import threading
 import time
+from uuid import uuid4
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -75,6 +76,7 @@ class FpgaBridge:
         self.prior_map: PriorMap | None = None
         self.pending_map: tuple[bytes, PriorMap] | None = None
         self.map_detail = "未下发先验地图"
+        self.map_upload: dict | None = None
         self.map_id = str(cfg.extra.get("map_id", "yuntuo_field"))
         self.field_bounds = tuple(cfg.extra.get("field_bounds", (-1.0, -3.0, 6.0, 3.0)))
         self.last_nav_post = self.last_platform_post = self.last_map_post = self.last_keepalive = -1e9
@@ -94,6 +96,26 @@ class FpgaBridge:
     def snapshot(self) -> dict:
         with self.public_lock:
             return dict(self.public)
+
+    def _map_progress(self, state: str, detail: str, *, sent: int | None = None) -> None:
+        if self.map_upload is None:
+            return
+        self.map_upload = {**self.map_upload, "state": state, "detail": detail}
+        if sent is not None:
+            self.map_upload["sent_bytes"] = sent
+        total = self.map_upload["total_bytes"]
+        # All data acknowledged is still not a successful END/READY verdict.
+        self.map_upload["progress"] = (100 if state == "ready" else
+                                       min(99, self.map_upload["sent_bytes"] * 100 // max(1, total)))
+        if state in {"ready", "failed", "cancelled", "invalidated"}:
+            self.map_upload["completed_at"] = _iso()
+
+    def _queue_map(self, pkg: bytes, prior: PriorMap, *, filename: str, upload_id: str | None = None) -> dict:
+        self.pending_map = (pkg, prior)
+        self.map_upload = {"id": upload_id or uuid4().hex, "filename": filename, "map_id": self.map_id,
+                           "state": "queued", "sent_bytes": 0, "total_bytes": len(pkg), "progress": 0,
+                           "detail": "地图已校验，等待下发。", "started_at": _iso(), "completed_at": None}
+        return dict(self.map_upload)
 
     # ---------------------------------------------------------------- 主循环
     def tick(self) -> bool:
@@ -185,6 +207,8 @@ class FpgaBridge:
         self.link = None
         self.reconnect_at = now + 2.0
         self.outbox.clear()
+        if self.pending_map is not None or self.uploading_map:
+            self._map_progress("failed", "FPGA链路断开，地图未确认加载；请重新上传。")
         self.pending_map = None
         self.status_quarantined = True
         self.runner.fail("FPGA 链路断开，原任务中止；重连后需显式解除锁定并重新下发任务。", stop=False, now=now)
@@ -243,6 +267,8 @@ class FpgaBridge:
                 self.runner.fail("FPGA 时钟重置或状态流切换，原任务中止；请显式解除锁定后重新发起任务。", stop=False, now=now)
                 self.prior_map, self.pending_map = None, None
                 self.map_detail = "FPGA 已复位，先验地图缓存失效；请重新下发。"
+                self.map_abort_requested = True
+                self._map_progress("invalidated", self.map_detail)
                 self.last_map_post = -1e9
             self.status_candidate, self.status_quarantined = None, False
             self.status, self.status_at = msg, now
@@ -288,6 +314,8 @@ class FpgaBridge:
             engage = bool(p.get("engage", True))
             if engage:
                 self.outbox.clear()
+                if self.uploading_map or self.pending_map is not None:
+                    self._map_progress("cancelled", "运行急停已请求，地图上传已中止。")
                 self.pending_map = None
                 self.map_abort_requested = True
                 self._send(nv.encode_mode("estop"), urgent=True)
@@ -314,10 +342,13 @@ class FpgaBridge:
             sv = self.status_view(now)
             if not sv.fresh or sv.status.mode != 0:
                 return {"success": False, "data": {"accepted": False, "detail": "地图操作需要新鲜的FPGA空闲状态；请先显式解除导航急停。"}}
+            if self.runner.task is not None and self.runner.task.active:
+                return {"success": False, "data": {"accepted": False, "detail": "请先取消当前任务，再在空闲状态更换地图。"}}
             if p.get("clear"):
                 self._send(nv.encode_map_clear())
                 self.prior_map = None
                 self.map_detail = "已请求清除先验地图，等待FPGA无图状态。"
+                self._map_progress("invalidated", self.map_detail)
                 self.last_map_post = -1e9
                 return {"success": True, "data": {"accepted": True, "detail": self.map_detail}}
             try:
@@ -325,15 +356,17 @@ class FpgaBridge:
                 prior = parse_package(pkg)
             except (KeyError, OSError, MapPackageError) as exc:
                 return {"success": False, "data": {"accepted": False, "detail": f"地图包不可用：{exc}"}}
-            self.pending_map = (pkg, prior)
             if p.get("map_id"):
                 self.map_id = str(p["map_id"])
-            return {"success": True, "data": {"accepted": True, "detail": f"地图包校验通过（{prior.size} B），开始下发。"}}
+            upload = self._queue_map(pkg, prior, filename=str(p.get("filename") or Path(str(p["path"])).name),
+                                     upload_id=p.get("upload_id"))
+            return {"success": True, "data": {"accepted": True, "detail": f"地图包校验通过（{prior.size} B），开始下发。",
+                                               "upload": upload}}
         return {"success": False, "data": {"accepted": False, "detail": f"未知请求 {req.kind}"}}
 
     def load_map_file(self, path: Path) -> None:
         pkg = path.read_bytes()
-        self.pending_map = (pkg, parse_package(pkg))
+        self._queue_map(pkg, parse_package(pkg), filename=path.name)
 
     def _upload_map(self, pkg: bytes, prior: PriorMap) -> bool:
         """Application ACK barrier/progress/terminal checks on every transport.
@@ -344,6 +377,7 @@ class FpgaBridge:
         t0 = self.clock()
         self.uploading_map, self.map_abort_requested = True, False
         self.map_detail = f"正在下发先验地图（{prior.size} B）。"
+        self._map_progress("uploading", self.map_detail, sent=0)
         def exchange(message: bytes, accept) -> nv.MapAck:
             for _ in range(21):
                 self._transmit(message)
@@ -362,14 +396,19 @@ class FpgaBridge:
                                or (a.map_state == 1 and a.next_offset == end))
                 if ack.map_state in (3, 4):
                     self.map_detail = f"地图在偏移{off}被FPGA拒绝：{ack.map_state_name}"
+                    self._map_progress("failed", self.map_detail)
                     return False
                 off = end
+                self._map_progress("uploading", f"正在下发地图：{off}/{len(pkg)} B", sent=off)
             ack = exchange(nv.encode_map_end(), lambda a: a.map_state in (2, 3, 4))
         except MapUploadAborted:
-            self.map_detail = "地图上传已因急停中止。"
+            invalidated = self.map_upload is not None and self.map_upload["state"] == "invalidated"
+            self.map_detail = "FPGA已复位，地图上传失效。" if invalidated else "地图上传已因急停中止。"
+            self._map_progress("invalidated" if invalidated else "cancelled", self.map_detail)
             return False
         except (OSError, LinkError) as exc:
             self.map_detail = f"地图下发失败：{exc}"
+            self._map_progress("failed", self.map_detail)
             self._drop_link(exc, self.clock())
             return False
         finally:
@@ -381,6 +420,7 @@ class FpgaBridge:
         if ok:
             self.prior_map = prior
             self.last_map_post = -1e9
+        self._map_progress("ready" if ok else "failed", self.map_detail)
         return ok
 
     def _wait_map_ack(self, timeout: float, tries: int, *, accept) -> nv.MapAck | None:
@@ -418,7 +458,8 @@ class FpgaBridge:
                     "status": "ok", "service": "yuntuo-fpga-bridge", "link": self.cfg.link,
                     "link_open": self.link is not None, "link_error": self.link_error,
                     "status_age_s": round(now - self.status_at, 2) if self.status else None,
-                    "map": self.map_detail, "task": self.runner.task_status(), "platform": platform,
+                    "map": self.map_detail, "map_upload": dict(self.map_upload) if self.map_upload else None,
+                    "task": self.runner.task_status(), "platform": platform,
                     "updated_at": _iso(),
                 }
         if now - self.last_map_post >= 10.0:      # 后端重启后地图缓存会丢，定期重发（10 cm 栅格，十几 KB）
