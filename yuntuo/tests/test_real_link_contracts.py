@@ -134,6 +134,23 @@ def test_loc_state_or_receive_ACK_cannot_replace_terminal_ACK():
     assert b.prior_map is None and b.link is None
 
 
+def test_ready_map_is_loaded_while_firmware_waits_for_initial_pose():
+    clock = Clock()
+    link = AckLink(clock)
+    link.drop = False
+    link.mode = 0
+    b = bridge_with(link, clock)
+    b._ensure_link(clock())
+    pkg = build_test_package(0, 0, [[0]])
+    assert b._upload_map(pkg, parse_package(pkg))
+    b.status = nv.NavStatus(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1000000, 0, 0)
+    b.status_at = clock()
+    status = b.platform_status(clock())
+    assert status["map_loaded"] is True and status["loc_state"] == "mapless"
+    b._handle_request(PendingRequest("map", {"clear": True}), clock())
+    assert b.platform_status(clock())["map_loaded"] is False
+
+
 def test_estop_preempts_map_wait_and_cannot_be_followed_by_old_goal():
     clock = Clock()
     link = AckLink(clock)

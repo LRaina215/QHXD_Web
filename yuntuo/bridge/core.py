@@ -473,7 +473,10 @@ class FpgaBridge:
             "fpga_mode": s.mode_name if s else None, "fpga_state": s.state_name if s else None,
             "loc_state": s.loc_name if s else None,
             "loc_quality": max(0, min(100, s.loc_quality)) if s and s.loc_state else None,
-            "map_loaded": bool(s and s.loc_state), "target_valid": bool(s and s.target_valid),
+            # MAP_ACK READY precedes SET_POSE; LOC_ODOM until alignment starts
+            # does not undo the acknowledged map transfer.
+            "map_loaded": bool(s and (self.prior_map is not None or s.loc_state)),
+            "target_valid": bool(s and s.target_valid),
             "lidar_ok": s.lidar_ok if s else None, "odom_ok": s.odom_ok if s else None,
             "cmd_vx_mps": s.vx_mmps / 1000 if s else None, "cmd_wz_radps": s.wz_mradps / 1000 if s else None,
             "fpga_uptime_s": s.t_us / 1e6 if s else None,

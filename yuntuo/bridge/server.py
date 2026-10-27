@@ -40,7 +40,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
-            self._json(200, self.bridge.snapshot() or {"status": "starting"})
+            snapshot = self.bridge.snapshot() or {"status": "starting"}
+            decoder = getattr(self.bridge.telemetry, "decoder", None)
+            if decoder is not None:
+                snapshot["telemetry_decoder"] = {
+                    "frames": decoder.frames, "bad_crc": decoder.bad_crc,
+                    "skipped": decoder.skipped,
+                }
+            self._json(200, snapshot)
         elif self.path == "/api/internal/fpga/status":
             snap = self.bridge.snapshot()
             self._json(200, {"success": True, "data": snap.get("platform")})
