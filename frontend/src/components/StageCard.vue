@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ArrowLeftRight, Crosshair, Map as MapIcon, Video } from 'lucide-vue-next'
 import CloudVideoPlayer from './CloudVideoPlayer.vue'
 import FieldMap from './FieldMap.vue'
+import MapUpload from './MapUpload.vue'
 import { perceptionFrameStreamUrl } from '../config/api'
 import { LOC_LABELS, fmt } from '../labels'
 import type { YunTuo } from '../composables/useYunTuo'
@@ -39,6 +40,7 @@ const hud = computed(() => [
         </button>
       </div>
       <span class="ctx">{{ main === 'map' ? (mapless ? '无先验图 · 里程计坐标系' : '先验地图坐标系') : 'Orbbec Astra Pro Plus · RKNN 检测' }}</span>
+      <MapUpload :yt="yt" />
       <span v-if="target" class="lock"><Crosshair :size="15" />目标已锁定</span>
     </header>
 

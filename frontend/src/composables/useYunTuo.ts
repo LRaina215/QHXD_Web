@@ -5,6 +5,7 @@ import type {
   AlertEvent,
   LogLine,
   MapMetadata,
+  MapUploadStatus,
   NavigationSnapshot,
   PayloadValue,
   PendingCommand,
@@ -42,6 +43,11 @@ export function useYunTuo() {
   const state = ref<RobotState | null>(null)
   const nav = ref<NavigationSnapshot | null>(null)
   const mapMeta = ref<MapMetadata | null>(null)
+  const mapUpload = ref<MapUploadStatus>({ state: 'idle', detail: '选择场地的 .nvmp 地图包。' })
+  const mapUploadError = ref('')
+  const mapUploading = computed(() => ['queued', 'uploading'].includes(mapUpload.value.state))
+  let mapPollBusy = false
+  let lastMapPoll = 0
   const mapImageVersion = ref('')
   const waypoints = ref<Waypoint[]>([])
   const alerts = ref<AlertEvent[]>([])
@@ -52,7 +58,7 @@ export function useYunTuo() {
   const pending = ref<PendingCommand | null>(null)
   const smart = ref<SmartCommandResult | null>(null)
   const conn = reactive({ state: false, nav: false })
-  const busy = reactive({ mission: false, voice: false, confirm: false, mode: false, estop: false })
+  const busy = reactive({ mission: false, voice: false, confirm: false, mode: false, estop: false, map: false })
   const voiceStatus = ref('空闲')
   const confirmError = ref('')
   const lastMessage = ref('等待命令')
@@ -123,6 +129,50 @@ export function useYunTuo() {
     mapImageVersion.value = payload?.data.version ?? ''
   }
 
+  async function loadMapUpload() {
+    if (mapPollBusy) return
+    mapPollBusy = true
+    lastMapPoll = Date.now()
+    try {
+      const payload = await getJson<{ data: MapUploadStatus }>('/api/navigation/map/upload')
+      if (!payload) return
+      const previous = mapUpload.value
+      mapUpload.value = payload.data
+      if (['ready', 'invalidated'].includes(payload.data.state)
+          && (previous.id !== payload.data.id || previous.state !== payload.data.state)) {
+        trail.value = []
+        await loadMapMeta()
+      }
+    } finally {
+      mapPollBusy = false
+    }
+  }
+
+  async function uploadMap(file: File) {
+    if (!file.name.toLowerCase().endsWith('.nvmp') || file.size < 48 || file.size > 86064) {
+      log('请选择有效的 .nvmp 文件（48至86064字节）。', 'warn', '地图')
+      return
+    }
+    busy.map = true
+    mapUploadError.value = ''
+    try {
+      const query = new URLSearchParams({ filename: file.name, map_id: mapMeta.value?.map_id || 'yuntuo_field' })
+      const response = await fetch(apiUrl(`/api/navigation/map/upload?${query}`), {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() }, body: file,
+      })
+      if (!response.ok) throw new Error(await readApiError(response, '地图上传失败'))
+      const payload = await response.json() as { data: MapUploadStatus }
+      mapUpload.value = payload.data
+      log('地图已提交，正在等待FPGA下发结果。', 'run', '地图')
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '地图上传失败'
+      log(detail, 'bad', '地图')
+      mapUploadError.value = detail
+    } finally {
+      busy.map = false
+    }
+  }
+
   function pushTrail(snapshot: NavigationSnapshot) {
     const pose = snapshot.pose
     if (!pose) return
@@ -169,7 +219,7 @@ export function useYunTuo() {
 
   async function start() {
     running = true
-    await Promise.all([loadState(), loadAlerts(), loadWaypoints(), loadMapMeta(), loadTaskEvents()])
+    await Promise.all([loadState(), loadAlerts(), loadWaypoints(), loadMapMeta(), loadTaskEvents(), loadMapUpload()])
     connectState()
     connectNav()
     timers = [
@@ -177,6 +227,9 @@ export function useYunTuo() {
       window.setInterval(() => void loadTaskEvents(), 3000),
       window.setInterval(() => void loadState(), 15000),
       window.setInterval(() => void loadWaypoints(), 60000),
+      window.setInterval(() => {
+        if (!busy.map && Date.now() - lastMapPoll >= (mapUploading.value ? 1000 : 5000)) void loadMapUpload()
+      }, 1000),
     ]
   }
 
@@ -388,10 +441,10 @@ export function useYunTuo() {
   })
 
   return {
-    state, nav, mapMeta, mapImageVersion, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
+    state, nav, mapMeta, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
     voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline,
     start, stop, mission, goTo, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
-    recordOnboard, confirm, log,
+    recordOnboard, confirm, uploadMap, log,
   }
 }
 

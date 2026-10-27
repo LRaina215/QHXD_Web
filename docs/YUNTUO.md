@@ -69,6 +69,7 @@ FPGA 自己负责：目标 1.5 s 未更新回到探索、站位 0.7 m、受阻�
 | `POST /api/mission/follow_target` | `{target_class: "person", label?, timeout_s}` |
 | `POST /api/platform/estop` | `{engage: true|false}`；网关只要求 Token，不受 PUBLIC_CONTROL_ENABLED 限制 |
 | `POST /api/platform/set_pose` | `{x, y, yaw, align}`（m / rad） |
+| `POST /api/navigation/map/upload` | 网页上传 `.nvmp` 原字节并下发FPGA；GET同路径查询真实下发进度，[使用说明](MAP_UPLOAD_20261027.md) |
 | `GET /api/platform/status` | FPGA 导航 + 控制状态（也在 `/ws/state` 的 `platform_status` 字段里） |
 | `POST /api/internal/platform/status` | fpga_bridge 上送，仅本机 |
 

@@ -39,6 +39,7 @@ PUBLIC_RATE_LIMIT_PER_MINUTE = int(os.getenv("PUBLIC_RATE_LIMIT_PER_MINUTE", "60
 PUBLIC_AUDIO_MAX_MB = float(os.getenv("PUBLIC_AUDIO_MAX_MB", "20"))
 PUBLIC_BROWSER_AUDIO_MAX_MB = float(os.getenv("PUBLIC_BROWSER_AUDIO_MAX_MB", "5"))
 PUBLIC_BROWSER_AUDIO_MAX_SECONDS = float(os.getenv("PUBLIC_BROWSER_AUDIO_MAX_SECONDS", "10"))
+MAX_MAP_UPLOAD_BYTES = 86064
 GATEWAY_AUDIO_TMP_DIR = Path(os.getenv("GATEWAY_AUDIO_TMP_DIR", "/tmp/lingxun-cloud-gateway-audio"))
 GATEWAY_AUDIO_KEEP_DIR = Path(os.getenv("GATEWAY_AUDIO_KEEP_DIR", "/var/log/lingxun-cloud-gateway/audio_records"))
 GATEWAY_AUDIO_KEEP_MAX_FILES = int(os.getenv("GATEWAY_AUDIO_KEEP_MAX_FILES", "20"))
@@ -845,7 +846,21 @@ async def proxy_http(path: str, request: Request):
         upstream_url += f"?{request.url.query}"
 
     headers = _forward_headers(request, request_id)
-    body = await request.body()
+    if url_path.rstrip("/") == "/api/navigation/map/upload" and request.method.upper() == "POST":
+        try:
+            length = int(request.headers.get("content-length", "0"))
+        except ValueError:
+            return _reject(400, "地图文件长度无效。", request, request_id)
+        if length < 0 or length > MAX_MAP_UPLOAD_BYTES:
+            return _reject(413, "地图文件超过最大86064字节。", request, request_id)
+        chunks = bytearray()
+        async for chunk in request.stream():
+            if len(chunks) + len(chunk) > MAX_MAP_UPLOAD_BYTES:
+                return _reject(413, "地图文件超过最大86064字节。", request, request_id)
+            chunks.extend(chunk)
+        body = bytes(chunks)
+    else:
+        body = await request.body()
 
     timeout = STREAM_TIMEOUT_SECONDS if url_path == "/api/perception/frame_stream" else FORWARD_TIMEOUT_SECONDS
 

@@ -108,6 +108,19 @@ export type MapMetadata = {
   origin: { x: number; y: number; yaw: number }
 }
 
+export type MapUploadStatus = {
+  id?: string
+  filename?: string
+  map_id?: string
+  state: 'idle' | 'queued' | 'uploading' | 'ready' | 'failed' | 'cancelled' | 'invalidated' | 'unavailable'
+  sent_bytes?: number
+  total_bytes?: number
+  progress?: number
+  detail: string
+  started_at?: string
+  completed_at?: string | null
+}
+
 export type Waypoint = {
   waypoint_id: string
   name: string

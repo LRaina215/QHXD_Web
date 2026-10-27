@@ -88,6 +88,7 @@ from app.services.mock_state import mock_state_service
 from app.services.nuc_adapter import nuc_adapter
 from app.services.persistence import persistence
 from app.services.platform_adapter import platform_adapter
+from app.services.map_upload import MAX_MAP_BYTES, map_upload_service
 from app.services.smart_voice_service import smart_voice_service
 from app.services.state_store import state_store
 from app.services.tts_service import tts_service
@@ -1196,6 +1197,29 @@ async def platform_estop(request: PlatformEstopRequest) -> PlatformCommandRespon
 async def platform_set_pose(request: PlatformSetPoseRequest) -> PlatformCommandResponse:
     result = await asyncio.to_thread(platform_adapter.set_pose, request)
     return PlatformCommandResponse(data=result)
+
+
+@app.post("/api/navigation/map/upload")
+async def upload_navigation_map(request: Request, filename: str = "", map_id: str = "yuntuo_field"):
+    if request.headers.get("content-type", "").split(";", 1)[0] != "application/octet-stream":
+        raise HTTPException(415, "请上传 .nvmp 二进制地图文件。")
+    try:
+        length = int(request.headers.get("content-length", "0"))
+    except ValueError as exc:
+        raise HTTPException(400, "地图文件长度无效。") from exc
+    if length < 0 or length > MAX_MAP_BYTES:
+        raise HTTPException(413, "地图包超过当前FPGA容量（最大86064字节）。")
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > MAX_MAP_BYTES:
+            raise HTTPException(413, "地图包超过当前FPGA容量（最大86064字节）。")
+        data.extend(chunk)
+    return await asyncio.to_thread(map_upload_service.submit, bytes(data), filename, map_id)
+
+
+@app.get("/api/navigation/map/upload")
+async def navigation_map_upload_status():
+    return await asyncio.to_thread(map_upload_service.status)
 
 
 @app.post("/api/internal/nuc/state", response_model=NucStateUpdateResponse)
