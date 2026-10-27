@@ -107,6 +107,7 @@ class TelemetryReader(threading.Thread):
         self.spec = spec
         self.decoder = TelemetryDecoder()
         self.lock = threading.Lock()
+        self.disconnected = False
         self._latest: ControlFrame | None = None
         self._latest_at = 0.0
         self._samples: deque[tuple[ControlFrame, float]] = deque(maxlen=256)
@@ -128,6 +129,7 @@ class TelemetryReader(threading.Thread):
         if frames:
             now = time.monotonic()
             with self.lock:
+                self.disconnected = False
                 for _ in frames:
                     self.rate.mark(now)
                 for frame in frames:
@@ -158,5 +160,7 @@ class TelemetryReader(threading.Thread):
                         while True:
                             self._ingest(port.read(512))
             except Exception as exc:  # 串口拔出、权限等：2 s 后重连
+                with self.lock:
+                    self.disconnected = True
                 log.warning("控制遥测 %s 不可用：%s", self.spec, exc)
                 time.sleep(2.0)

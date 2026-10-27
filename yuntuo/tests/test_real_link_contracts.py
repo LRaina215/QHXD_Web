@@ -151,6 +151,45 @@ def test_ready_map_is_loaded_while_firmware_waits_for_initial_pose():
     assert b.platform_status(clock())["map_loaded"] is False
 
 
+def test_unplug_invalidates_recent_feedback_and_valid_data_restores_it(monkeypatch):
+    from types import SimpleNamespace
+    from yuntuo.bridge import inputs
+
+    clock = Clock()
+    monkeypatch.setattr(inputs.time, "monotonic", clock)
+    reader = inputs.TelemetryReader("serial:/test")
+    reader._ingest(tm.encode_frame({"status": tm.ST_BMI_READY, "sequence": 1}))
+    link = AckLink(clock)
+    b = bridge_with(link, clock)
+    b.telemetry = reader
+    b.status = nv.NavStatus(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1000000, 0, 0)
+    b.status_at = clock()
+    assert b.platform_status(clock())["control_link"] == "online"
+
+    class Unplugged:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def read(self, _):
+            raise OSError("device disconnected")
+
+    def end_after_retry_delay(_):
+        raise KeyboardInterrupt
+
+    monkeypatch.setitem(__import__("sys").modules, "serial", SimpleNamespace(Serial=lambda *a, **kw: Unplugged()))
+    monkeypatch.setattr(inputs.time, "sleep", end_after_retry_delay)
+    with pytest.raises(KeyboardInterrupt):
+        reader.run()
+    # No fake passage of the one-second display timeout: the OS failure alone
+    # invalidates the still-recent frame and its stop evidence.
+    assert b.platform_status(clock())["control_link"] == "offline"
+    assert not b.platform_status(clock())["control_telemetry"]["fresh"]
+    assert not b.status_view(clock()).motion.ready
+    reader._ingest(tm.encode_frame({"status": tm.ST_BMI_READY, "sequence": 2}))
+    assert b.platform_status(clock())["control_link"] == "online"
+
+
 def test_estop_preempts_map_wait_and_cannot_be_followed_by_old_goal():
     clock = Clock()
     link = AckLink(clock)

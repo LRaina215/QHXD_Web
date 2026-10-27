@@ -131,6 +131,8 @@ class FpgaBridge:
                  and 0 <= now-self.status_at <= self.cfg.status_timeout_s)
         age = self._control_age_us(self.stop_evidence.frame, now) if self.nv_control_seen else None
         clock_ok = fresh and (not self.nv_control_seen or age is not None and -10000 <= age <= FEEDBACK_MAX_AGE_S*1e6)
+        if not self.nv_control_seen and getattr(self.telemetry, "disconnected", False):
+            clock_ok = False
         return StatusView(self.status, self.status_at, fresh, self.stop_evidence.view(now, clock_ok=clock_ok))
 
     def _control_age_us(self, frame: ControlFrame | None, now: float) -> int | None:
@@ -500,7 +502,8 @@ class FpgaBridge:
             if self.telemetry is None:
                 return out
             frame, at = self.stop_evidence.frame, self.stop_evidence.received_at
-            fresh = frame is not None and 0 <= now-at <= 1.0
+            fresh = (frame is not None and 0 <= now-at <= 1.0
+                     and not getattr(self.telemetry, "disconnected", False))
             rate = self.telemetry.rate.rate(now)
         out["control_link"] = (online if fresh else "offline")
         out["telemetry_rate_hz"] = round(rate, 1)
