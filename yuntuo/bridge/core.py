@@ -292,10 +292,10 @@ class FpgaBridge:
                 self.map_abort_requested = True
                 self._send(nv.encode_mode("estop"), urgent=True)
                 self.runner.estop()
-                detail = "已向 FPGA 下发急停（MODE estop）。"
+                detail = "已请求停止运动目标并保持平衡，等待反馈确认停稳。"
             else:
                 self._send(nv.encode_mode("idle"), urgent=True)
-                detail = "已解除导航急停（MODE idle）；底盘控制侧锁存的急停需在控制板上复位。"
+                detail = "已请求解除运行急停；旧任务不会自动恢复。"
             ok = self.link is not None
             return {"success": True, "data": {"accepted": ok, "engaged": engage,
                                               "detail": detail if ok else "FPGA 链路不在线：" + detail}}
