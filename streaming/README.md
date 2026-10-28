@@ -4,7 +4,7 @@
 
 The active robot uses Astra Pro Plus RGB-D and the `yuntuo/perception` publisher. Rockchip MPP encodes one stream to cloud MediaMTX `robot/front`; Web uses WebRTC/WHEP with HLS/image fallback, and the mini-program reads signed same-origin HLS with image fallback. Viewers share the source without reopening the camera or running inference/encoding again. Extra viewers consume cloud egress bandwidth.
 
-The observed HLS stream uses roughly two-second MPEG-TS segments; do not infer deployed LL-HLS or measured end-to-end latency from configuration templates. Browser HLS proxying was repaired on 2026-10-27; the mini-program buffering fix is in source, while new-package phone acceptance remains unverified. See [mini-program contract](../cloud_gateway/MINIPROGRAM_VIDEO.md) and the [current system design](https://github.com/LRaina215/SOC_FPGA_NAV/blob/codex/integration-g2-20261022/docs/system_architecture.md). Video bypasses FPGA and continues to be independent of the held/offline navigation interface.
+The observed HLS stream uses roughly two-second MPEG-TS segments; do not infer deployed LL-HLS or measured end-to-end latency from configuration templates. Browser HLS proxying was repaired on 2026-10-27; the mini-program buffering fix is in source, while new-package phone acceptance remains unverified. See [mini-program contract](../cloud_gateway/MINIPROGRAM_VIDEO.md) and the [current system design](https://github.com/LRaina215/SOC_FPGA_NAV/blob/main/docs/system_architecture.md). Video bypasses FPGA and continues to be independent of the held/offline navigation interface.
 
 ## Historical MVS adapter and reusable transport
 

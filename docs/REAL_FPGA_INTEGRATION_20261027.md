@@ -1,6 +1,6 @@
 # RK / Web / 小程序与PNR61系统联调
 
-**2026-10-28接续边界：** 本文主体仍为PNR61在10月27日的真实联调证据。Zcode已推进到PNR63/SYN50：IR5、IR2/4覆盖、BMI重复下载恢复有分项实测；直接SAFE前进命令通过，后退阶段倒下。导航CPU当时保持复位，不能作为RK任务/定位导航通过；故障后脚本打印176ms归零不是有效失联停车成绩。详情见[PNR63核对](https://github.com/LRaina215/SOC_FPGA_NAV/blob/codex/integration-g2-20261022/docs/4_design/g2_PNR63_review_20261028.md)。
+**2026-10-28接续边界：** 本文主体仍为PNR61在10月27日的真实联调证据。Zcode已推进到PNR63/SYN50：IR5、IR2/4覆盖、BMI重复下载恢复有分项实测；直接SAFE前进命令通过，后退阶段倒下。导航CPU当时保持复位，不能作为RK任务/定位导航通过；故障后脚本打印176ms归零不是有效失联停车成绩。详情见[PNR63核对](https://github.com/LRaina215/SOC_FPGA_NAV/blob/main/docs/4_design/g2_PNR63_review_20261028.md)。
 
 RK任务停稳条件本次未改，不能用新硬件平均速度授权替代。最后实板记录01:41:44 hold F322，01:43执行会话称桥接仍停止；13:13公网只读网关正常、rk_online=false，状态/视频超时。下文22:01“RK在线/桥接恢复”是10月27日快照，不覆盖此后结果；本轮没有登录RK、重启或执行运动。
 
@@ -8,7 +8,7 @@ RK任务停稳条件本次未改，不能用新硬件平均速度授权替代。
 
 ## 当前执行边界
 
-**22:01只读对账：** 公网网关status=ok、rk_online=true；状态源fpga_bridge、real，任务idle，导航和控制遥测均offline（导航kind仍uart:/dev/ttyACM0）。地图上传与隔离预览已部署至047c648（含6327c67桥接进度），源码记录31c679d；演示图仍只作预览。本轮未读JTAG、重启服务或重新执行硬件，hold结论来自下述最近机器收尾，不由offline反推。总体介绍已同步到[系统架构](https://github.com/LRaina215/SOC_FPGA_NAV/blob/codex/integration-g2-20261022/docs/system_architecture.md)。
+**22:01只读对账：** 公网网关status=ok、rk_online=true；状态源fpga_bridge、real，任务idle，导航和控制遥测均offline（导航kind仍uart:/dev/ttyACM0）。地图上传与隔离预览已部署至047c648（含6327c67桥接进度），源码记录31c679d；演示图仍只作预览。本轮未读JTAG、重启服务或重新执行硬件，hold结论来自下述最近机器收尾，不由offline反推。总体介绍已同步到[系统架构](https://github.com/LRaina215/SOC_FPGA_NAV/blob/main/docs/system_architecture.md)。
 
 用户17:16表示不便换线，要求在RK上断联后重启TTL模块。已在hold F322下完成目标设备的软断开/重连及USBDEVFS_RESET，ttyUSB0先消失后恢复，CH口与摄像头设备身份保持；只恢复真桥接，不重启整台RK，不改USB全局设置。随后同路径真FPGA复测25.537s缺序1失败，CRC0；同一126字节帧只剩114字节，USB/应用记录相同。17:17:46已自动回hold F322、监测与临时进程已收尾、正常真桥接恢复。软重启请求完成，丢字节问题未解决。当前现场以机器job为准，最终是否回mock由用户决定。
 

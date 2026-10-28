@@ -4,7 +4,7 @@
 
 ## 项目
 
-云拓-多模态复杂地形轮腿机器人的 RK3588 任务层。导航与运动控制在 FPGA 上（另有导航仓库 SOC_FPGA_NAV 与控制仓库），
+云拓-多模态复杂地形轮腿机器人的 RK3588 任务层。导航与运动控制在 FPGA 上（共同工程位于 SOC_FPGA_NAV，含 control/），
 本仓库负责视觉、语音、任务编排、Web 控制台与公网中继。总说明：`README.md`，细节：`docs/YUNTUO.md`。
 
 ## 硬约束
@@ -20,3 +20,7 @@
 - 改任务流程：跑 `python -m pytest yuntuo/tests`（含 bridge + 模拟器闭环）与 `cd backend && python -m pytest`。
 - 改界面：先读 `docs/skills/rk3588-dashboard-design/SKILL.md`，`npm run build` 通过并在 1600 / 1366 / 390 宽度截图检查。
 - 在 Windows 上编辑的脚本要保持 LF 换行与可执行位（`git update-index --chmod=+x`）。
+
+## 文档
+
+README 介绍功能、结构和使用方式；设计与接口说明记录当前机制、参数和约束。测试过程、发布状态、故障与会话交接保留在记录文档中，避免把临时运行状态堆到设计正文。代码入口链接维护分支。
