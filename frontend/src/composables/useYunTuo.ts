@@ -316,6 +316,16 @@ export function useYunTuo() {
     }
   }
 
+  async function setPose(x: number, y: number, yaw: number) {
+    try {
+      const payload = await post<MissionResponse>('/api/platform/set_pose',
+        { x, y, yaw, align: true, source: 'web', requested_by: 'dashboard' }, '初始位姿接口调用失败')
+      log(payload.data.detail, payload.data.accepted ? 'ok' : 'warn', '定位')
+    } catch (error) {
+      log(error instanceof Error ? error.message : '初始位姿发送失败', 'bad', '定位')
+    }
+  }
+
   async function switchMode(mode: 'mock' | 'real') {
     busy.mode = true
     try {
@@ -477,7 +487,7 @@ export function useYunTuo() {
   return {
     state, nav, mapMeta, mapPreview, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
     voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline,
-    start, stop, mission, goTo, goToPoint, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
+    start, stop, mission, goTo, goToPoint, setPose, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
     recordOnboard, confirm, uploadMap, previewMap, dismissMapPreview, log,
   }
 }

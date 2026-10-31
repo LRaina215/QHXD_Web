@@ -11,6 +11,11 @@ import type { YunTuo } from '../composables/useYunTuo'
 const props = defineProps<{ yt: YunTuo; selected: string }>()
 const emit = defineEmits<{ pick: [waypointId: string]; point: [x: number, y: number] }>()
 const main = ref<'map' | 'cam'>('map')
+const poseMode = ref(false)
+function onPose(x: number, y: number, yaw: number) {
+  poseMode.value = false
+  if (window.confirm(`设初始位姿 (${x.toFixed(2)}, ${y.toFixed(2)}) m，朝向 ${Math.round((yaw * 180) / Math.PI)}°？`)) void props.yt.setPose(x, y, yaw)
+}
 const frameUrl = ref(perceptionFrameStreamUrl())
 let refresher = 0
 onMounted(() => { refresher = window.setInterval(() => { frameUrl.value = perceptionFrameStreamUrl() }, 120000) })
@@ -40,6 +45,7 @@ const hud = computed(() => [
         </button>
       </div>
       <span class="ctx">{{ main === 'map' ? (yt.mapPreview.value ? '地图预览 · 未下发FPGA' : mapless ? '无先验图 · 里程计坐标系' : '先验地图坐标系') : 'Orbbec Astra Pro Plus · RKNN 检测' }}</span>
+      <button v-if="main === 'map' && !mapless" type="button" class="posebtn" :class="{ on: poseMode }" @click="poseMode = !poseMode">{{ poseMode ? '在车的位置按下，朝车头方向拖动后松开' : '设初始位姿' }}</button>
       <MapUpload :yt="yt" />
       <span v-if="target" class="lock"><Crosshair :size="15" />目标已锁定</span>
     </header>
@@ -50,7 +56,7 @@ const hud = computed(() => [
         <span v-if="main !== 'cam'" class="pip-label"><Video :size="13" />相机<ArrowLeftRight :size="13" /></span>
       </div>
       <div class="view" :class="main === 'map' ? 'main' : 'pip'" @click="main !== 'map' && (main = 'map')">
-        <FieldMap :yt="yt" :selected="selected" :compact="main !== 'map'" @pick="emit('pick', $event)" @point="(x: number, y: number) => emit('point', x, y)" />
+        <FieldMap :yt="yt" :selected="selected" :compact="main !== 'map'" :pose-mode="poseMode" @pose="onPose" @pick="emit('pick', $event)" @point="(x: number, y: number) => emit('point', x, y)" />
         <span v-if="main !== 'map'" class="pip-label"><MapIcon :size="13" />场地<ArrowLeftRight :size="13" /></span>
       </div>
       <dl class="hud">
@@ -66,6 +72,8 @@ const hud = computed(() => [
 .seg { display: inline-flex; padding: 3px; border-radius: 11px; background: rgba(255, 255, 255, 0.06); }
 .seg button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--stage-ink-2); font-size: 13px; font-weight: 600; }
 .seg button.on { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.posebtn { height: 30px; padding: 0 12px; border: 1px solid var(--stage-line); border-radius: 8px; background: rgba(255,255,255,0.06); color: var(--stage-ink); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.posebtn.on { background: rgba(52,211,153,0.2); border-color: #34d399; color: #a7f3d0; }
 .ctx { font-size: 13px; color: var(--stage-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lock { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px; background: rgba(229, 38, 59, 0.18); color: #ff8a96; font-size: 12px; font-weight: 650; white-space: nowrap; }
 .views { position: relative; flex: 1; min-height: 0; }

@@ -16,7 +16,7 @@ class PlatformAdapter:
         return self._forward(command, "/api/internal/fpga/estop", {"engage": req.engage}, req.source, req.requested_by)
 
     def set_pose(self, req: PlatformSetPoseRequest) -> PlatformCommandResult:
-        payload = {"x": req.x, "y": req.y, "yaw": req.yaw, "align": req.align}
+        payload = {"x": req.x, "y": req.y, "yaw": req.yaw, "align": req.align, "range_m": 1.0, "range_deg": 15}
         return self._forward("set_pose", "/api/internal/fpga/set_pose", payload, req.source, req.requested_by)
 
     def _forward(self, command: str, path: str, payload: dict, source: str, requested_by: str | None):

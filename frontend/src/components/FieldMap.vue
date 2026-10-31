@@ -5,8 +5,9 @@ import { apiUrl } from '../config/api'
 import type { YunTuo } from '../composables/useYunTuo'
 import type { Point } from '../types'
 
-const props = defineProps<{ yt: YunTuo; selected?: string; compact?: boolean }>()
-const emit = defineEmits<{ pick: [waypointId: string]; point: [x: number, y: number] }>()
+const props = defineProps<{ yt: YunTuo; selected?: string; compact?: boolean; poseMode?: boolean }>()
+const emit = defineEmits<{ pick: [waypointId: string]; point: [x: number, y: number]; pose: [x: number, y: number, yaw: number] }>()
+let drag: { a: Point; b: Point } | null = null
 const map = computed(() => props.yt.mapPreview.value ?? props.yt.mapMeta.value)
 
 const wrap = ref<HTMLDivElement | null>(null)
@@ -155,6 +156,12 @@ function drawScene(ctx: CanvasRenderingContext2D, v: View, t: number) {
     ctx.beginPath(); ctx.arc(x, y, sel ? 7 : 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
     if (!props.compact) pill(ctx, x + 12, y, w.name, sel ? '#fff' : '#d7dce2', sel ? 'rgba(47,91,255,0.9)' : 'rgba(255,255,255,0.08)')
   }
+  if (drag) {
+    const [ax, ay] = px(v, drag.a); const [bx, by] = px(v, drag.b)
+    ctx.strokeStyle = '#34d399'; ctx.lineWidth = 3; ctx.lineCap = 'round'
+    ctx.beginPath(); ctx.arc(ax, ay, 8, 0, Math.PI * 2); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke()
+  }
   const p = pose.value
   const goal = props.yt.nav.value?.goal
   if (p && goal) {
@@ -219,8 +226,33 @@ function resize() {
   c.height = Math.max(1, Math.round(el.clientHeight * dpr))
 }
 
+function worldAt(event: PointerEvent | MouseEvent): Point {
+  const rect = canvas.value!.getBoundingClientRect()
+  const v = view(rect.width, rect.height)
+  return { x: (event.clientX - rect.left - v.ox) / v.s, y: (v.oy - (event.clientY - rect.top)) / v.s }
+}
+
+function onDown(event: PointerEvent) {
+  if (!props.poseMode || props.compact || !canvas.value) return
+  const a = worldAt(event)
+  drag = { a, b: a }
+  canvas.value.setPointerCapture(event.pointerId)
+}
+
+function onMove(event: PointerEvent) {
+  if (drag) drag.b = worldAt(event)
+}
+
+function onUp(event: PointerEvent) {
+  if (!drag) return
+  const { a } = drag, b = worldAt(event)
+  drag = null
+  const yaw = Math.hypot(b.x - a.x, b.y - a.y) > 0.05 ? Math.atan2(b.y - a.y, b.x - a.x) : 0
+  emit('pose', a.x, a.y, yaw)
+}
+
 function onClick(event: MouseEvent) {
-  if (props.yt.mapPreview.value) return
+  if (props.yt.mapPreview.value || props.poseMode) return
   const c = canvas.value
   if (!c || props.compact) return
   const rect = c.getBoundingClientRect()
@@ -246,7 +278,7 @@ onBeforeUnmount(() => { observer?.disconnect(); window.cancelAnimationFrame(raf)
 
 <template>
   <div ref="wrap" class="field-map">
-    <canvas ref="canvas" role="img" :aria-label="yt.mapPreview.value ? '地图预览，未下发FPGA' : '场地态势：机器人、点位、轨迹与目标'" @click="onClick"></canvas>
+    <canvas ref="canvas" role="img" :aria-label="yt.mapPreview.value ? '地图预览，未下发FPGA' : '场地态势：机器人、点位、轨迹与目标'" @click="onClick" @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" :class="{ posing: poseMode }"></canvas>
     <div v-if="yt.mapPreview.value && !compact" class="preview-label">
       <strong>预览 · 未下发FPGA</strong><span>{{ yt.mapPreview.value.filename }}</span>
       <button type="button" @click="yt.dismissMapPreview()">返回机器人地图</button>
@@ -256,6 +288,7 @@ onBeforeUnmount(() => { observer?.disconnect(); window.cancelAnimationFrame(raf)
 
 <style scoped>
 .field-map { position: relative; width: 100%; height: 100%; }
+.field-map canvas.posing { cursor: crosshair; touch-action: none; }
 canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .preview-label { position: absolute; top: 14px; right: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 62%; padding: 9px 12px; border-radius: 10px; background: rgba(15,18,22,.88); color: #fbbf24; font-size: 12px; }
 .preview-label span { color: var(--stage-ink-2); overflow-wrap: anywhere; } .preview-label button { padding: 3px 0; border: 0; background: none; color: #b9c8ff; font-size: 12px; }
