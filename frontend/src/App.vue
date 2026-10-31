@@ -22,6 +22,10 @@ watch(yt.waypoints, (list) => {
   }
 })
 
+function onMapPoint(x: number, y: number) {
+  if (window.confirm(`导航到地图点 (${x.toFixed(2)}, ${y.toFixed(2)}) m？`)) void yt.goToPoint(x, y)
+}
+
 onMounted(() => void yt.start())
 onBeforeUnmount(() => yt.stop())
 </script>
@@ -30,7 +34,7 @@ onBeforeUnmount(() => yt.stop())
   <AppHeader :yt="yt" />
   <main class="page">
     <MissionHero class="a-hero" :yt="yt" />
-    <StageCard class="a-stage" :yt="yt" :selected="selectedWaypoint" @pick="selectedWaypoint = $event" />
+    <StageCard class="a-stage" :yt="yt" :selected="selectedWaypoint" @pick="selectedWaypoint = $event" @point="onMapPoint" />
     <div class="a-side">
       <CommandCard v-model:selected="selectedWaypoint" :yt="yt" />
       <VoiceCard :yt="yt" />

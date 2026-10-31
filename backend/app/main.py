@@ -20,6 +20,7 @@ from app.schemas import (
     CommandLogsResponse,
     CurrentTaskResponse,
     ExternalWeatherLatestResponse,
+    GoToPointRequest,
     GoToWaypointRequest,
     HealthResponse,
     ImuLatestResponse,
@@ -1070,6 +1071,14 @@ async def record_command(request: VoiceRecordCommandRequest) -> VoiceRecordComma
 @app.post("/api/mission/go_to_waypoint", response_model=MissionActionResponse)
 async def go_to_waypoint(request: GoToWaypointRequest) -> MissionActionResponse:
     result, state = mission_gateway.go_to_waypoint(request)
+    if state is not None:
+        await ws_manager.broadcast_state(state)
+    return MissionActionResponse(data=result)
+
+
+@app.post("/api/mission/go_to_point", response_model=MissionActionResponse)
+async def go_to_point(request: GoToPointRequest) -> MissionActionResponse:
+    result, state = mission_gateway.go_to_point(request)
     if state is not None:
         await ws_manager.broadcast_state(state)
     return MissionActionResponse(data=result)

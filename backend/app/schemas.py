@@ -9,13 +9,13 @@ SystemModeValue = Literal["mock", "real"]
 NavModeValue = Literal["auto", "manual"]
 NavStateValue = Literal["idle", "running", "paused", "completed", "failed", "offline"]
 TaskTypeValue = Literal[
-    "placeholder", "go_to_waypoint", "start_patrol", "return_home", "search_target", "follow_target"
+    "placeholder", "go_to_waypoint", "go_to_point", "start_patrol", "return_home", "search_target", "follow_target"
 ]
 TaskStateValue = Literal["idle", "pending", "running", "paused", "completed", "failed", "cancelled"]
 SensorStatusValue = Literal["mock", "nominal", "warning", "fault", "offline"]
 AlertLevelValue = Literal["info", "warning", "error", "critical"]
 MissionCommandValue = Literal[
-    "go_to_waypoint", "start_patrol", "pause_task", "resume_task", "cancel_task", "return_home",
+    "go_to_waypoint", "go_to_point", "start_patrol", "pause_task", "resume_task", "cancel_task", "return_home",
     "search_target", "follow_target",
 ]
 VoiceIntentValue = Literal[
@@ -431,6 +431,11 @@ class MissionRequestBase(ContractModel):
 
 class GoToWaypointRequest(MissionRequestBase):
     waypoint_id: str = Field(description="目标点 ID")
+
+
+class GoToPointRequest(MissionRequestBase):
+    x: float = Field(description="地图系目标 x（m）")
+    y: float = Field(description="地图系目标 y（m）")
 
 
 class StartPatrolRequest(MissionRequestBase):

@@ -6,7 +6,7 @@ import type { YunTuo } from '../composables/useYunTuo'
 import type { Point } from '../types'
 
 const props = defineProps<{ yt: YunTuo; selected?: string; compact?: boolean }>()
-const emit = defineEmits<{ pick: [waypointId: string] }>()
+const emit = defineEmits<{ pick: [waypointId: string]; point: [x: number, y: number] }>()
 const map = computed(() => props.yt.mapPreview.value ?? props.yt.mapMeta.value)
 
 const wrap = ref<HTMLDivElement | null>(null)
@@ -230,7 +230,8 @@ function onClick(event: MouseEvent) {
     const [x, y] = px(v, w.pose)
     return Math.hypot(x - (event.clientX - rect.left), y - (event.clientY - rect.top)) < 16
   })
-  if (hit) emit('pick', hit.waypoint_id)
+  if (hit) { emit('pick', hit.waypoint_id); return }
+  emit('point', (event.clientX - rect.left - v.ox) / v.s, (v.oy - (event.clientY - rect.top)) / v.s)
 }
 
 watch(() => map.value?.version, () => void loadRaster(), { immediate: true })

@@ -291,6 +291,10 @@ export function useYunTuo() {
     return mission('go_to_waypoint', { waypoint_id: waypointId })
   }
 
+  function goToPoint(x: number, y: number) {
+    return mission('go_to_point', { x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 })
+  }
+
   function searchTarget(targetClass: string, color: string | null, label: string, timeoutS = 180) {
     return mission('search_target', { target_class: targetClass, color, label, timeout_s: timeoutS })
   }
@@ -473,7 +477,7 @@ export function useYunTuo() {
   return {
     state, nav, mapMeta, mapPreview, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
     voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline,
-    start, stop, mission, goTo, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
+    start, stop, mission, goTo, goToPoint, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
     recordOnboard, confirm, uploadMap, previewMap, dismissMapPreview, log,
   }
 }

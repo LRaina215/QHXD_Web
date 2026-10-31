@@ -23,7 +23,7 @@ from yuntuo.fpga_link import nv_proto as nv
 
 log = logging.getLogger("fpga_bridge")
 
-GOTO_TYPES = {"go_to_waypoint", "return_home", "start_patrol"}
+GOTO_TYPES = {"go_to_waypoint", "go_to_point", "return_home", "start_patrol"}
 TARGET_TYPES = {"search_target", "follow_target"}
 ACTIVE_STATES = {"pending", "running", "paused"}
 STANDOFF_M = 0.7
@@ -223,7 +223,13 @@ class TaskRunner:
 
     def _start_goto(self, command: str, args: dict, source: str, now: float) -> tuple[bool, str]:
         try:
-            if command == "go_to_waypoint":
+            if command == "go_to_point":
+                x, y = float(args["x"]), float(args["y"])
+                if not (math.isfinite(x) and math.isfinite(y)):
+                    raise ValueError("目标坐标无效")
+                ids, stop_s = [], 0.0
+                points = [Waypoint("map_point", f"地图点 ({x:.2f}, {y:.2f})", x, y, 0.0)]
+            elif command == "go_to_waypoint":
                 ids, stop_s = [str(args["waypoint_id"])], 0.0
             elif command == "return_home":
                 ids, stop_s = ["home"], 0.0
@@ -234,7 +240,8 @@ class TaskRunner:
                     raise ValueError(f"巡检路线不存在或已禁用：{route_id}")
                 ids = [str(w) for w in route["waypoints"]] + (["home"] if route.get("return_home") else [])
                 stop_s = float(route.get("stop_seconds", 0) or 0)
-            points = []
+            if command != "go_to_point":
+                points = []
             for wid in ids:
                 if wid not in self.waypoints:
                     raise ValueError(f"目标点不存在、已禁用或未配置坐标：{wid}")

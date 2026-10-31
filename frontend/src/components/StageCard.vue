@@ -9,7 +9,7 @@ import { LOC_LABELS, fmt } from '../labels'
 import type { YunTuo } from '../composables/useYunTuo'
 
 const props = defineProps<{ yt: YunTuo; selected: string }>()
-const emit = defineEmits<{ pick: [waypointId: string] }>()
+const emit = defineEmits<{ pick: [waypointId: string]; point: [x: number, y: number] }>()
 const main = ref<'map' | 'cam'>('map')
 const frameUrl = ref(perceptionFrameStreamUrl())
 let refresher = 0
@@ -50,7 +50,7 @@ const hud = computed(() => [
         <span v-if="main !== 'cam'" class="pip-label"><Video :size="13" />相机<ArrowLeftRight :size="13" /></span>
       </div>
       <div class="view" :class="main === 'map' ? 'main' : 'pip'" @click="main !== 'map' && (main = 'map')">
-        <FieldMap :yt="yt" :selected="selected" :compact="main !== 'map'" @pick="emit('pick', $event)" />
+        <FieldMap :yt="yt" :selected="selected" :compact="main !== 'map'" @pick="emit('pick', $event)" @point="(x: number, y: number) => emit('point', x, y)" />
         <span v-if="main !== 'map'" class="pip-label"><MapIcon :size="13" />场地<ArrowLeftRight :size="13" /></span>
       </div>
       <dl class="hud">

@@ -1,5 +1,6 @@
 from app.schemas import (
     FollowTargetRequest,
+    GoToPointRequest,
     GoToWaypointRequest,
     JsonScalar,
     MissionActionResult,
@@ -37,6 +38,23 @@ class MissionGateway:
             nuc_command="go_to_waypoint",
             payload={"waypoint_id": request.waypoint_id},
             mock_handler=mock_state_service.go_to_waypoint,
+        )
+
+    def go_to_point(self, request: GoToPointRequest) -> tuple[MissionActionResult, RobotState | None]:
+        payload = {"x": round(request.x, 3), "y": round(request.y, 3)}
+        if state_store.get_system_mode().mode == "mock":
+            return self._record_rejection(request, "go_to_point", payload, "模拟模式不支持地图任意点导航。")
+        if self._preflight_enabled():
+            try:
+                self._require_navigation_ready()
+            except ValueError as exc:
+                return self._record_rejection(request, "go_to_point", payload, str(exc))
+        return self._dispatch(
+            request=request,
+            public_command="go_to_point",
+            nuc_command="go_to_point",
+            payload=payload,
+            mock_handler=None,
         )
 
     def start_patrol(self, request: StartPatrolRequest) -> tuple[MissionActionResult, RobotState | None]:
