@@ -1,0 +1,96 @@
+{
+  "issue": "Preset markers only selected an ID; no confirmation. Field recovery helper used a different logical map ID than preset/default service config.",
+  "fix": [
+    "StageCard preset selection now confirms then calls goTo(waypoint_id); cancellation does not send a mission.",
+    "FieldMap marker and name-pill hit targets both select the named waypoint, rather than a nearby arbitrary coordinate.",
+    "Preserved pose-gesture click suppression.",
+    "Recovery helper now uses canonical yuntuo_field, matching the configured preset catalog and bridge environment. File remains field_home.nvmp.",
+    "Existing wrong-map rejection remains enabled."
+  ],
+  "validation": {
+    "passed": true,
+    "browser": "system Chrome headless",
+    "scope": "Actual StageCard and FieldMap; fixture blocks robot/API access",
+    "results": [
+      {
+        "case": "confirmed pose drag produces one pose confirmation and no navigation goal",
+        "passed": true
+      },
+      {
+        "case": "next independent map click still confirms and submits a goal",
+        "passed": true
+      },
+      {
+        "case": "cancelled pose confirmation never opens a navigation confirmation",
+        "passed": true
+      },
+      {
+        "case": "captured pose release outside canvas does not turn into a goal",
+        "passed": true
+      },
+      {
+        "case": "cancelled pointer clears drag without submitting pose or goal",
+        "passed": true
+      },
+      {
+        "case": "touch pose drag produces one pose confirmation and no goal",
+        "passed": true
+      },
+      {
+        "case": "every preset marker confirms exactly once and submits its named waypoint ID",
+        "passed": true
+      },
+      {
+        "case": "cancelling a preset confirmation sends no navigation request",
+        "passed": true
+      },
+      {
+        "case": "clicking a preset name label confirms that waypoint, not its label coordinates",
+        "passed": true
+      },
+      {
+        "case": "pose drag ending on a preset marker does not open a goal confirmation",
+        "passed": true
+      },
+      {
+        "case": "touching a preset marker confirms and sends its ID exactly once",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 1600x1000",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 1366x768",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 390x844",
+        "passed": true
+      }
+    ]
+  },
+  "public": {
+    "public_assets_verified": true,
+    "current_map_id": "yuntuo_field",
+    "map_version": "1639cf18d659",
+    "preset_map_ids_match": true,
+    "preset_count": 6
+  },
+  "recovery_helper_deployment": {
+    "patched": true,
+    "old_pid": 36372,
+    "new_pid": 38712,
+    "canonical_map_id": "yuntuo_field",
+    "resume_existing_boot": true,
+    "backup": "/home/robomaster/ui_backups/preset-confirm-20261101"
+  },
+  "deployment": {
+    "public_url": "https://lingxunrobot.cn",
+    "cloud_backup": "/var/backups/lingxunrobot/map-preset-20261101",
+    "rk_backup": "/home/robomaster/ui_backups/preset-confirm-20261101",
+    "bridge_or_backend_restart": false,
+    "robot_goal_sent_for_validation": false
+  },
+  "note": "The helper was restarted with current-boot markers preserved to avoid sending a new pose, reloading the map, or releasing an existing estop on restart."
+}

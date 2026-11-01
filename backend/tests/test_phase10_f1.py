@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import app.main as main_module
@@ -156,6 +156,25 @@ class Phase10F1Tests(unittest.IsolatedAsyncioTestCase):
         old_timestamp = datetime.now(timezone.utc).timestamp() - 10
         os.utime(heartbeat, (old_timestamp, old_timestamp))
         self.assertFalse(MissionGateway._cboard_heartbeat_fresh())
+
+    async def test_new_idle_heartbeat_clears_stale_task_and_old_snapshot_cannot_restore_it(self) -> None:
+        await main_module.switch_system_mode(ModeSwitchRequest(mode="real", source="test"))
+        now = datetime.now(timezone.utc)
+        def update(state, stamp):
+            return MissionExecutorUpdateRequest(
+                event=TaskEvent(event_id=f'task:{state}:{stamp.isoformat()}', task_id='task',
+                                event_type='progress', task_state=state, detail='heartbeat', timestamp=stamp),
+                task_status=TaskStatus(task_id='task', state=state, source='fpga_bridge', updated_at=stamp),
+                current_goal='wp_a' if state == 'running' else None,
+                nav_state='running' if state == 'running' else 'idle')
+        running = update('running', now)
+        await main_module.ingest_mission_update(running)
+        await main_module.ingest_mission_update(update('idle', now + timedelta(seconds=2)))
+        self.assertEqual(state_store.get_current_task().state, 'idle')
+        result = await main_module.ingest_mission_update(running)
+        self.assertFalse(result.data.state_updated)
+        self.assertEqual(state_store.get_current_task().state, 'idle')
+        self.assertIsNone(state_store.get_latest_state().nav_status.current_goal)
 
     @staticmethod
     def _restore(key: str, value: str | None) -> None:

@@ -1,0 +1,39 @@
+{
+  "issue": "After dragging to set an initial pose, the same gesture also opened navigation-goal confirmation.",
+  "cause": "StageCard exits poseMode on the pose event emitted from pointerup; the browser's subsequent click then passed the navigation-point handler's poseMode guard.",
+  "source": "frontend/src/components/FieldMap.vue",
+  "fix": [
+    "Consume the click associated with a pose gesture before emitting pose, independent of the parent's mode change or confirmation result.",
+    "Clear stale click suppression on a new primary-pointer gesture so subsequent deliberate map clicks remain usable.",
+    "Track the active pointer and cancel a drag on pointercancel or lostpointercapture; prevent pose input during preview."
+  ],
+  "validation": {
+    "npm_run_build": "passed (vue-tsc and Vite)",
+    "real_browser": "System Chrome headless, real StageCard/FieldMap with API-isolated fixtures",
+    "cases_passed": [
+      "Confirm pose: one pose confirmation, one pose event, zero navigation goals",
+      "Next independent click: navigation confirmation and goal still work",
+      "Cancel pose confirmation: no navigation confirmation or goal",
+      "Release captured pointer outside canvas: pose only",
+      "Cancelled pointer: no pose or goal; next deliberate navigation click works",
+      "Touch drag: one pose confirmation, zero navigation goals"
+    ],
+    "screenshots_checked": ["1600x1000", "1366x768", "390x844"],
+    "artifacts": "D:/tools/map_gesture_check_20261101"
+  },
+  "deployment": {
+    "public_url": "https://lingxunrobot.cn",
+    "published_at": "2026-11-01T10:55:09+08:00",
+    "public_verification": "HTML references new JS/CSS; both served assets match the local build bytes",
+    "js": "assets/index-DmDV5Zh8.js",
+    "css": "assets/index-Bzium8hG.css",
+    "cloud_backup": "/var/backups/lingxunrobot/map-pointer-20261101",
+    "rk_backup": "/home/robomaster/ui_backups/map-pointer-20261101",
+    "rk_source_note": "RK frontend source still predated the already-published point/pose features. Matched it against known prior commits, then synchronized the four frontend source files needed for the existing published features plus this fix.",
+    "old_assets_retained": true,
+    "service_restarts": false,
+    "nginx_or_backend_configuration_changed": false,
+    "robot_commands_used_for_testing": false
+  },
+  "commit_or_push_performed": false
+}

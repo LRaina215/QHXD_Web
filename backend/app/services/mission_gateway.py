@@ -60,8 +60,13 @@ class MissionGateway:
     def start_patrol(self, request: StartPatrolRequest) -> tuple[MissionActionResult, RobotState | None]:
         if state_store.get_system_mode().mode == "real" and self._preflight_enabled():
             try:
-                patrol_registry.require(request.patrol_id)
-                self._require_navigation_ready()
+                route = patrol_registry.require(request.patrol_id)
+                points = list(route['waypoints'])
+                if route.get('return_home'):
+                    points.append('home')
+                for waypoint_id in points:
+                    waypoint = waypoint_registry.require_navigation_target(waypoint_id)
+                    self._require_navigation_ready(expected_map_id=waypoint.map_id)
             except ValueError as exc:
                 return self._record_rejection(request, "start_patrol", {"patrol_id": request.patrol_id}, str(exc))
         return self._dispatch(

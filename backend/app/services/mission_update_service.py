@@ -18,10 +18,16 @@ class MissionUpdateService:
                 None,
             )
 
+        latest = state_store.get_latest_state()
+        incoming_time = request.task_status.updated_at or request.event.timestamp
+        if (latest.task_status.source == 'fpga_bridge' and request.task_status.source == 'fpga_bridge'
+                and latest.task_status.updated_at is not None and incoming_time < latest.task_status.updated_at):
+            return MissionExecutorUpdateResult(accepted=True, state_updated=False,
+                                               detail='已忽略较旧的 FPGA 任务快照。'), None
+
         inserted = True
         if request.event.event_type != "progress":
             inserted = persistence.save_task_event(request.event)
-        latest = state_store.get_latest_state()
         updated_at = request.task_status.updated_at or request.event.timestamp or datetime.now(timezone.utc)
         next_state = latest.model_copy(
             update={

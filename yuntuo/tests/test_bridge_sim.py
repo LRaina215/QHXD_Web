@@ -1,6 +1,7 @@
 """fpga_bridge 任务状态机 + mock_fpga 仿真核心，单线程、仿真时钟，确定性运行。"""
 import json
 import math
+from dataclasses import replace
 
 import pytest
 
@@ -20,6 +21,90 @@ class SimClock:
 
     def __call__(self):
         return self.t
+
+
+def test_set_pose_rejected_during_active_navigation(sim):
+    sim.run(0.5)
+    assert sim.command('go_to_waypoint', waypoint_id='wp_a')['accepted']
+    before = list(sim.bridge.outbox)
+    result = sim.bridge._handle_request(PendingRequest('set_pose', {'x': 0, 'y': 0}), sim.clock.t)
+    assert not result['data']['accepted']
+    assert list(sim.bridge.outbox) == before
+    assert sim.bridge.runner.task.active
+
+
+@pytest.mark.parametrize('payload', [
+    {'x': float('nan'), 'y': 0},
+    {'x': 0, 'y': float('inf')},
+    {'x': 0, 'y': 0, 'yaw': 'invalid'},
+    {'x': 0, 'y': 0, 'range_m': 'invalid'},
+    {'x': 0, 'y': 0, 'range_deg': float('nan')},
+    {'x': 1e20, 'y': 0},
+])
+def test_invalid_pose_payload_is_rejected_without_crashing_the_bridge(sim, payload):
+    sim.run(0.5)
+    before = list(sim.bridge.outbox)
+    result = sim.bridge._handle_request(PendingRequest('set_pose', payload), sim.clock.t)
+    assert not result['data']['accepted']
+    assert list(sim.bridge.outbox) == before
+    sim.run(0.2)
+    assert sim.bridge.link is not None
+
+
+def test_set_pose_requires_fresh_idle_status(sim):
+    sim.run(0.5)
+    sim.clock.t += sim.bridge.cfg.status_timeout_s + 1
+    result = sim.bridge._handle_request(PendingRequest('set_pose', {'x': 0, 'y': 0}), sim.clock.t)
+    assert not result['data']['accepted']
+
+
+@pytest.mark.parametrize('command', ['pause_task', 'cancel_task'])
+def test_stop_without_a_tracked_task_still_stops_fpga_and_clears_stale_web_task(sim, command):
+    sim.run(0.5)
+    assert sim.bridge.runner.task is None
+    assert sim.command(command)['accepted']
+    assert any(packet == nv.encode_mode('idle') for packet in sim.bridge.outbox)
+    assert sim.bridge.runner.task_status()['state'] == 'idle'
+
+
+def test_bridge_periodically_publishes_idle_task_after_restart(sim):
+    sim.run(0.5)
+    path, payload = sim.bridge.poster.latest['task']
+    assert path == '/api/internal/mission/update'
+    assert payload['task_status']['state'] == 'idle'
+    assert payload['task_status']['task_id'] == 'fpga-idle'
+    assert payload['current_goal'] is None
+    before = payload['event']['event_id']
+    sim.run(1.2)
+    assert sim.bridge.poster.latest['task'][1]['event']['event_id'] != before
+
+
+@pytest.mark.parametrize('command', ['pause_task', 'cancel_task'])
+def test_stop_buttons_never_release_an_existing_estop(sim, command):
+    sim.run(0.5)
+    sim.bridge.status = replace(sim.bridge.status, mode=4, state=6)
+    before = list(sim.bridge.outbox)
+    assert sim.command(command)['accepted']
+    assert list(sim.bridge.outbox) == before
+
+
+def test_map_and_initial_pose_can_be_restored_without_releasing_estop(sim):
+    sim.run(0.5)
+    sim.bridge._handle_request(PendingRequest('estop', {'engage': True}), sim.clock.t)
+    sim.run(0.5)
+    assert sim.bridge.status.mode == 4
+    package = build_test_package(0, 0, [[0] * 8 for _ in range(8)])
+    path = sim.tmp / 'recovery.nvmp'
+    path.write_bytes(package)
+    result = sim.bridge._handle_request(PendingRequest('map', {'path': str(path)}), sim.clock.t)
+    assert result['data']['accepted']
+    sim.run(0.5)
+    assert sim.bridge.map_upload['state'] == 'ready'
+    assert sim.bridge.status.mode == 4
+    pose = sim.bridge._handle_request(PendingRequest('set_pose', {'x': 0.1, 'y': 0.2}), sim.clock.t)
+    assert pose['data']['accepted']
+    sim.run(0.4)
+    assert sim.bridge.status.mode == 4
 
 
 def test_nv_control_source_and_sample_freshness(tmp_path):

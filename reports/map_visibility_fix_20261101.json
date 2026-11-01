@@ -1,0 +1,228 @@
+{
+  "completed_at": "2026-11-01T20:02:42.753784+08:00",
+  "confirmed_bugs": [
+    "地图图片请求失败后，没有在地图版本不变时重试，导致一直空白。",
+    "地图元信息请求短暂失败会清空已成功显示的地图信息。",
+    "异步旧图片解码可能覆盖切换后的新地图；同版本预览图片地址变化没有触发加载。"
+  ],
+  "fixes": [
+    "图片请求失败自动按1到5秒间隔重试，并设请求超时。",
+    "短暂网络故障保留已知地图信息，5秒轮询恢复，并显示连接状态。",
+    "按地图编号、版本和图片地址区分请求，取消旧请求并丢弃过期解码结果。",
+    "校验图片尺寸与返回版本；真正切换到临时坐标画布时清除旧图并说明原因。",
+    "页面销毁时取消重试和未完成请求。"
+  ],
+  "baseline": {
+    "passed": false,
+    "error": "AssertionError [ERR_ASSERTION]: expected automatic retry; received 1 image request(s)",
+    "results": []
+  },
+  "map_regressions": {
+    "passed": true,
+    "results": [
+      {
+        "case": "failed image request retries the unchanged map version without refreshing the page",
+        "passed": true
+      },
+      {
+        "case": "temporary metadata failure preserves the displayed map and recovers by polling",
+        "passed": true
+      },
+      {
+        "case": "late decoding of the old image cannot overwrite the new map",
+        "passed": true
+      },
+      {
+        "case": "preview with the same version but another image URL reloads its own raster",
+        "passed": true
+      },
+      {
+        "case": "a response carrying a different map version is rejected and retried",
+        "passed": true
+      },
+      {
+        "case": "an explicit canvas snapshot clears the prior raster and explains the transition",
+        "passed": true
+      },
+      {
+        "case": "unmount cancels scheduled image retries",
+        "passed": true
+      }
+    ]
+  },
+  "existing_controls_regressions": {
+    "passed": true,
+    "scope": "Actual useYunTuo and StageCard, all API/WS traffic isolated from the robot",
+    "results": [
+      {
+        "case": "rapid navigation submissions create one request",
+        "passed": true
+      },
+      {
+        "case": "pose and navigation requests cannot race in either order",
+        "passed": true
+      },
+      {
+        "case": "active or stale task does not disable pose; initialization cancels it before sending pose",
+        "passed": true
+      },
+      {
+        "case": "actual pause and cancel buttons remain usable while a navigation request is pending",
+        "passed": true
+      },
+      {
+        "case": "pause and cancel are reachable without a locally active task",
+        "passed": true
+      },
+      {
+        "case": "failed cancellation prevents pose submission and releases pose controls",
+        "passed": true
+      },
+      {
+        "case": "pose recovery accepts a confirmed emergency-stop state without releasing it",
+        "passed": true
+      },
+      {
+        "case": "emergency stop remains available during a pending navigation request",
+        "passed": true
+      },
+      {
+        "case": "validation errors are readable and release pose busy state",
+        "passed": true
+      },
+      {
+        "case": "navigation updates through HTTP while its WebSocket is unavailable",
+        "passed": true
+      },
+      {
+        "case": "null navigation snapshot clears stale pose and trail",
+        "passed": true
+      },
+      {
+        "case": "stop clears already scheduled WebSocket reconnects",
+        "passed": true
+      },
+      {
+        "case": "stopping during initial HTTP load never creates sockets or polling loops",
+        "passed": true
+      },
+      {
+        "case": "calling start twice does not duplicate connections",
+        "passed": true
+      }
+    ]
+  },
+  "existing_map_gesture_regressions": {
+    "passed": true,
+    "browser": "system Chrome headless",
+    "scope": "Actual StageCard and FieldMap; fixture blocks robot/API access",
+    "results": [
+      {
+        "case": "confirmed pose drag produces one pose confirmation and no navigation goal",
+        "passed": true
+      },
+      {
+        "case": "next independent map click still confirms and submits a goal",
+        "passed": true
+      },
+      {
+        "case": "cancelled pose confirmation never opens a navigation confirmation",
+        "passed": true
+      },
+      {
+        "case": "captured pose release outside canvas does not turn into a goal",
+        "passed": true
+      },
+      {
+        "case": "cancelled pointer clears drag without submitting pose or goal",
+        "passed": true
+      },
+      {
+        "case": "touch pose drag produces one pose confirmation and no goal",
+        "passed": true
+      },
+      {
+        "case": "every preset marker confirms exactly once and submits its named waypoint ID",
+        "passed": true
+      },
+      {
+        "case": "cancelling a preset confirmation sends no navigation request",
+        "passed": true
+      },
+      {
+        "case": "clicking a preset name label confirms that waypoint, not its label coordinates",
+        "passed": true
+      },
+      {
+        "case": "pose drag ending on a preset marker does not open a goal confirmation",
+        "passed": true
+      },
+      {
+        "case": "touching a preset marker confirms and sends its ID exactly once",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 1600x1000",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 1366x768",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 390x844",
+        "passed": true
+      }
+    ]
+  },
+  "build": "npm run build 通过",
+  "visual_review": {
+    "widths": [
+      1600,
+      1366,
+      390
+    ],
+    "retry_notice_mobile": true
+  },
+  "published_assets": [
+    "index-lI1q8wAE.js",
+    "index-B_7C4TyG.css"
+  ],
+  "published_bytes_match_local": true,
+  "rk": {
+    "passed": true,
+    "backup": "/home/robomaster/ui_backups/map-visibility-20261101",
+    "changed": [
+      "frontend/dist/assets/index-lI1q8wAE.js",
+      "frontend/dist/assets/index-B_7C4TyG.css",
+      "frontend/src/components/FieldMap.vue",
+      "frontend/src/composables/useYunTuo.ts",
+      "frontend/dist/index.html"
+    ],
+    "services_restarted": false,
+    "robot_commands_sent": false
+  },
+  "cloud_backup": "/var/backups/lingxunrobot/map-visibility-20261101",
+  "online_map": {
+    "map_id": "field_home",
+    "version": "1639cf18d659",
+    "frame_id": "map",
+    "timestamp": "2026-11-01T12:02:31.791560Z",
+    "resolution": 0.1,
+    "width": 38,
+    "height": 34,
+    "origin": {
+      "x": -0.8,
+      "y": -2.1,
+      "yaw": 0.0
+    },
+    "image_url": "/api/navigation/map/image"
+  },
+  "image_bytes": 99,
+  "image_http_status": 200,
+  "verification_transient_failures": [],
+  "backend_or_bridge_restarted": false,
+  "map_or_pose_changed": false,
+  "navigation_command_sent": false,
+  "limits": "修复已复现的网页加载问题；FPGA复位、地图重载或真实离线时仍可能暂时没有可用先验图，新版会显示对应提示。"
+}

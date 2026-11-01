@@ -1,0 +1,100 @@
+{
+  "completed_at": "2026-11-02T00:33:45.311933+08:00",
+  "source": {
+    "type": "user-reported approximate top-view dimensions",
+    "session_id": "sess_6ac1dbd7-1a60-4d06-a50e-b27b1a031b31",
+    "quote": "整车从上往下看也就只有上下距离10cm，左右距离15cm"
+  },
+  "old_display_m": {
+    "length": 0.52,
+    "width": 0.4,
+    "minimum_pixels": [
+      18,
+      14
+    ]
+  },
+  "new_display_m": {
+    "length": 0.1,
+    "width": 0.15,
+    "minimum_pixel_enlargement_removed": true
+  },
+  "changes": [
+    "尺寸集中到 frontend/src/config/robot.ts，明确用户报告来源与米单位。",
+    "车身严格按地图比例尺绘制，不再受最小像素宽高强制放大。",
+    "缩小光晕，车头箭头按车身比例绘制。"
+  ],
+  "verification": {
+    "passed": true,
+    "scope": "Actual FieldMap canvas; white footprint pixels measured against map scale; no robot traffic",
+    "results": [
+      {
+        "case": "body has 10 cm fore-aft and 15 cm lateral extent at 1600px viewport",
+        "passed": true,
+        "measured": {
+          "widthM": 0.0989090909090909,
+          "heightM": 0.14424242424242423,
+          "scale": 242.64705882352942,
+          "tolerance": 0.008242424242424242
+        }
+      },
+      {
+        "case": "body has 10 cm fore-aft and 15 cm lateral extent at 1366px viewport",
+        "passed": true,
+        "measured": {
+          "widthM": 0.09747048903878584,
+          "heightM": 0.1433389544688027,
+          "scale": 174.41176470588235,
+          "tolerance": 0.011467116357504217
+        }
+      },
+      {
+        "case": "body has 10 cm fore-aft and 15 cm lateral extent at 390px viewport",
+        "passed": true,
+        "measured": {
+          "widthM": 0.09568345323741007,
+          "heightM": 0.13669064748201437,
+          "scale": 73.15789473684211,
+          "tolerance": 0.027338129496402876
+        }
+      },
+      {
+        "case": "90-degree heading rotates the measured footprint correctly",
+        "passed": true,
+        "measured": {
+          "widthM": 0.1433389544688027,
+          "heightM": 0.09747048903878584,
+          "scale": 174.41176470588235,
+          "tolerance": 0.011467116357504217
+        }
+      }
+    ]
+  },
+  "build": "npm run build 通过",
+  "screenshots_reviewed": [
+    1600,
+    1366,
+    390
+  ],
+  "published_assets": [
+    "index-BcQm9HYv.js",
+    "index-C6Jf0BHp.css"
+  ],
+  "published_bytes_match_local": true,
+  "rk_deployment": {
+    "passed": true,
+    "backup": "/home/robomaster/ui_backups/robot-size-20261102",
+    "changed": [
+      "frontend/dist/assets/index-BcQm9HYv.js",
+      "frontend/dist/assets/index-C6Jf0BHp.css",
+      "frontend/src/config/robot.ts",
+      "frontend/src/components/FieldMap.vue",
+      "frontend/dist/index.html"
+    ],
+    "services_restarted": false,
+    "robot_commands_sent": false
+  },
+  "cloud_backup": "/var/backups/lingxunrobot/robot-size-20261102",
+  "scope": "仅网页外形显示；未修改轮距、规划膨胀/安全半径、雷达外参、地图或定位。",
+  "services_restarted": false,
+  "robot_commands_sent": false
+}

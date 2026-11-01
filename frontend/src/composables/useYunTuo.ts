@@ -31,8 +31,10 @@ const ERROR_CODES: Record<string, string> = {
 
 async function readApiError(response: Response, fallback: string): Promise<string> {
   try {
-    const payload = (await response.json()) as { detail?: string; error?: string }
-    const code = payload.detail || payload.error || ''
+    const payload = (await response.json()) as { detail?: unknown; error?: unknown }
+    const detail = payload.detail || payload.error
+    if (Array.isArray(detail)) return '请求参数无效，请检查坐标和输入。'
+    const code = typeof detail === 'string' ? detail : ''
     if (code.startsWith('robot_fault:')) return `机器人存在故障：${code.slice(12)}`
     return ERROR_CODES[code] ?? (code || fallback)
   } catch {
@@ -44,6 +46,8 @@ export function useYunTuo() {
   const state = ref<RobotState | null>(null)
   const nav = ref<NavigationSnapshot | null>(null)
   const mapMeta = ref<MapMetadata | null>(null)
+  const mapMetaError = ref('')
+  let mapMetaPending = false
   const mapUpload = ref<MapUploadStatus>({ state: 'idle', detail: '选择场地的 .nvmp 地图包。' })
   const mapUploadError = ref('')
   const mapPreview = ref<MapPreview | null>(null)
@@ -60,7 +64,7 @@ export function useYunTuo() {
   const pending = ref<PendingCommand | null>(null)
   const smart = ref<SmartCommandResult | null>(null)
   const conn = reactive({ state: false, nav: false })
-  const busy = reactive({ mission: false, voice: false, confirm: false, mode: false, estop: false, map: false })
+  const busy = reactive({ mission: false, pause: false, cancel: false, pose: false, voice: false, confirm: false, mode: false, estop: false, map: false })
   const voiceStatus = ref('空闲')
   const confirmError = ref('')
   const lastMessage = ref('等待命令')
@@ -70,11 +74,17 @@ export function useYunTuo() {
   const platform = computed(() => state.value?.platform_status ?? null)
   const isMock = computed(() => state.value?.system_mode.mode !== 'real')
   const detections = computed(() => state.value?.detection_status?.objects ?? [])
+  const taskActive = computed(() => ['pending', 'running', 'paused'].includes(state.value?.task_status.state ?? ''))
+  const poseInteractionBusy = computed(() => busy.pose || busy.mode || busy.map || mapUploading.value)
+  const navigationBusy = computed(() => busy.mission || busy.pause || busy.cancel || poseInteractionBusy.value || taskActive.value)
 
   let stateSocket: WebSocket | null = null
   let navSocket: WebSocket | null = null
   let timers: number[] = []
   let running = false
+  let lifecycle = 0
+  let stateReconnect = 0
+  let navReconnect = 0
 
   function log(text: string, tone: Tone = 'run', source = '控制台') {
     lastMessage.value = text
@@ -87,7 +97,7 @@ export function useYunTuo() {
 
   async function getJson<T>(path: string): Promise<T | null> {
     try {
-      const response = await fetch(apiUrl(path))
+      const response = await fetch(apiUrl(path), { signal: AbortSignal.timeout(5000) })
       return response.ok ? ((await response.json()) as T) : null
     } catch {
       return null
@@ -95,13 +105,20 @@ export function useYunTuo() {
   }
 
   async function post<T>(path: string, body: unknown, fallback: string): Promise<T> {
-    const response = await fetch(apiUrl(path), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(body),
-    })
-    if (!response.ok) throw new Error(await readApiError(response, fallback))
-    return (await response.json()) as T
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 12000)
+    try {
+      const response = await fetch(apiUrl(path), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(body), signal: controller.signal,
+      })
+      if (!response.ok) throw new Error(await readApiError(response, fallback))
+      return (await response.json()) as T
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error('请求超时，请核对当前状态；暂停、取消和急停仍可使用。')
+      throw error
+    } finally { window.clearTimeout(timeout) }
   }
 
   // ------------------------------------------------------------ 数据加载
@@ -126,9 +143,18 @@ export function useYunTuo() {
   }
 
   async function loadMapMeta() {
-    const payload = await getJson<{ data: MapMetadata }>('/api/navigation/map/metadata')
-    mapMeta.value = payload?.data ?? null
-    mapImageVersion.value = payload?.data.version ?? ''
+    if (mapMetaPending) return
+    mapMetaPending = true
+    try {
+      const payload = await getJson<{ data: MapMetadata }>('/api/navigation/map/metadata')
+      if (!payload?.data) {
+        mapMetaError.value = mapMeta.value ? '地图信息暂时不可用，显示上次地图并重试。' : '地图信息暂时不可用，正在重试。'
+        return
+      }
+      mapMeta.value = payload.data
+      mapImageVersion.value = payload.data.version
+      mapMetaError.value = ''
+    } finally { mapMetaPending = false }
   }
 
   async function loadMapUpload() {
@@ -212,44 +238,70 @@ export function useYunTuo() {
     trail.value = [...trail.value, { x: pose.x, y: pose.y }].slice(-600)
   }
 
+  function applyNavigation(snapshot: NavigationSnapshot | null) {
+    if (!snapshot) { nav.value = null; trail.value = []; return }
+    if (nav.value?.map_version && nav.value.map_version !== snapshot.map_version) trail.value = []
+    nav.value = snapshot
+    pushTrail(snapshot)
+    if (snapshot.map_version && snapshot.map_version !== mapImageVersion.value) void loadMapMeta()
+  }
+
+  async function loadNavigation() {
+    const payload = await getJson<{ data: NavigationSnapshot | null }>('/api/navigation/latest')
+    // A slow HTTP fallback must not replace a newer, restored WebSocket stream.
+    if (payload && (!conn.nav || !nav.value)) applyNavigation(payload.data)
+  }
+
   // ------------------------------------------------------------ 实时流
   function connectState() {
-    stateSocket = new WebSocket(wsUrl('/ws/state'))
-    stateSocket.onopen = () => {
+    if (!running) return
+    const socket = new WebSocket(wsUrl('/ws/state'))
+    stateSocket = socket
+    socket.onopen = () => {
+      if (!running || stateSocket !== socket) return
       conn.state = true
       void loadState()
     }
-    stateSocket.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (!running || stateSocket !== socket) return
       const payload = JSON.parse(event.data) as { type: string; data: RobotState }
       if (payload.type === 'robot_state') state.value = payload.data
     }
-    stateSocket.onclose = () => {
+    socket.onclose = () => {
+      if (stateSocket !== socket) return
+      stateSocket = null
       conn.state = false
-      if (running) window.setTimeout(connectState, 3000)
+      if (running) stateReconnect = window.setTimeout(connectState, 3000)
     }
   }
 
   function connectNav() {
-    navSocket = new WebSocket(wsUrl('/ws/navigation'))
-    navSocket.onopen = () => {
+    if (!running) return
+    const socket = new WebSocket(wsUrl('/ws/navigation'))
+    navSocket = socket
+    socket.onopen = () => {
+      if (!running || navSocket !== socket) return
       conn.nav = true
     }
-    navSocket.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (!running || navSocket !== socket) return
       const payload = JSON.parse(event.data) as { type: string; data: NavigationSnapshot | null }
-      if (payload.type !== 'navigation' || !payload.data) return
-      nav.value = payload.data
-      pushTrail(payload.data)
-      if (payload.data.map_version && payload.data.map_version !== mapImageVersion.value) void loadMapMeta()
+      if (payload.type === 'navigation') applyNavigation(payload.data)
     }
-    navSocket.onclose = () => {
+    socket.onclose = () => {
+      if (navSocket !== socket) return
+      navSocket = null
       conn.nav = false
-      if (running) window.setTimeout(connectNav, 3000)
+      if (running) navReconnect = window.setTimeout(connectNav, 3000)
     }
   }
 
   async function start() {
+    if (running) return
+    const current = ++lifecycle
     running = true
-    await Promise.all([loadState(), loadAlerts(), loadWaypoints(), loadMapMeta(), loadTaskEvents(), loadMapUpload()])
+    await Promise.all([loadState(), loadNavigation(), loadAlerts(), loadWaypoints(), loadMapMeta(), loadTaskEvents(), loadMapUpload()])
+    if (!running || current !== lifecycle) return
     connectState()
     connectNav()
     timers = [
@@ -257,6 +309,8 @@ export function useYunTuo() {
       window.setInterval(() => void loadTaskEvents(), 3000),
       window.setInterval(() => void loadState(), 15000),
       window.setInterval(() => void loadWaypoints(), 60000),
+      window.setInterval(() => void loadMapMeta(), 5000),
+      window.setInterval(() => { if (!conn.nav) void loadNavigation() }, 3000),
       window.setInterval(() => {
         if (!busy.map && Date.now() - lastMapPoll >= (mapUploading.value ? 1000 : 5000)) void loadMapUpload()
       }, 1000),
@@ -265,25 +319,45 @@ export function useYunTuo() {
 
   function stop() {
     running = false
-    stateSocket?.close()
-    navSocket?.close()
+    lifecycle++
+    window.clearTimeout(stateReconnect)
+    window.clearTimeout(navReconnect)
+    const previousState = stateSocket, previousNav = navSocket
+    stateSocket = navSocket = null
+    previousState?.close()
+    previousNav?.close()
+    conn.state = conn.nav = false
     timers.forEach((t) => window.clearInterval(t))
+    timers = []
+    window.clearTimeout(toastTimer)
   }
 
   // ------------------------------------------------------------ 任务
   type MissionResponse = { data: { accepted: boolean; detail: string } }
 
   async function mission(command: string, body: Record<string, PayloadValue> = {}) {
-    busy.mission = true
+    const busyKey: 'pause' | 'cancel' | 'mission' = command === 'pause' ? 'pause' : command === 'cancel' ? 'cancel' : 'mission'
+    const stopping = busyKey !== 'mission'
+    if (stopping ? busy[busyKey] : (busy.mission || busy.pause || busy.cancel || poseInteractionBusy.value)) {
+      log('正在处理上一项操作，请稍候。', 'wait', '任务')
+      return null
+    }
+    if (taskActive.value && ['go_to_waypoint', 'go_to_point', 'start_patrol', 'return_home', 'search_target', 'follow_target'].includes(command)) {
+      log('已有活动任务，请先取消当前任务。', 'warn', '任务')
+      return null
+    }
+    busy[busyKey] = true
     try {
       const payload = await post<MissionResponse>(`/api/mission/${command}`,
         { source: 'web', requested_by: 'dashboard', ...body }, '任务接口调用失败')
       log(payload.data.detail, payload.data.accepted ? 'ok' : 'warn', '任务')
       await Promise.all([loadState(), loadTaskEvents()])
+      return payload
     } catch (error) {
       log(error instanceof Error ? error.message : '任务发送失败', 'bad', '任务')
+      return null
     } finally {
-      busy.mission = false
+      busy[busyKey] = false
     }
   }
 
@@ -317,12 +391,30 @@ export function useYunTuo() {
   }
 
   async function setPose(x: number, y: number, yaw: number) {
+    if (poseInteractionBusy.value || busy.mission || busy.pause || busy.cancel) {
+      log('上一项请求正在处理；暂停和取消仍可使用，完成后可设置初始位姿。', 'warn', '定位')
+      return
+    }
+    busy.pose = true
     try {
+      if (taskActive.value || ['goto', 'search', 'track'].includes(platform.value?.fpga_mode ?? '')) {
+        const cancelled = await mission('cancel')
+        if (!cancelled?.data.accepted) throw new Error(cancelled?.data.detail || '未能取消当前任务，初始位姿未发送。')
+        const deadline = Date.now() + 3000
+        do {
+          await loadState()
+          if (platform.value?.nav_link === 'online' && ['idle', 'estop'].includes(platform.value?.fpga_mode ?? '')) break
+          await new Promise((resolve) => window.setTimeout(resolve, 150))
+        } while (Date.now() < deadline)
+        if (!['idle', 'estop'].includes(platform.value?.fpga_mode ?? '')) throw new Error('已请求取消，导航尚未确认空闲；请稍后重试初始化位姿。')
+      }
       const payload = await post<MissionResponse>('/api/platform/set_pose',
         { x, y, yaw, align: true, source: 'web', requested_by: 'dashboard' }, '初始位姿接口调用失败')
       log(payload.data.detail, payload.data.accepted ? 'ok' : 'warn', '定位')
     } catch (error) {
       log(error instanceof Error ? error.message : '初始位姿发送失败', 'bad', '定位')
+    } finally {
+      busy.pose = false
     }
   }
 
@@ -485,8 +577,8 @@ export function useYunTuo() {
   })
 
   return {
-    state, nav, mapMeta, mapPreview, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
-    voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline,
+    state, nav, mapMeta, mapMetaError, mapPreview, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
+    voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline, navigationBusy, poseInteractionBusy,
     start, stop, mission, goTo, goToPoint, setPose, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
     recordOnboard, confirm, uploadMap, previewMap, dismissMapPreview, log,
   }

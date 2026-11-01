@@ -77,7 +77,9 @@ WRITE_PATH_PREFIXES = (
     "/api/system/mode/switch",
 )
 
-# 急停只要求写权限（令牌），不做"在线 / 无故障"前置检查：故障或离线时恰恰需要能急停
+# 停止与定位恢复仍验证令牌，但不能被运动准入条件挡住。
+STOP_PATHS = {"/api/mission/pause", "/api/mission/cancel", "/api/platform/estop"}
+RECOVERY_PATHS = STOP_PATHS | {"/api/platform/set_pose"}
 CONTROL_PATH_PREFIXES = (
     "/api/mission/",
     "/api/platform/set_pose",
@@ -472,17 +474,17 @@ async def _preflight(request: Request, request_id: str) -> JSONResponse | None:
         return _reject(404, "not_in_public_whitelist", request, request_id)
 
     if _is_write_path(path, method):
-        if not _check_rate_limit(request):
-            return _reject(429, "rate_limited", request, request_id)
         if not _auth_ok(request):
             return _reject(401, "unauthorized", request, request_id)
+        if path.rstrip("/") not in STOP_PATHS and not _check_rate_limit(request):
+            return _reject(429, "rate_limited", request, request_id)
 
     if path == "/api/voice/audio_command":
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > int(PUBLIC_AUDIO_MAX_MB * 1024 * 1024):
             return _reject(413, "audio_upload_too_large", request, request_id)
 
-    if _is_control_path(path):
+    if _is_control_path(path) and path.rstrip("/") not in RECOVERY_PATHS:
         control_reject = await _ensure_control_allowed(request, request_id)
         if control_reject is not None:
             return control_reject

@@ -1,0 +1,26 @@
+{
+  "fixed_at": "2026-11-01T15:38:10.232980+08:00",
+  "confirmed_rejection": "点位地图 yuntuo_field 与当前地图 field_home 不一致。",
+  "cause": "当前地图与自动恢复脚本使用 field_home，预设点位误绑定了默认地图编号 yuntuo_field。",
+  "canonical_scene_map_id": "field_home",
+  "map_version": "1639cf18d659",
+  "updated_waypoints": [
+    "home",
+    "wp_a",
+    "wp_b",
+    "wp_lane",
+    "wp_c",
+    "wp_d"
+  ],
+  "startup_setting": {
+    "YUNTUO_MAP_ID": "field_home"
+  },
+  "backup": "/home/robomaster/ui_backups/named-waypoint-map-binding-20261101",
+  "live_waypoint_map_ids_match": true,
+  "coordinates_unchanged": true,
+  "services_restarted": false,
+  "map_uploaded": false,
+  "pose_changed": false,
+  "goal_sent": false,
+  "auto_recovery_script_already_uses": "field_home"
+}

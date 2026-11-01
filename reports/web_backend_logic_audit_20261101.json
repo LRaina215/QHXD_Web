@@ -1,0 +1,380 @@
+{
+  "completed_at": "2026-11-01T12:30:38.750594+08:00",
+  "scope": "网页交互、任务入口、导航状态同步与 FPGA 桥接的逻辑检查；未发起实车导航测试。",
+  "confirmed_progress": {
+    "claude_session": "sess_6ac1dbd7-1a60-4d06-a50e-b27b1a031b31",
+    "persistent_firmware": "PNR70 尚在布局布线，已看到 Routing Phase 1 完成；未确认写入实板。",
+    "reset_behavior": "Claude 已确认 S1 重新加载 Flash，经调试口临时装入的固件不会保留。",
+    "prior_map": "现用实测场地先验图，逻辑地图编号 yuntuo_field，文件 field_home.nvmp；二者无需同名。"
+  },
+  "fixes": [
+    {
+      "problem": "巡航预检查只判断存在地图，没有核对每个巡航点和返航点的地图归属。",
+      "change": "逐点调用与单点导航相同的地图校验，错误地图在下发前被拒绝。",
+      "files": [
+        "backend/app/services/mission_gateway.py",
+        "backend/tests/test_patrol_map_preflight.py"
+      ]
+    },
+    {
+      "problem": "导航过程中仍可设置初始位姿；异常坐标或搜索范围可能使桥接处理抛异常。",
+      "change": "桥接要求链路在线、状态新鲜、导航空闲且无活动或暂停任务；校验有限数值和非负搜索范围，编码范围错误返回可读拒绝。接口拒绝 NaN/Infinity。",
+      "files": [
+        "yuntuo/bridge/core.py",
+        "backend/app/schemas.py",
+        "yuntuo/tests/test_bridge_sim.py"
+      ]
+    },
+    {
+      "problem": "网页重复点击、位姿设置与导航请求缺少相互约束。",
+      "change": "增加位姿请求忙状态和统一地图交互限制，活动任务禁止覆盖目标和修改位姿；取消任务与急停保持可用。",
+      "files": [
+        "frontend/src/composables/useYunTuo.ts",
+        "frontend/src/components/StageCard.vue"
+      ]
+    },
+    {
+      "problem": "导航 WebSocket 断开后地图中的位姿和轨迹不能通过 HTTP 持续更新；空快照仍留下旧位置。",
+      "change": "启动即读取导航快照，断线时每 3 秒 HTTP 兜底；空快照清除旧位置，地图切换清除旧轨迹；恢复后的 WebSocket 不被较慢的 HTTP 覆盖。",
+      "files": [
+        "frontend/src/composables/useYunTuo.ts"
+      ]
+    },
+    {
+      "problem": "页面停止后排队的重连或未完成的初始化仍可能创建连接；重复启动可能重复连接。",
+      "change": "保存并取消重连计时器，以生命周期和连接身份过滤旧回调；启动幂等。",
+      "files": [
+        "frontend/src/composables/useYunTuo.ts"
+      ]
+    },
+    {
+      "problem": "后端 422 参数验证错误的 detail 是数组，前端按字符串处理时丢失具体提示。",
+      "change": "区分错误类型并提供可读参数提示，失败后释放请求忙状态。",
+      "files": [
+        "frontend/src/composables/useYunTuo.ts"
+      ]
+    }
+  ],
+  "validation": {
+    "python_tests": {
+      "total": 227,
+      "passed": 226,
+      "skipped": 1,
+      "failures": 0,
+      "errors": 0,
+      "command": "python -m pytest yuntuo/tests backend/tests -q --tb=short",
+      "environment": "隔离 Python 3.12 环境；Windows 缺少时区数据库，补装 tzdata 后全部通过。"
+    },
+    "browser_actual_composable": {
+      "passed": true,
+      "scope": "Actual useYunTuo and StageCard, all API/WS traffic isolated from the robot",
+      "results": [
+        {
+          "case": "rapid navigation submissions create one request",
+          "passed": true
+        },
+        {
+          "case": "pose and navigation requests cannot race in either order",
+          "passed": true
+        },
+        {
+          "case": "active task blocks replacement goals and pose but cancellation remains available",
+          "passed": true
+        },
+        {
+          "case": "emergency stop remains available during a pending navigation request",
+          "passed": true
+        },
+        {
+          "case": "validation errors are readable and release pose busy state",
+          "passed": true
+        },
+        {
+          "case": "navigation updates through HTTP while its WebSocket is unavailable",
+          "passed": true
+        },
+        {
+          "case": "null navigation snapshot clears stale pose and trail",
+          "passed": true
+        },
+        {
+          "case": "stop clears already scheduled WebSocket reconnects",
+          "passed": true
+        },
+        {
+          "case": "stopping during initial HTTP load never creates sockets or polling loops",
+          "passed": true
+        },
+        {
+          "case": "calling start twice does not duplicate connections",
+          "passed": true
+        }
+      ]
+    },
+    "browser_map_gestures_and_presets": {
+      "passed": true,
+      "browser": "system Chrome headless",
+      "scope": "Actual StageCard and FieldMap; fixture blocks robot/API access",
+      "results": [
+        {
+          "case": "confirmed pose drag produces one pose confirmation and no navigation goal",
+          "passed": true
+        },
+        {
+          "case": "next independent map click still confirms and submits a goal",
+          "passed": true
+        },
+        {
+          "case": "cancelled pose confirmation never opens a navigation confirmation",
+          "passed": true
+        },
+        {
+          "case": "captured pose release outside canvas does not turn into a goal",
+          "passed": true
+        },
+        {
+          "case": "cancelled pointer clears drag without submitting pose or goal",
+          "passed": true
+        },
+        {
+          "case": "touch pose drag produces one pose confirmation and no goal",
+          "passed": true
+        },
+        {
+          "case": "every preset marker confirms exactly once and submits its named waypoint ID",
+          "passed": true
+        },
+        {
+          "case": "cancelling a preset confirmation sends no navigation request",
+          "passed": true
+        },
+        {
+          "case": "clicking a preset name label confirms that waypoint, not its label coordinates",
+          "passed": true
+        },
+        {
+          "case": "pose drag ending on a preset marker does not open a goal confirmation",
+          "passed": true
+        },
+        {
+          "case": "touching a preset marker confirms and sends its ID exactly once",
+          "passed": true
+        },
+        {
+          "case": "layout screenshot 1600x1000",
+          "passed": true
+        },
+        {
+          "case": "layout screenshot 1366x768",
+          "passed": true
+        },
+        {
+          "case": "layout screenshot 390x844",
+          "passed": true
+        }
+      ]
+    },
+    "frontend_build": "npm run build 通过（含类型检查）",
+    "screenshots": {
+      "widths": [
+        1600,
+        1366,
+        390
+      ],
+      "directory": "D:\\tools\\yuntuo_web_audit_20261101",
+      "review": "已目视检查；无横向页面溢出。390 宽下 C 点长标签仍有裁切，圆点可选；属于既有显示问题。"
+    },
+    "traffic_isolation": "所有浏览器交互测试都使用拦截接口与虚拟 WebSocket，未向机器人发导航或位姿指令。",
+    "git_diff_check": "通过",
+    "public_read_only_endpoints": {
+      "/api/navigation/latest": {
+        "status": 200,
+        "success": true
+      },
+      "/api/navigation/map/metadata": {
+        "status": 200,
+        "success": true
+      },
+      "/api/waypoints": {
+        "status": 200,
+        "success": true
+      }
+    }
+  },
+  "deployment": {
+    "passed": true,
+    "verified_at": "2026-11-01T12:29:52.699613+08:00",
+    "public_assets_match_local_bytes": [
+      "index-D1SQP1P4.js",
+      "index-pBOUvuws.css"
+    ],
+    "rk_sources_match_local": [
+      "backend/app/services/mission_gateway.py",
+      "backend/app/schemas.py",
+      "yuntuo/bridge/core.py",
+      "frontend/src/components/StageCard.vue",
+      "frontend/src/composables/useYunTuo.ts",
+      "frontend/dist/index.html"
+    ],
+    "backup": "/home/robomaster/ui_backups/web-logic-audit-20261101",
+    "cloud_backup": "/var/backups/lingxunrobot/web-logic-audit-20261101",
+    "services": {
+      "qhxd-backend.service": "active",
+      "yuntuo-fpga-bridge.service": "active"
+    },
+    "metadata": {
+      "map_id": "yuntuo_field",
+      "version": "1639cf18d659",
+      "frame_id": "map",
+      "timestamp": "2026-11-01T04:29:48.546148Z",
+      "resolution": 0.1,
+      "width": 38,
+      "height": 34,
+      "origin": {
+        "x": -0.8,
+        "y": -2.1,
+        "yaw": 0.0
+      },
+      "image_url": "/api/navigation/map/image"
+    },
+    "same_prior_reloaded_by_existing_service_configuration": true,
+    "navigation_task_sent": false,
+    "deployment_sent_pose_or_estop": false,
+    "health_after": {
+      "status": "ok",
+      "service": "yuntuo-fpga-bridge",
+      "link": "uart:/dev/ttyACM0",
+      "link_open": true,
+      "link_error": null,
+      "status_age_s": 0.0,
+      "map": "先验地图已加载（8350 B，0.9 s），请下发初始位姿对准",
+      "map_upload": {
+        "id": "01ea9f2a535645e59fa1c47afda2eac7",
+        "filename": "field_home.nvmp",
+        "map_id": "yuntuo_field",
+        "state": "ready",
+        "sent_bytes": 8350,
+        "total_bytes": 8350,
+        "progress": 100,
+        "detail": "先验地图已加载（8350 B，0.9 s），请下发初始位姿对准",
+        "started_at": "2026-11-01T04:28:36.456558+00:00",
+        "completed_at": "2026-11-01T04:28:38.424629+00:00"
+      },
+      "task": {
+        "task_id": "fpga-idle",
+        "task_type": "placeholder",
+        "state": "idle",
+        "progress": 0,
+        "source": "fpga_bridge",
+        "phase": "idle",
+        "current_waypoint_id": null,
+        "waypoint_index": null,
+        "waypoint_count": null,
+        "detail": "等待任务。",
+        "updated_at": "2026-11-01T04:29:52.350686+00:00"
+      },
+      "platform": {
+        "source": "fpga_bridge",
+        "updated_at": "2026-11-01T04:29:52.350490+00:00",
+        "nav_link": "online",
+        "nav_link_kind": "uart:/dev/ttyACM0",
+        "fpga_mode": "idle",
+        "fpga_state": "idle",
+        "loc_state": "mapless",
+        "loc_quality": null,
+        "map_loaded": true,
+        "target_valid": false,
+        "lidar_ok": false,
+        "odom_ok": true,
+        "cmd_vx_mps": 0.0,
+        "cmd_wz_radps": 0.0,
+        "fpga_uptime_s": 1741.079453,
+        "status_rate_hz": 4.97,
+        "control_link": "online",
+        "policy_active": false,
+        "control_estop": true,
+        "control_faults": [
+          "policy_fault:1",
+          "bmi088_error:4",
+          "bmi088_stale"
+        ],
+        "wheel_left_mps": 0.0,
+        "wheel_right_mps": 0.0,
+        "roll_deg": null,
+        "pitch_deg": null,
+        "yaw_rate_radps": -0.01708984375,
+        "height_cmd_m": 0.130615234375,
+        "telemetry_rate_hz": 101.5,
+        "control_telemetry": {
+          "transport": "legacy_telemetry",
+          "source": "fpga",
+          "version": 2,
+          "fresh": true,
+          "receive_age_ms": 14.4,
+          "measurement_age_ms": null,
+          "raw": {
+            "timestamp_ms": 1741079,
+            "sequence": 43035,
+            "status": 88,
+            "policy_fault": 1,
+            "sensor_error": 4,
+            "left_fault": 0,
+            "right_fault": 0,
+            "fusion_flags": 0,
+            "ax_raw": -1275,
+            "ay_raw": -6,
+            "az_raw": 11551,
+            "gx_raw": -482,
+            "gy_raw": 26,
+            "gz_raw": -16,
+            "wx_q12": -2042,
+            "wy_q12": 113,
+            "wz_q12": -70,
+            "gravity_x_q12": 216,
+            "gravity_y_q12": 74,
+            "gravity_z_q12": -4090,
+            "forward_q12": 0,
+            "yaw_q12": 0,
+            "height_q12": 535,
+            "left_target_mmps": 0,
+            "right_target_mmps": 0,
+            "left_cms": 0,
+            "right_cms": 0,
+            "left_duty": 0,
+            "right_duty": 0,
+            "lh_us": 1514,
+            "lk_us": 1502,
+            "rh_us": 1456,
+            "rk_us": 1498,
+            "completed_frames": 18088,
+            "inference_cycles": 83534,
+            "left_delta": 0,
+            "right_delta": 0,
+            "left_reference_mmps": -90,
+            "right_reference_mmps": -54,
+            "left_error_mmps": -60,
+            "right_error_mmps": -34,
+            "left_control_sequence": 14376,
+            "right_control_sequence": 14375
+          }
+        }
+      },
+      "updated_at": "2026-11-01T04:29:52.350704+00:00",
+      "telemetry_decoder": {
+        "frames": 7598,
+        "bad_crc": 0,
+        "skipped": 0
+      }
+    },
+    "keeper": {
+      "pid": 1775,
+      "state": "S"
+    }
+  },
+  "operational_notes": [
+    "后端和桥接服务已重启。桥接按已有启动配置重新加载同一地图，当前 loc_state=mapless；实测前需在网页重新设置初始位姿。",
+    "部署工具没有发送目标、位姿或急停指令；原地图恢复辅助进程已恢复运行，未被遗留为暂停状态。",
+    "当前控制遥测仍有 policy_fault:1、bmi088_error:4、bmi088_stale；本次修复不等于实机导航已通过。",
+    "未改动 Claude 正在生成的 FPGA 固件，未提交或推送仓库。"
+  ]
+}

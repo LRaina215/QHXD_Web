@@ -1,0 +1,167 @@
+{
+  "completed_at": "2026-11-01T20:10:32.817302+08:00",
+  "changes": [
+    "鼠标左键拖动或单指拖动可平移地图视图，绕开相机画中画遮挡。",
+    "拖动后显示还原视野按钮，点击恢复自动适配的初始视图。",
+    "拖动释放不选导航目标；轻点仍可选择预设点或自由导航点。",
+    "触摸轻点独立识别并屏蔽兼容click，避免拖动后轻点丢失或重复确认。",
+    "平移后选点与初始化位姿使用同一逆变换，地图坐标保持正确。",
+    "地图版本切换中途取消手势，避免给新地图发送旧坐标目标。"
+  ],
+  "tests": {
+    "passed": true,
+    "browser": "system Chrome headless",
+    "scope": "Actual StageCard and FieldMap; fixture blocks robot/API access",
+    "results": [
+      {
+        "case": "mouse drag pans the map without confirming or submitting a goal",
+        "passed": true
+      },
+      {
+        "case": "named waypoint remains selectable at its panned position",
+        "passed": true
+      },
+      {
+        "case": "free-point coordinates remain correct after panning",
+        "passed": true
+      },
+      {
+        "case": "restore view resets pan without issuing a navigation command",
+        "passed": true
+      },
+      {
+        "case": "initial pose drag uses the correct map coordinates after panning",
+        "passed": true
+      },
+      {
+        "case": "touch drag pans and the following tap selects the moved waypoint",
+        "passed": true
+      },
+      {
+        "case": "drag ending outside the map never submits a goal",
+        "passed": true
+      },
+      {
+        "case": "map change during a drag cancels the gesture instead of selecting a new-map goal",
+        "passed": true
+      },
+      {
+        "case": "confirmed pose drag produces one pose confirmation and no navigation goal",
+        "passed": true
+      },
+      {
+        "case": "next independent map click still confirms and submits a goal",
+        "passed": true
+      },
+      {
+        "case": "cancelled pose confirmation never opens a navigation confirmation",
+        "passed": true
+      },
+      {
+        "case": "captured pose release outside canvas does not turn into a goal",
+        "passed": true
+      },
+      {
+        "case": "cancelled pointer clears drag without submitting pose or goal",
+        "passed": true
+      },
+      {
+        "case": "touch pose drag produces one pose confirmation and no goal",
+        "passed": true
+      },
+      {
+        "case": "every preset marker confirms exactly once and submits its named waypoint ID",
+        "passed": true
+      },
+      {
+        "case": "cancelling a preset confirmation sends no navigation request",
+        "passed": true
+      },
+      {
+        "case": "clicking a preset name label confirms that waypoint, not its label coordinates",
+        "passed": true
+      },
+      {
+        "case": "pose drag ending on a preset marker does not open a goal confirmation",
+        "passed": true
+      },
+      {
+        "case": "touching a preset marker confirms and sends its ID exactly once",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 1600x1000",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 1366x768",
+        "passed": true
+      },
+      {
+        "case": "layout screenshot 390x844",
+        "passed": true
+      }
+    ]
+  },
+  "map_loading_regressions": {
+    "passed": true,
+    "results": [
+      {
+        "case": "failed image request retries the unchanged map version without refreshing the page",
+        "passed": true
+      },
+      {
+        "case": "temporary metadata failure preserves the displayed map and recovers by polling",
+        "passed": true
+      },
+      {
+        "case": "late decoding of the old image cannot overwrite the new map",
+        "passed": true
+      },
+      {
+        "case": "preview with the same version but another image URL reloads its own raster",
+        "passed": true
+      },
+      {
+        "case": "a response carrying a different map version is rejected and retried",
+        "passed": true
+      },
+      {
+        "case": "an explicit canvas snapshot clears the prior raster and explains the transition",
+        "passed": true
+      },
+      {
+        "case": "unmount cancels scheduled image retries",
+        "passed": true
+      }
+    ]
+  },
+  "build": "npm run build 通过",
+  "visual_review_widths": [
+    1600,
+    1366,
+    390
+  ],
+  "published_assets": [
+    "index-dUEZ24md.js",
+    "index-B0jhCdEr.css"
+  ],
+  "published_bytes_match_local": true,
+  "rk_deployment": {
+    "passed": true,
+    "backup": "/home/robomaster/ui_backups/map-pan-20261101",
+    "changed": [
+      "frontend/dist/assets/index-dUEZ24md.js",
+      "frontend/dist/assets/index-B0jhCdEr.css",
+      "frontend/src/components/FieldMap.vue",
+      "frontend/dist/index.html"
+    ],
+    "services_restarted": false,
+    "robot_commands_sent": false
+  },
+  "cloud_backup": "/var/backups/lingxunrobot/map-pan-20261101",
+  "services_restarted": false,
+  "robot_commands_sent": false,
+  "map_or_initial_pose_changed": false,
+  "includes_previous_map_loading_fix": true
+}

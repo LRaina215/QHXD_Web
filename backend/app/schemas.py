@@ -283,9 +283,9 @@ class PlatformEstopRequest(ContractModel):
 
 
 class PlatformSetPoseRequest(ContractModel):
-    x: float = Field(description="地图系 X，m")
-    y: float = Field(description="地图系 Y，m")
-    yaw: float = Field(default=0.0, description="朝向，rad")
+    x: float = Field(allow_inf_nan=False, description="地图系 X，m")
+    y: float = Field(allow_inf_nan=False, description="地图系 Y，m")
+    yaw: float = Field(default=0.0, allow_inf_nan=False, description="朝向，rad")
     align: bool = Field(default=True, description="有图时在先验图上搜索对准")
     source: str = Field(default="web")
     requested_by: str | None = None

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowLeftRight, Crosshair, Map as MapIcon, Video } from 'lucide-vue-next'
 import CloudVideoPlayer from './CloudVideoPlayer.vue'
 import FieldMap from './FieldMap.vue'
@@ -12,9 +12,26 @@ const props = defineProps<{ yt: YunTuo; selected: string }>()
 const emit = defineEmits<{ pick: [waypointId: string]; point: [x: number, y: number] }>()
 const main = ref<'map' | 'cam'>('map')
 const poseMode = ref(false)
+function interactionBlocked() {
+  if (!props.yt.navigationBusy.value) return false
+  props.yt.log('当前操作尚未结束；请稍候，或先取消活动任务。', 'wait', '任务')
+  return true
+}
+function onPick(waypointId: string) {
+  if (interactionBlocked()) return
+  emit('pick', waypointId)
+  const waypoint = props.yt.waypoints.value.find((item) => item.waypoint_id === waypointId)
+  if (!waypoint?.enabled || !waypoint.configured || !waypoint.pose) return
+  const { x, y } = waypoint.pose
+  if (window.confirm(`将${waypoint.name} (${x.toFixed(2)}, ${y.toFixed(2)}) m 设为导航目标？`)) void props.yt.goTo(waypointId)
+}
+function onPoint(x: number, y: number) {
+  if (!interactionBlocked()) emit('point', x, y)
+}
 function onPose(x: number, y: number, yaw: number) {
   poseMode.value = false
-  if (window.confirm(`设初始位姿 (${x.toFixed(2)}, ${y.toFixed(2)}) m，朝向 ${Math.round((yaw * 180) / Math.PI)}°？`)) void props.yt.setPose(x, y, yaw)
+  const active = ['pending', 'running', 'paused'].includes(props.yt.state.value?.task_status.state ?? '')
+  if (window.confirm(`${active ? '将先取消当前任务。\n' : ''}设初始位姿 (${x.toFixed(2)}, ${y.toFixed(2)}) m，朝向 ${Math.round((yaw * 180) / Math.PI)}°？`)) void props.yt.setPose(x, y, yaw)
 }
 const frameUrl = ref(perceptionFrameStreamUrl())
 let refresher = 0
@@ -24,6 +41,7 @@ onBeforeUnmount(() => window.clearInterval(refresher))
 const p = computed(() => props.yt.platform.value)
 const target = computed(() => props.yt.nav.value?.target ?? null)
 const mapless = computed(() => !props.yt.mapMeta.value || props.yt.mapMeta.value.version.startsWith('canvas'))
+watch(() => props.yt.poseInteractionBusy.value || !!props.yt.mapPreview.value, (blocked) => { if (blocked) poseMode.value = false })
 const pose = computed(() => props.yt.nav.value?.pose ?? null)
 const hud = computed(() => [
   { k: '速度', v: fmt(p.value?.cmd_vx_mps, 2), u: 'm/s' },
@@ -45,7 +63,7 @@ const hud = computed(() => [
         </button>
       </div>
       <span class="ctx">{{ main === 'map' ? (yt.mapPreview.value ? '地图预览 · 未下发FPGA' : mapless ? '无先验图 · 里程计坐标系' : '先验地图坐标系') : 'Orbbec Astra Pro Plus · RKNN 检测' }}</span>
-      <button v-if="main === 'map' && !mapless" type="button" class="posebtn" :class="{ on: poseMode }" @click="poseMode = !poseMode">{{ poseMode ? '在车的位置按下，朝车头方向拖动后松开' : '设初始位姿' }}</button>
+      <button v-if="main === 'map' && !mapless && !yt.mapPreview.value" type="button" class="posebtn" :disabled="yt.poseInteractionBusy.value" :class="{ on: poseMode }" @click="poseMode = !poseMode">{{ poseMode ? '在车的位置按下，朝车头方向拖动后松开' : '设初始位姿' }}</button>
       <MapUpload :yt="yt" />
       <span v-if="target" class="lock"><Crosshair :size="15" />目标已锁定</span>
     </header>
@@ -56,7 +74,7 @@ const hud = computed(() => [
         <span v-if="main !== 'cam'" class="pip-label"><Video :size="13" />相机<ArrowLeftRight :size="13" /></span>
       </div>
       <div class="view" :class="main === 'map' ? 'main' : 'pip'" @click="main !== 'map' && (main = 'map')">
-        <FieldMap :yt="yt" :selected="selected" :compact="main !== 'map'" :pose-mode="poseMode" @pose="onPose" @pick="emit('pick', $event)" @point="(x: number, y: number) => emit('point', x, y)" />
+        <FieldMap :yt="yt" :selected="selected" :compact="main !== 'map'" :pose-mode="poseMode" @pose="onPose" @pick="onPick" @point="onPoint" />
         <span v-if="main !== 'map'" class="pip-label"><MapIcon :size="13" />场地<ArrowLeftRight :size="13" /></span>
       </div>
       <dl class="hud">

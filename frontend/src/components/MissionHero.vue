@@ -63,10 +63,10 @@ const busy = computed(() => props.yt.busy.mission)
       <button v-if="task?.state === 'paused'" type="button" class="btn primary" :disabled="busy" @click="yt.mission('resume')">
         <Play :size="18" />继续
       </button>
-      <button v-else type="button" class="btn" :disabled="busy || task?.state !== 'running'" @click="yt.mission('pause')">
+      <button v-else type="button" class="btn" :disabled="yt.busy.pause" @click="yt.mission('pause')">
         <Pause :size="18" />暂停
       </button>
-      <button type="button" class="btn danger-text" :disabled="busy || !active" @click="yt.mission('cancel')">
+      <button type="button" class="btn danger-text" :disabled="yt.busy.cancel" @click="yt.mission('cancel')">
         <Square :size="16" />取消
       </button>
       <button type="button" class="btn quiet" :disabled="busy || active" @click="yt.mission('return_home')">

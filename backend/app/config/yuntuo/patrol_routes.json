@@ -1,8 +1,8 @@
 [
   {
     "route_id": "default_patrol",
-    "name": "场地巡检（台阶 → 斜坡 → 碎石 → 起点）",
-    "waypoints": ["wp_a", "wp_b", "wp_c"],
+    "name": "场地巡检（纸板前方 → 左侧通道 → 小道中间 → 小道尽头 → 纸板右前方 → 起点）",
+    "waypoints": ["wp_a", "wp_b", "wp_lane", "wp_c", "wp_d"],
     "stop_seconds": 2,
     "capture_perception": true,
     "return_home": true,

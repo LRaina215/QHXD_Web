@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import socket
+import struct
 import threading
 import time
 from collections import deque
@@ -112,6 +114,19 @@ class TelemetryReader(threading.Thread):
         self._latest_at = 0.0
         self._samples: deque[tuple[ControlFrame, float]] = deque(maxlen=256)
         self.rate = RateMeter()
+        # Optional read-only fanout for external sensor recording. Keep serial ownership here.
+        self._mirror = None
+        mirror_port = os.environ.get("YUNTUO_TELEMETRY_MIRROR_PORT", "")
+        if mirror_port:
+            try:
+                port = int(mirror_port)
+                if not 1024 <= port <= 65535:
+                    raise ValueError("port outside 1024..65535")
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setblocking(False)
+                self._mirror = (sock, ("127.0.0.1", port))
+            except (ValueError, OSError) as exc:
+                log.warning("控制遥测只读镜像未启用：%s", exc)
 
     def latest(self) -> tuple[ControlFrame | None, float]:
         with self.lock:
@@ -125,6 +140,13 @@ class TelemetryReader(threading.Thread):
             return samples
 
     def _ingest(self, data: bytes) -> None:
+        if data and self._mirror is not None:
+            # Header: magic, RK monotonic receive ns, RK wall receive ns; then original bytes.
+            stamp = struct.pack("<4sQQ", b"XIM1", time.monotonic_ns(), time.time_ns())
+            try:
+                self._mirror[0].sendto(stamp + data, self._mirror[1])
+            except OSError:
+                pass  # A missing/slow recorder must never block control feedback.
         frames = self.decoder.feed(data)
         if frames:
             now = time.monotonic()

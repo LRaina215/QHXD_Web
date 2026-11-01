@@ -1,0 +1,41 @@
+导航调试跟进｜2026-11-01 10:49（北京时间）
+
+本次只读跟进。来源：ZCode 会话 sess_6ac1dbd7-1a60-4d06-a50e-b27b1a031b31 最近会话记录、NAV/Web 本地提交、实际地图文件、RK fpga_bridge /health 即时读数。
+
+当前阶段
+已有图导航进入实机调试；尚无成功到点记录。当前地图已经加载，网页点选目标和设置初始位姿功能已经实现。最新卡点是目标下发后没有前进、定位质量波动和控制侧故障，不能沿用“仍在等待外参标定/只有起点局部图”的旧状态。
+
+地图
+- nav/config/field_home_20261101.json 记录用户后来提供的卷尺尺寸。
+- map_artifacts/20261101_measured_field/field_home.nvmp：8350 B，NVMPv3/SLF128；当前 /health 返回先验地图已加载（8350 B）。
+- 这份是按卷尺场地描述生成的先验；原雷达整圈SLAM没有因此变成验收成功。
+- 同目录存在10140 B增补扫描版，但生成时间早于本次FPGA左右镜像修复，不能默认认为已经按修正坐标重新验收。当前在线加载长度为8350 B。
+
+网页
+- dc32f38：点击场地图任意位置，经 go_to_point / backend / FPGA bridge 发目标。
+- b5fcae2：按车的位置、拖向车头方向设置初始位姿，并扩大对准搜索范围。
+- 记录中网页目标能让任务进入moving/blocked；还没有成功执行到点。
+
+雷达方向修复
+- NAV 3ad527b（10:42本地提交）修正 lidar_cal.c / model/lidar_lut.py：与厂家SDK列翻转相同后，横向应为+x，原-x造成左右镜像。
+- 安装roll符号随之由-3度改为+3度；源码现采用pitch 2.1度、roll +3度、height 150 mm。
+- Claude已通过RK调试口装入 nav_fw_ground_noturn_unmirror.bin；用户放在左侧的瓶子被观测为y>0，左墙回到左侧，作为实物方向验证。
+- 这证明FPGA方向表的错误已修正；不单独证明旧RK离线SLAM失败的全部根因。
+
+实机记录与当前快照
+- 10:43记录：定位曾在ok状态，质量约54–61，位置约(-0.08,-0.13)m；航向约15度尚缺实物朝向核对。守护日志同时保留了ok/degraded波动，不能称全程稳定验收。
+- 10:43:54开始出现moving；10:44:09 blocked；前进指令一直0。10:44:37曾出现转向0.6rad/s，10:44:38 policy退出并出现right_motor_fault:2；随后多次转向/零指令交替。
+- 10:49 /health：nav和control串口在线；map_loaded=true；lidar_ok=true；odom_ok=true；fpga idle；target_valid=false；loc_state=aligning；loc_quality=0；cmd_vx=0、cmd_wz=0；policy_active=false；control_estop=true。
+- 故障字段：policy_fault:1、bmi088_error:4、bmi088_stale、right_motor_fault:2。它们是当前报告状态，未在本轮归因到具体线缆或硬件损坏。
+- odom_ok=true并不足以证明控制器停机时每帧均有可用于建图的历史位姿。Claude已核对到：控制器停机、里程计不连续时，点云可能在位姿查询环节整帧丢弃。
+- LIDAR_STAT_POINTS记上一帧有效点数，不是累计值；稳定8818不能据此断言雷达后续帧无有效点。此前错误判断已在Claude记录中撤回。
+
+固件持久化
+Flash记录仍为PNR68，包含旧镜像导航固件。当前修正为调试口RAM加载，整车掉电后可能回旧版。
+Claude截至10:49在准备K_terrain3_prepared，把修正固件作为RAM初值固化进新位流；只看到准备目录，没有新的综合/布局布线/Flash烧写完成证据。不要把“准备新位流”表述成“已固化”。
+
+接续重点
+1. 保留当前目标尝试的指令、任务/定位变化与控制故障时间线，查清前进持续0、转向与保护的因果；不能仅以网页未显示路线断言FPGA没有规划。
+2. 当前控制和IMU故障未清，不能重复发移动目标来验证。
+3. 跟进修正版位流是否实际完成、验收及固化；固化可以解决掉电回旧版，不等于自动解决零前进或控制故障。
+4. 控制可用后，用户自行选点，分开验证地图定位、规划/指令和实际到点。不要再替用户预设目标或人工限定走廊。
