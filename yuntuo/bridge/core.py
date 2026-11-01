@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import queue
 import threading
 import time
@@ -129,6 +130,7 @@ class FpgaBridge:
             self.pending_map = None
             self._upload_map(pkg, prior)
         now = self.clock()
+        self._log_nav_console(now)
         busy = self._io(now)
         now = self.clock()
         self.runner.on_tick(self.status_view(now), self._frame(), now)
@@ -184,6 +186,37 @@ class FpgaBridge:
             self.outbox.append(msg)
         while len(self.outbox) > 64:
             self.outbox.pop()
+
+    def _log_nav_console(self, now: float) -> None:
+        """Append the FPGA nav firmware console (planner/motion diagnostics) to a file once per second."""
+        bus = getattr(self.link, "bus", None)
+        path = os.environ.get("YUNTUO_NAV_CONSOLE_LOG")
+        if bus is None or not path or now - getattr(self, "_con_t", -1e9) < 1.0:
+            return
+        self._con_t = now
+        try:
+            wp = bus.rd(0xF00C)
+            since = getattr(self, "_con_wp", None)
+            if since is None or wp < since or wp - since > 4096:
+                since = max(0, wp - 1024)
+            out = bytearray()
+            i = since
+            while i < wp:
+                w = bus.rd(0xE000 + ((i & 4095) & ~3))
+                for b in range(i & 3, 4):
+                    if i >= wp:
+                        break
+                    out.append((w >> (8 * b)) & 0xFF)
+                    i += 1
+            self._con_wp = wp
+            if out:
+                stamp = time.strftime("%H:%M:%S")
+                with open(path, "a", encoding="utf-8") as f:
+                    for line in out.decode("utf-8", "replace").splitlines():
+                        if line.strip():
+                            f.write(f"{stamp} {line.rstrip()}\n")
+        except Exception as exc:  # diagnostics must never disturb the control link
+            log.debug("nav console read failed: %s", exc)
 
     def _ensure_link(self, now: float) -> None:
         if self.link is not None or now < self.reconnect_at:
@@ -328,14 +361,22 @@ class FpgaBridge:
             return {"success": True, "data": {"accepted": ok, "engaged": engage,
                                               "detail": detail if ok else "FPGA 链路不在线：" + detail}}
         if req.kind == "set_pose":
+            sv = self.status_view(now)
+            if self.link is None or not sv.fresh or sv.status.mode != 0:
+                return {"success": False, "data": {"accepted": False, "detail": "设置初始位姿需要在线且新鲜的导航空闲状态。"}}
+            if self.runner.task is not None and self.runner.task.active:
+                return {"success": False, "data": {"accepted": False, "detail": "请先取消当前任务，再在导航空闲时设置初始位姿。"}}
             try:
                 x, y, yaw = float(p["x"]), float(p["y"]), float(p.get("yaw", 0.0))
-            except (KeyError, TypeError, ValueError):
-                return {"success": False, "data": {"accepted": False, "detail": "需要 x、y（m）与 yaw（rad）"}}
-            self._send(nv.encode_set_pose(nv.m_to_mm(x), nv.m_to_mm(y), nv.rad_to_cdeg(yaw),
-                                          align=bool(p.get("align", True)),
-                                          range_mm=int(float(p.get("range_m", 0)) * 1000),
-                                          range_cdeg=int(float(p.get("range_deg", 0)) * 100)))
+                range_m, range_deg = float(p.get('range_m', 0)), float(p.get('range_deg', 0))
+                if not all(math.isfinite(v) for v in (x, y, yaw, range_m, range_deg)) or min(range_m, range_deg) < 0:
+                    raise ValueError('invalid pose or search range')
+                message = nv.encode_set_pose(nv.m_to_mm(x), nv.m_to_mm(y), nv.rad_to_cdeg(yaw),
+                                             align=bool(p.get("align", True)),
+                                             range_mm=int(range_m * 1000), range_cdeg=int(range_deg * 100))
+            except (KeyError, TypeError, ValueError, OverflowError):
+                return {"success": False, "data": {"accepted": False, "detail": "位姿或搜索范围无效，请提供有限数值及非负搜索范围。"}}
+            self._send(message)
             return {"success": True, "data": {"accepted": self.link is not None,
                                               "detail": f"已下发初始位姿 ({x:.2f}, {y:.2f}, {math.degrees(yaw):.0f}°)。"}}
         if req.kind == "map":
