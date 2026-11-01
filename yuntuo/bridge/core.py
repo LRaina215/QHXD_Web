@@ -81,6 +81,7 @@ class FpgaBridge:
         self.map_id = str(cfg.extra.get("map_id", "yuntuo_field"))
         self.field_bounds = tuple(cfg.extra.get("field_bounds", (-1.0, -3.0, 6.0, 3.0)))
         self.last_nav_post = self.last_platform_post = self.last_map_post = self.last_keepalive = -1e9
+        self.last_task_post = -1e9
         self.nav_seq = 0
         self.public_lock = threading.Lock()
         self.public: dict = {}
@@ -125,7 +126,7 @@ class FpgaBridge:
         self._ensure_link(now)
         self._service_requests(now)
         if (self.pending_map is not None and self.link is not None
-                and self.status_view(now).fresh and self.status.mode == 0):
+                and self.status_view(now).fresh and self.status.mode in (0, 4)):
             pkg, prior = self.pending_map
             self.pending_map = None
             self._upload_map(pkg, prior)
@@ -188,31 +189,36 @@ class FpgaBridge:
             self.outbox.pop()
 
     def _log_nav_console(self, now: float) -> None:
-        """Append the FPGA nav firmware console (planner/motion diagnostics) to a file once per second."""
+        """Append the FPGA nav firmware console to a file.
+
+        Bounded to 24 bus reads per 0.25 s so heartbeats keep flowing (the firmware locks to ESTOP after a 250 ms host gap)."""
         bus = getattr(self.link, "bus", None)
         path = os.environ.get("YUNTUO_NAV_CONSOLE_LOG")
-        if bus is None or not path or now - getattr(self, "_con_t", -1e9) < 1.0:
+        if bus is None or not path or now - getattr(self, "_con_t", -1e9) < 0.25:
             return
         self._con_t = now
         try:
             wp = bus.rd(0xF00C)
             since = getattr(self, "_con_wp", None)
             if since is None or wp < since or wp - since > 4096:
-                since = max(0, wp - 1024)
+                since = wp
+            stop = min(wp, (since & ~3) + 96)
             out = bytearray()
             i = since
-            while i < wp:
+            while i < stop:
                 w = bus.rd(0xE000 + ((i & 4095) & ~3))
                 for b in range(i & 3, 4):
-                    if i >= wp:
+                    if i >= stop:
                         break
                     out.append((w >> (8 * b)) & 0xFF)
                     i += 1
-            self._con_wp = wp
-            if out:
+            self._con_wp = i
+            self._con_buf = getattr(self, "_con_buf", "") + out.decode("utf-8", "replace")
+            *lines, self._con_buf = self._con_buf.split("\n")
+            if lines:
                 stamp = time.strftime("%H:%M:%S")
                 with open(path, "a", encoding="utf-8") as f:
-                    for line in out.decode("utf-8", "replace").splitlines():
+                    for line in lines:
                         if line.strip():
                             f.write(f"{stamp} {line.rstrip()}\n")
         except Exception as exc:  # diagnostics must never disturb the control link
@@ -247,8 +253,13 @@ class FpgaBridge:
         self.runner.fail("FPGA 链路断开，原任务中止；重连后需显式解除锁定并重新下发任务。", stop=False, now=now)
 
     def _transmit(self, msg: bytes) -> None:
+        before = self.clock()
+        gap = before - self.last_tx_at
         self.link.send(msg)
         self.last_tx_at = self.clock()
+        if 0.2 <= gap < 30:
+            log.warning("主机报文间隔 %.0f ms（固件 250 ms 收不到即锁急停）；本次发送耗时 %.0f ms",
+                        gap * 1000, (self.last_tx_at - before) * 1000)
 
     def _io(self, now: float, recv: bool = True) -> bool:
         if self.link is None:
@@ -362,8 +373,8 @@ class FpgaBridge:
                                               "detail": detail if ok else "FPGA 链路不在线：" + detail}}
         if req.kind == "set_pose":
             sv = self.status_view(now)
-            if self.link is None or not sv.fresh or sv.status.mode != 0:
-                return {"success": False, "data": {"accepted": False, "detail": "设置初始位姿需要在线且新鲜的导航空闲状态。"}}
+            if self.link is None or not sv.fresh or sv.status.mode not in (0, 4):
+                return {"success": False, "data": {"accepted": False, "detail": "设置初始位姿需要在线且新鲜的导航空闲或急停状态。"}}
             if self.runner.task is not None and self.runner.task.active:
                 return {"success": False, "data": {"accepted": False, "detail": "请先取消当前任务，再在导航空闲时设置初始位姿。"}}
             try:
@@ -381,8 +392,8 @@ class FpgaBridge:
                                               "detail": f"已下发初始位姿 ({x:.2f}, {y:.2f}, {math.degrees(yaw):.0f}°)。"}}
         if req.kind == "map":
             sv = self.status_view(now)
-            if not sv.fresh or sv.status.mode != 0:
-                return {"success": False, "data": {"accepted": False, "detail": "地图操作需要新鲜的FPGA空闲状态；请先显式解除导航急停。"}}
+            if not sv.fresh or sv.status.mode not in (0, 4):
+                return {"success": False, "data": {"accepted": False, "detail": "地图操作需要新鲜的FPGA空闲或急停状态。"}}
             if self.runner.task is not None and self.runner.task.active:
                 return {"success": False, "data": {"accepted": False, "detail": "请先取消当前任务，再在空闲状态更换地图。"}}
             if p.get("clear"):
@@ -487,6 +498,21 @@ class FpgaBridge:
 
     def _publish(self, now: float) -> None:
         sv = self.status_view(now)
+        if sv.fresh and now - self.last_task_post >= 1.0:
+            self.last_task_post = now
+            task = self.runner.task_status()
+            timestamp = task['updated_at']
+            # Events alone cannot clear a backend's old task after a bridge restart.
+            self.poster.post_latest('task', '/api/internal/mission/update', {
+                'event': {'event_id': f"{task['task_id']}:heartbeat:{timestamp}",
+                          'task_id': task['task_id'], 'event_type': 'progress', 'task_state': task['state'],
+                          'detail': task['detail'], 'source': 'fpga_bridge', 'progress': task['progress'],
+                          'remaining_distance': (round(self.runner.task.remaining_m, 3)
+                                                 if self.runner.task and self.runner.task.remaining_m is not None else None),
+                          'timestamp': timestamp},
+                'task_status': task, 'current_goal': self.runner.current_goal(),
+                'nav_state': self.runner.nav_state(),
+            })
         if sv.fresh and self.status_at > self.last_nav_post and now - self.last_nav_post >= 1.0 / self.cfg.nav_post_hz:
             self.last_nav_post = now
             self.poster.post_latest("nav", "/api/internal/navigation/state", self.navigation_snapshot(now))

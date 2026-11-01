@@ -191,6 +191,12 @@ class TaskRunner:
     # ---------------------------------------------------------------- 命令
     def handle_command(self, command: str, args: dict, source: str, sv: StatusView, now: float) -> tuple[bool, str]:
         self.now = now
+        if command in {'pause_task', 'cancel_task'}:
+            if sv.status is not None and (sv.status.mode == 4 or sv.status.state == 6):
+                self.estop()
+                return True, '导航已处于急停；未解除急停。'
+            if not sv.fresh:
+                return False, '导航状态不可用，无法确认暂停或取消；急停入口仍可使用。'
         if command == "pause_task":
             return self._pause(now)
         if command == "resume_task":
@@ -280,7 +286,8 @@ class TaskRunner:
     def _pause(self, now: float) -> tuple[bool, str]:
         t = self.task
         if t is None or not t.active:
-            return False, "当前没有可暂停的活动任务。"
+            self.send(nv.encode_mode("idle"), True)
+            return True, "当前没有可恢复的活动任务，已请求导航空闲。"
         if t.finish_after_stop is not None:
             return False, "跟随时长已结束，正在等待停稳确认；可取消，不能暂停或恢复。"
         if t.state == "paused":
@@ -320,7 +327,8 @@ class TaskRunner:
     def _cancel(self) -> tuple[bool, str]:
         t = self.task
         if t is None or not t.active:
-            return False, "当前没有可取消的活动任务。"
+            self.send(nv.encode_mode("idle"), True)
+            return True, "当前没有活动任务，已请求导航空闲。"
         self._end("cancelled", "cancelled", "任务已取消。")
         return True, t.detail
 
@@ -434,7 +442,7 @@ class TaskRunner:
                 t.arrival_wait_since = now
             eligible = (abs(s.vx_mmps) <= STOP_V_MMPS and abs(s.wz_mradps) <= STOP_W_MRADPS
                         and s.odom_ok and not self._preflight(sv, True))
-            if eligible and self._arrival_ready(sv, now, STOP_HOLD_S):
+            if eligible and (not self.cfg.arrive_need_wheel_stop or self._arrival_ready(sv, now, STOP_HOLD_S)):
                 self._arrived(now)
             elif now-t.arrival_wait_since > self.cfg.link_loss_fail_s:
                 self.fail("FPGA 报告到达，但位置/指令/反馈停稳条件未能确认。")

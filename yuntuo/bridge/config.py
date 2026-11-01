@@ -45,6 +45,7 @@ class BridgeConfig:
     target_max_latency_ms: int = 400
     target_arrive_tol_m: float = 0.25           # 跟踪站位点容差
     goto_arrive_tol_m: float = 0.15             # 当前估计位置，不代表独立真值精度
+    arrive_need_wheel_stop: bool = True         # 到点是否要求轮速静止 0.5 s（平衡车实车用 YUNTUO_ARRIVE_NEED_WHEEL_STOP=false）
     target_arrive_dist_m: float = 1.05          # 判定"到达目标附近"的最大目标距离（站位 0.7 m + 余量）
     arrive_hold_s: float = 1.0
     blocked_fail_s: float = 25.0
@@ -83,6 +84,8 @@ class BridgeConfig:
         cfg.target_rate_hz = _env_float("YUNTUO_TARGET_RATE_HZ", cfg.target_rate_hz)
         cfg.target_max_latency_ms = int(_env_float("YUNTUO_TARGET_MAX_LATENCY_MS", cfg.target_max_latency_ms))
         cfg.blocked_fail_s = _env_float("YUNTUO_BLOCKED_FAIL_SECONDS", cfg.blocked_fail_s)
+        cfg.goto_arrive_tol_m = _env_float("YUNTUO_GOTO_ARRIVE_TOL_M", cfg.goto_arrive_tol_m)
+        cfg.arrive_need_wheel_stop = _env_bool("YUNTUO_ARRIVE_NEED_WHEEL_STOP", cfg.arrive_need_wheel_stop)
         return cfg
 
 
