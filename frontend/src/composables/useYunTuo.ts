@@ -20,6 +20,8 @@ import type {
 } from '../types'
 
 const TOKEN_KEY = 'qhxd_api_token'
+const VOICE_TIMEOUT_MS = 120000
+const VOICE_TIMEOUT_MESSAGE = '语音处理等待超时，结果尚未确认；RK 可能仍在处理或已经播报，请先核对状态，不要重复发送。'
 
 const ERROR_CODES: Record<string, string> = {
   unauthorized: '公网写接口需要访问 Token，请在右上角设置',
@@ -72,6 +74,7 @@ export function useYunTuo() {
   const conn = reactive({ state: false, nav: false })
   const busy = reactive({ mission: false, pause: false, cancel: false, pose: false, voice: false, confirm: false, mode: false, estop: false, map: false })
   const voiceStatus = ref('空闲')
+  const voiceError = ref('')
   const confirmError = ref('')
   const lastMessage = ref('等待命令')
   const toast = ref<{ id: number; text: string; tone: Tone } | null>(null)
@@ -110,21 +113,26 @@ export function useYunTuo() {
     }
   }
 
-  async function post<T>(path: string, body: unknown, fallback: string): Promise<T> {
+  async function request<T>(path: string, init: RequestInit, fallback: string,
+    timeoutMs = 12000, timeoutMessage = '请求超时，请核对当前状态；暂停、取消和急停仍可使用。'): Promise<T> {
     const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 12000)
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
     try {
       const response = await fetch(apiUrl(path), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(body), signal: controller.signal,
+        ...init, signal: controller.signal,
       })
       if (!response.ok) throw new Error(await readApiError(response, fallback))
       return (await response.json()) as T
     } catch (error) {
-      if (controller.signal.aborted) throw new Error('请求超时，请核对当前状态；暂停、取消和急停仍可使用。')
+      if (controller.signal.aborted) throw new Error(timeoutMessage)
       throw error
     } finally { window.clearTimeout(timeout) }
+  }
+
+  async function post<T>(path: string, body: unknown, fallback: string,
+    timeoutMs = 12000, timeoutMessage?: string): Promise<T> {
+    return request<T>(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body) }, fallback, timeoutMs, timeoutMessage)
   }
 
   // ------------------------------------------------------------ 数据加载
@@ -452,16 +460,32 @@ export function useYunTuo() {
   // ------------------------------------------------------------ 语音 / 智能助手
   type SmartResponse = { success: boolean; data: SmartCommandResult | null; error?: string | null; detail?: string | null }
 
+  function beginVoice(status: string) {
+    smart.value = null
+    voiceError.value = ''
+    voiceStatus.value = status
+    busy.voice = true
+  }
+
+  function failVoice(error: unknown, fallback: string) {
+    const message = error instanceof Error ? error.message : fallback
+    voiceError.value = message
+    voiceStatus.value = message === VOICE_TIMEOUT_MESSAGE ? '结果未确认' : '失败'
+    log(message, 'bad', '语音')
+  }
+
   function handleSmart(payload: SmartResponse, fallback: string) {
+    // Always show this request's result, including a current ASR failure.
+    smart.value = payload.data ?? null
     if (!payload.success || !payload.data) {
       const message = payload.detail || payload.error || payload.data?.error_reason || fallback
-      voiceStatus.value = '失败'
-      log(message, 'bad', '语音')
+      failVoice(new Error(message), fallback)
       return
     }
     const data = payload.data
     smart.value = data
-    voiceStatus.value = '已处理'
+    voiceStatus.value = data.error_reason ? '失败' : '已处理'
+    voiceError.value = data.error_reason || ''
     log(data.reply_text || data.error_reason || '智能助手已处理', data.error_reason ? 'warn' : 'run', '语音')
     const candidate = data.mission_candidate
     if (candidate?.pending_command_id) {
@@ -477,28 +501,27 @@ export function useYunTuo() {
   }
 
   async function sendText(text: string) {
-    if (!text.trim()) return
-    busy.voice = true
-    voiceStatus.value = '理解中'
+    if (!text.trim() || busy.voice) return
+    beginVoice('理解与回复中')
     try {
       const payload = await post<SmartResponse>('/api/voice/smart_command',
-        { text, source: 'dashboard-smart-text', requested_by: 'dashboard', generate_tts: true }, '智能助手调用失败')
+        { text, source: 'dashboard-smart-text', requested_by: 'dashboard', generate_tts: true }, '智能助手调用失败',
+        VOICE_TIMEOUT_MS, VOICE_TIMEOUT_MESSAGE)
       handleSmart(payload, '智能助手调用失败')
     } catch (error) {
-      voiceStatus.value = '失败'
-      log(error instanceof Error ? error.message : '文本命令发送失败', 'bad', '语音')
+      failVoice(error, '文本命令发送失败')
     } finally {
       busy.voice = false
     }
   }
 
   async function recordBrowser(durationS: number) {
+    if (busy.voice) return
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       log('当前浏览器不支持网页麦克风录音（需要 HTTPS 或 localhost）', 'warn', '语音')
       return
     }
-    busy.voice = true
-    voiceStatus.value = '录音中'
+    beginVoice('录音中')
     let stream: MediaStream | null = null
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -516,22 +539,20 @@ export function useYunTuo() {
       const type = recorder.mimeType || mime || 'audio/webm'
       const blob = new Blob(chunks, { type })
       if (!blob.size) throw new Error('没有录到有效音频')
-      voiceStatus.value = '识别中'
+      voiceStatus.value = '识别与回复中'
       const form = new FormData()
       form.append('file', blob, type.includes('ogg') ? 'browser_audio.ogg' : 'browser_audio.webm')
       form.append('source', 'browser-mic')
       form.append('requested_by', 'operator')
       form.append('keep_audio', 'false')
       form.append('smart', 'true')
-      const response = await fetch(apiUrl('/api/voice/browser_smart_command'), {
+      const payload = await request<SmartResponse>('/api/voice/browser_smart_command', {
         method: 'POST', headers: { ...authHeaders() }, body: form,
-      })
-      if (!response.ok) throw new Error(await readApiError(response, '网页麦克风识别失败（本机直连时请用车载麦克风）'))
-      handleSmart((await response.json()) as SmartResponse, '网页麦克风识别失败')
+      }, '网页麦克风识别失败（本机直连时请用车载麦克风）', VOICE_TIMEOUT_MS, VOICE_TIMEOUT_MESSAGE)
+      handleSmart(payload, '网页麦克风识别失败')
     } catch (error) {
       const message = error instanceof Error ? error.message : '网页麦克风识别失败'
-      voiceStatus.value = '失败'
-      log(/denied|Permission/.test(message) ? '浏览器麦克风权限被拒绝' : message, 'bad', '语音')
+      failVoice(new Error(/denied|Permission/.test(message) ? '浏览器麦克风权限被拒绝' : message), '网页麦克风识别失败')
     } finally {
       stream?.getTracks().forEach((t) => t.stop())
       busy.voice = false
@@ -539,16 +560,15 @@ export function useYunTuo() {
   }
 
   async function recordOnboard(durationS: number) {
-    busy.voice = true
-    voiceStatus.value = '车载麦克风录音中'
+    if (busy.voice) return
+    beginVoice('车载录音与回复中')
     try {
       const payload = await post<SmartResponse>('/api/robot/voice/onboard_smart_command',
         { duration: durationS, source: 'web-onboard-mic', requested_by: 'operator', keep_audio: false, smart: true },
-        '车载麦克风识别失败')
+        '车载麦克风识别失败', VOICE_TIMEOUT_MS, VOICE_TIMEOUT_MESSAGE)
       handleSmart(payload, '车载麦克风识别失败')
     } catch (error) {
-      voiceStatus.value = '失败'
-      log(error instanceof Error ? error.message : '车载麦克风识别失败', 'bad', '语音')
+      failVoice(error, '车载麦克风识别失败')
     } finally {
       busy.voice = false
     }
@@ -587,7 +607,7 @@ export function useYunTuo() {
 
   return {
     state, nav, mapMeta, mapMetaError, mapPreview, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, patrolRoutes, currentMapId, currentMapLabel, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
-    voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline, navigationBusy, poseInteractionBusy,
+    voiceStatus, voiceError, confirmError, lastMessage, toast, platform, isMock, detections, timeline, navigationBusy, poseInteractionBusy,
     start, stop, mission, goTo, goToPoint, setPose, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
     recordOnboard, confirm, uploadMap, previewMap, dismissMapPreview, log,
   }

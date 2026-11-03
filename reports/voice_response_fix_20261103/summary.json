@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-03",
+  "confirmed_failure": {
+    "request_path": "/api/robot/voice/onboard_smart_command",
+    "client_closed_at": "14:29:17 +08:00",
+    "nginx_status": 499,
+    "rk_llm_finished_at": "14:29:19 +08:00",
+    "rk_llm_wall_ms": 14635.1,
+    "previous_frontend_timeout_ms": 12000
+  },
+  "fixes": [
+    "Voice-only browser deadline 120 seconds; voice-only cloud upstream deadline 90 seconds.",
+    "Clear the previous reply at the start of each voice request.",
+    "Display current ASR failures and current transport errors, without retaining an older reply.",
+    "A browser timeout means result unconfirmed; no automatic retry."
+  ],
+  "control_deadlines_unchanged": {"browser_ms": 12000, "gateway_s": 30},
+  "checks": {
+    "gateway_tests_passed": 15,
+    "vue_typecheck": "passed",
+    "production_build": "passed",
+    "browser_virtual_clock": "passed: pending beyond 13 seconds, late success, stale-result clearing, timeout and no retry",
+    "public_entry": "index-CF5e8mw4.js / index-B236yLfe.css verified in live HTML"
+  },
+  "rk_backend_restarted": false,
+  "voice_models_restarted": false,
+  "vehicle_command_sent": false,
+  "limits": "No new microphone recording was made. Recent actual successful speech requests were reviewed in logs. The audio from the older empty-ASR response was not retained, so its acoustic cause remains unverified."
+}

@@ -1,0 +1,11 @@
+{
+  "stale_asr_result_cleared": true,
+  "voice_request_still_pending_after_13s": true,
+  "late_success_updates_reply": true,
+  "timeout_reported_as_unconfirmed": true,
+  "no_automatic_retry": true,
+  "voice_requests": 3,
+  "real_api_requests": 0,
+  "page_errors": [],
+  "method": "production build + browser virtual clock + local API fixtures"
+}

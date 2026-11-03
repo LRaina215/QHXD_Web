@@ -1,0 +1,7 @@
+{
+  "voice_forward_s": 90.0,
+  "pause_forward_s": 30.0,
+  "backup": "/opt/lingxun-cloud-gateway/cloud_gateway.py.voice_budget_before_20261103_143653",
+  "service_after_restart": "active",
+  "note": "Old long-lived connections delayed graceful restart. Systemd completed restart; RK backend was not restarted."
+}

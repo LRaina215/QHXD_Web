@@ -28,7 +28,7 @@ function send(value = text.value) {
     <div class="card-body">
       <div class="chat" aria-live="polite">
         <template v-if="reply">
-          <p class="me">{{ reply.recognized_text || '…' }}</p>
+          <p class="me">{{ reply.recognized_text || '未识别到有效语音' }}</p>
           <div class="bot-row">
             <BrandMark :size="30" :rounded="15" />
             <div class="bot">
@@ -37,6 +37,13 @@ function send(value = text.value) {
             </div>
           </div>
         </template>
+        <div v-else-if="busy" class="hello" role="status">
+          <div class="hello-head"><AudioLines :size="20" /><strong>{{ yt.voiceStatus.value }}</strong></div>
+          <p>正在处理本次请求。录音、识别、本地模型回复与语音合成需要一些时间，请稍候。</p>
+        </div>
+        <div v-else-if="yt.voiceError.value" class="hello voice-error" role="alert">
+          <p>{{ yt.voiceError.value }}</p>
+        </div>
         <div v-else class="hello">
           <div class="hello-head"><BrandMark :size="30" :rounded="15" /><AudioLines :size="20" /></div>
           <p>直接说出任务，运动类命令会先请你确认。</p>
@@ -74,6 +81,7 @@ function send(value = text.value) {
 .meta { display: block; margin-top: 6px; font-size: 11px; color: var(--ink-3); }
 .hello { display: grid; justify-items: start; gap: 8px; padding: 14px; border-radius: 14px; background: var(--surface-2); color: var(--ink-3); }
 .hello p { margin: 0; color: var(--ink-2); font-size: 13px; }
+.voice-error { border: 1px solid var(--bad); }
 .ex { display: flex; flex-wrap: wrap; gap: 6px; }
 .ex button { height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font-size: 12px; font-weight: 550; }
 .ex button:hover { border-color: var(--brand); color: var(--brand); }

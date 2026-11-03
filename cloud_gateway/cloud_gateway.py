@@ -45,6 +45,7 @@ GATEWAY_AUDIO_KEEP_DIR = Path(os.getenv("GATEWAY_AUDIO_KEEP_DIR", "/var/log/ling
 GATEWAY_AUDIO_KEEP_MAX_FILES = int(os.getenv("GATEWAY_AUDIO_KEEP_MAX_FILES", "20"))
 ROBOT_STATE_TIMEOUT_SECONDS = float(os.getenv("ROBOT_STATE_TIMEOUT_SECONDS", "3"))
 FORWARD_TIMEOUT_SECONDS = float(os.getenv("FORWARD_TIMEOUT_SECONDS", "30"))
+VOICE_FORWARD_TIMEOUT_SECONDS = float(os.getenv("VOICE_FORWARD_TIMEOUT_SECONDS", "90"))
 STREAM_TIMEOUT_SECONDS = float(os.getenv("STREAM_TIMEOUT_SECONDS", "300"))
 LOG_PATH = Path(os.getenv("GATEWAY_OPERATION_LOG", "/var/log/lingxun-cloud-gateway/operations.jsonl"))
 PUBLIC_CORS_ORIGINS = [
@@ -398,6 +399,15 @@ def _browser_audio_paths(request_id: str, filename: str | None) -> tuple[Path, P
     return input_path, wav_path
 
 
+def _forward_timeout(path: str) -> float:
+    slow_voice_paths = {
+        "/api/voice/text_command", "/api/voice/audio_command", "/api/voice/record_command",
+        "/api/voice/smart_command", "/api/voice/smart_audio_command", "/api/voice/smart_record_command",
+        "/api/voice/speak",
+    }
+    return VOICE_FORWARD_TIMEOUT_SECONDS if path in slow_voice_paths else FORWARD_TIMEOUT_SECONDS
+
+
 async def _forward_wav_to_rk(
     wav_path: Path,
     *,
@@ -412,7 +422,7 @@ async def _forward_wav_to_rk(
         "requested_by": requested_by or "",
         "keep_audio": "true" if keep_audio else "false",
     }
-    async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT_SECONDS, trust_env=False) as client:
+    async with httpx.AsyncClient(timeout=_forward_timeout(rk_path), trust_env=False) as client:
         with wav_path.open("rb") as handle:
             files = {
                 "file": ("browser_audio.wav", handle, "audio/wav"),
@@ -426,7 +436,7 @@ async def _forward_wav_to_rk(
 
 
 async def _forward_json_to_rk(path: str, payload: dict, request_id: str) -> httpx.Response:
-    async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT_SECONDS, trust_env=False) as client:
+    async with httpx.AsyncClient(timeout=_forward_timeout(path), trust_env=False) as client:
         return await client.post(
             f"{RK_BACKEND_BASE_URL}{path}",
             json=payload,
@@ -864,7 +874,7 @@ async def proxy_http(path: str, request: Request):
     else:
         body = await request.body()
 
-    timeout = STREAM_TIMEOUT_SECONDS if url_path == "/api/perception/frame_stream" else FORWARD_TIMEOUT_SECONDS
+    timeout = STREAM_TIMEOUT_SECONDS if url_path == "/api/perception/frame_stream" else _forward_timeout(url_path)
 
     if url_path == "/api/perception/frame_stream":
         client = httpx.AsyncClient(timeout=timeout, trust_env=False)
