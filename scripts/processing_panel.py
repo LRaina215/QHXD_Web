@@ -1,10 +1,8 @@
 """Compact terminal presentation of existing processing events."""
 from datetime import datetime
 import json
-import os
 from pathlib import Path
 import re
-import select
 import signal
 import shutil
 import sys
@@ -30,6 +28,32 @@ def wrap(value, width):
             lines.append(line);line='';used=0
         line += char;used += count
     return lines+[line] if line else lines or ['']
+
+
+def value(item):
+    if isinstance(item,bool):return '是' if item else '否'
+    if isinstance(item,float):return format(item,'.4g')
+    if isinstance(item,(dict,list)):return json.dumps(item,ensure_ascii=False,separators=(',',':'))
+    return str(item)
+
+
+def fit_blocks(blocks, columns, rows):
+    """Keep each key field on screen; use spare rows for longer results."""
+    if rows<=0:return []
+    blocks=[(wrap(line,max(1,columns-1)),limit) for line,limit in blocks if line]
+    blocks=blocks[:rows]
+    counts=[1]*len(blocks)
+    spare=rows-len(blocks)
+    for index,(lines,limit) in enumerate(blocks):
+        extra=min(spare,len(lines)-1,limit-1)
+        counts[index]+=extra;spare-=extra
+    result=[]
+    for (lines,_),count in zip(blocks,counts):
+        shown=lines[:count]
+        if len(lines)>count:
+            shown[-1]=wrap(shown[-1],max(1,columns-2))[0]+'…'
+        result+=shown
+    return result
 
 
 class State:
@@ -184,22 +208,56 @@ class State:
         if self.error:result+=['错误：'+str(self.error)]
         return result
 
-    def sections(self):
-        def value(item):
-            if isinstance(item,bool):return '是' if item else '否'
-            if isinstance(item,(dict,list)):return json.dumps(item,ensure_ascii=False,separators=(',',':'))
-            return str(item)
-        summary=self.lines()
-        priority={'asr':['后端','采集设备','录音秒数','识别处理秒数','模型加载秒数','识别原文'],
-                  'llm':['模型','推理后端','解析来源','置信度','需要确认','任务参数','Token统计','输入来源'],
-                  'task':['NV报文','FPGA状态','桥接参数','受理结果','任务状态','任务阶段','任务进度','当前点位','任务事件'],
-                  'tts':['后端','语音状态','采样率Hz','声道数','采样位数','音频秒数','音频文件']}[self.group]
-        keys=[k for k in priority if k in self.debug]+[k for k in self.debug if k not in priority]
-        parameters=[str(k)+'：'+value(self.debug[k]) for k in keys]
-        groups=[('结果',summary[1:]),('参数',parameters or ['等待参数。'])]
-        if self.raw_output:groups.append(('模型输出',[self.raw_output]))
-        groups.append(('步骤',[stamp+'  '+event for stamp,event in self.steps] or ['等待处理。']))
-        return summary[0],groups
+    def fixed_lines(self, columns, rows):
+        d=self.debug;blocks=[(self.lines()[0],1)]
+        def add(label,item,limit=1):
+            if item is not None and item!='':blocks.append((label+'：'+value(item),limit))
+        def fields(items):
+            return ' | '.join(label+' '+value(d[key])+unit for key,label,unit in items if key in d)
+        if self.error:add('错误',self.error,2)
+        if self.group=='asr':
+            add('识别',self.output or '—',3)
+            timing=fields([('录音秒数','录音','s'),('识别处理秒数','识别','s'),('模型加载秒数','加载','s')])
+            if timing:blocks.append((timing,1))
+            add('设备',d.get('采集设备'))
+            add('后端',d.get('后端'))
+        elif self.group=='llm':
+            add('输入',self.input,2);add('回复',self.output,3)
+            intent='意图 '+self.intent if self.intent else ''
+            detail=fields([('置信度','置信度',''),('需要确认','需确认','')])
+            if intent or detail:blocks.append((' | '.join(x for x in (intent,detail) if x),1))
+            add('参数',d.get('任务参数'),3)
+            source=fields([('解析来源','解析',''),('模型','模型',''),('推理后端','后端','')])
+            if source:blocks.append((source,1))
+        elif self.group=='tts':
+            add('播报',self.output or '—',3)
+            detail=fields([('后端','后端',''),('音频秒数','音频','s')])
+            if detail:blocks.append((detail,1))
+            audio=fields([('采样率Hz','采样','Hz'),('声道数','声道',''),('采样位数','量化','bit')])
+            if audio:blocks.append((audio,1))
+            add('文件',d.get('音频文件'))
+        else:
+            add('指令',self.command);add('反馈',self.detail,2)
+            add('NV',d.get('NV报文'),3);add('FPGA',d.get('FPGA状态'),3)
+            parameters=d.get('桥接参数')
+            if isinstance(parameters,dict):
+                parameters={key:Path(item).name if key in ('path','file_path','map_path') and isinstance(item,str) else item
+                            for key,item in parameters.items()}
+            add('参数',parameters,2)
+            task=fields([('受理结果','受理',''),('任务状态','任务',''),('任务阶段','阶段',''),('任务进度','进度','')])
+            if task:blocks.append((task,1))
+        methods=[]
+        for _,event in self.steps:
+            name=event.rsplit('.',1)[0]
+            if not methods or methods[-1]!=name:methods.append(name)
+        if methods:add('过程',' → '.join(methods[-4:]))
+        add('请求',self.trace)
+        if self.group=='asr' and d.get('识别原文')!=self.output:add('原文',d.get('识别原文'),2)
+        if self.group=='llm':
+            add('确认编号',d.get('待确认编号'));add('来源',d.get('输入来源'))
+            add('模型输出',self.raw_output,6);add('Token',d.get('Token统计'))
+        if self.group=='task':add('输入',self.input,2);add('任务事件',d.get('任务事件'),3)
+        return fit_blocks(blocks,columns,rows)
 
 
 class Logs:
@@ -253,45 +311,17 @@ def yolo_lines(data, recent):
     return result
 
 
-def pages_for(sections, columns, capacity):
-    pages=[]
-    for name,lines in sections:
-        wrapped=[]
-        for line in lines:wrapped+=wrap(line,max(12,columns-1))
-        for offset in range(0,max(1,len(wrapped)),capacity):
-            pages.append((name,wrapped[offset:offset+capacity] or ['等待数据。']))
-    return pages
-
-
 def run(root, group, title, intro, yolo_reader):
     state=State(group) if group!='yolo' else None
     logs=Logs(root);last_screen='';last_poll=0;data={};recent=None
-    interactive=sys.stdout.isatty();keyboard=None;old_terminal=None
+    interactive=sys.stdout.isatty()
     old_signals={}
     def leave(_sig=None,_frame=None):raise KeyboardInterrupt
     for sig in (signal.SIGTERM,signal.SIGHUP):old_signals[sig]=signal.signal(sig,leave)
-    page=0;automatic=True;last_flip=time.monotonic();last_anchor=None
-    if os.name=='posix' and sys.stdin.isatty():
-        import termios
-        import tty
-        keyboard=sys.stdin.fileno();old_terminal=termios.tcgetattr(keyboard)
-        tty.setcbreak(keyboard)
     if interactive:sys.stdout.write('\033[?1049h\033[?25l');sys.stdout.flush()
     try:
         while True:
-            key=b''
-            if keyboard is not None and select.select([keyboard],[],[],0)[0]:
-                key=os.read(keyboard,32)
-                if not key:break
-                if key.lower()==b'q':break
-                if key==b' ':
-                    automatic=not automatic;last_flip=time.monotonic()
-                if key.lower() in (b'n',b'\t',b'\x1b[c',b'\x1b[6~'):
-                    page+=1;automatic=False
-                if key.lower() in (b'p',b'\x1b[d',b'\x1b[5~'):
-                    page-=1;automatic=False
-                if key.lower() in (b'r',b'\x1b[h'):
-                    page=0;automatic=False
+            cols,rows=shutil.get_terminal_size((80,24))
             if group=='yolo':
                 if time.monotonic()-last_poll>=1:
                     last_poll=time.monotonic()
@@ -302,43 +332,24 @@ def run(root, group, title, intro, yolo_reader):
                 lines=yolo_lines(data,recent)
                 if data.get('error'):lines=['状态：连接失败','错误：'+data['error']]
                 stamp=clock(data.get('frame_timestamp'))
-                status=lines[0]
                 diagnostic=[]
-                for key_name,label in (('source','检测来源'),('frame_id','相机坐标系'),('frame_timestamp','检测时间'),
-                    ('camera_running','相机进程'),('image_age_s','图像年龄s'),('fresh','结果新鲜'),
-                    ('detect_fps','检测FPS'),('target_task','任务检测模式'),('stream_frames','视频累计帧'),
-                    ('stream_dropped','视频丢弃帧'),('last_reported_object_count','最近上报目标数')):
-                    value=data.get(key_name)
-                    if value is not None:diagnostic.append(label+'：'+('是' if value is True else '否' if value is False else str(value)))
-                sections=[('目标',lines[1:]),('参数',diagnostic or ['等待检测参数。'])]
-                anchor=None
+                for keys in ((('source','来源'),('camera_running','相机'),('image_age_s','图像年龄s')),
+                             (('frame_id','坐标系'),('stream_frames','视频帧'),('stream_dropped','丢帧'))):
+                    fields=[label+' '+value(data[key]) for key,label in keys if data.get(key) is not None]
+                    if fields:diagnostic.append(' | '.join(fields))
+                blocks=[(line,1) for line in lines[:2]+diagnostic+lines[2:]]
+                content=fit_blocks(blocks,cols,max(0,rows-1))
             else:
                 for item in logs.read():state.event(item)
-                status,sections=state.sections();stamp=state.at
-                anchor=(state.trace,state.output,state.error)
-            if automatic and anchor!=last_anchor:
-                page=0;last_flip=time.monotonic()
-            last_anchor=anchor
-            cols,rows=shutil.get_terminal_size((80,24))
-            pages=pages_for(sections,cols,max(1,rows-4))
-            if automatic and time.monotonic()-last_flip>=6:
-                page+=1;last_flip=time.monotonic()
-            page%=len(pages)
-            name,content=pages[page]
+                stamp=state.at;content=state.fixed_lines(cols,max(0,rows-1))
             header=wrap(title.split(' ',1)[-1]+'  '+stamp,cols-1)[0]
-            label=f'[{name} {page+1}/{len(pages)} '+('轮播' if automatic else '手动')+']'
-            subtitle=wrap(label+' '+intro,cols-1)[0]
-            footer='N/P 翻页  空格'+('暂停轮播' if automatic else '恢复轮播')+'  R返回'
-            body=[header,subtitle,wrap(status,cols-1)[0]]+content
-            body+=['']*max(0,rows-1-len(body))
-            body+=[wrap(footer,cols-1)[0]]
+            body=[header]+content
+            body+=['']*max(0,rows-len(body))
             screen='\n'.join(text(x) for x in body)
             if screen!=last_screen:
                 if interactive:
-                    colored=['\033[1;36m'+text(body[0])+'\033[0m',
-                             '\033[38;5;250m'+text(body[1])+'\033[0m']
-                    colored += [text(x) for x in body[2:-1]]
-                    colored += ['\033[38;5;250m'+text(body[-1])+'\033[0m']
+                    colored=['\033[1;36m'+text(body[0])+'\033[0m']
+                    colored += [text(x) for x in body[1:]]
                     sys.stdout.write('\033[H'+'\n'.join('\033[2K'+line for line in colored)+'\033[J');sys.stdout.flush()
                 else:print(screen,flush=True)
                 last_screen=screen
@@ -346,8 +357,5 @@ def run(root, group, title, intro, yolo_reader):
     except KeyboardInterrupt:pass
     finally:
         logs.close()
-        if old_terminal is not None:
-            try:termios.tcsetattr(keyboard,termios.TCSADRAIN,old_terminal)
-            except OSError:pass
         for sig,handler in old_signals.items():signal.signal(sig,handler)
         if interactive:sys.stdout.write('\033[?25h\033[?1049l');sys.stdout.flush()
