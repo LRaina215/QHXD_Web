@@ -238,13 +238,13 @@ class TaskRunner:
             elif command == "go_to_waypoint":
                 ids, stop_s = [str(args["waypoint_id"])], 0.0
             elif command == "return_home":
-                ids, stop_s = ["home"], 0.0
+                ids, stop_s = [str(args.get("waypoint_id") or "home")], 0.0
             else:
                 route_id = str(args.get("patrol_id") or args.get("route_id") or "default_patrol")
                 route = self.routes.get(route_id)
                 if not route or not route.get("enabled", True):
                     raise ValueError(f"巡检路线不存在或已禁用：{route_id}")
-                ids = [str(w) for w in route["waypoints"]] + (["home"] if route.get("return_home") else [])
+                ids = [str(w) for w in route["waypoints"]] + ([str(route.get("home_waypoint_id") or "home")] if route.get("return_home") else [])
                 stop_s = float(route.get("stop_seconds", 0) or 0)
             if command != "go_to_point":
                 points = []

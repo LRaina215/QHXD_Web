@@ -134,6 +134,17 @@ export type Waypoint = {
   configured: boolean
 }
 
+export type PatrolRoute = {
+  route_id: string
+  name: string
+  map_id: string
+  waypoints: string[]
+  return_home: boolean
+  home_waypoint_id?: string
+  stop_seconds: number
+  enabled: boolean
+}
+
 export type AlertEvent = { alert_id: string; level: string; message: string; source: string; timestamp: string }
 
 export type TaskEvent = {

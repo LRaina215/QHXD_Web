@@ -499,6 +499,7 @@ class WaypointDefinition(ContractModel):
 class WaypointsResponse(ContractModel):
     success: bool = True
     data: list[WaypointDefinition]
+    patrol_routes: list[dict] = Field(default_factory=list)
 
 
 class WaypointResponse(ContractModel):

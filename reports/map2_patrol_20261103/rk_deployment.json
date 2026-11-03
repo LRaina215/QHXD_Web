@@ -1,0 +1,58 @@
+{
+  "backup": "/home/robomaster/QHXD/.runtime/map2_patrol_before_20261103_134430",
+  "precheck_task": {
+    "task_id": "fpga-follow-target-dd6cb10a6d",
+    "task_type": "follow_target",
+    "state": "failed",
+    "progress": 95,
+    "source": "fpga_bridge",
+    "phase": "stop_unconfirmed",
+    "current_waypoint_id": null,
+    "waypoint_index": null,
+    "waypoint_count": null,
+    "detail": "跟随时长已结束，但未能确认停稳；请检查控制反馈。",
+    "updated_at": "2026-11-03T05:44:30.103659Z"
+  },
+  "routes": [
+    {
+      "route_id": "default_patrol",
+      "name": "场地巡检（纸板前方 → 左侧通道 → 小道中间 → 小道尽头 → 纸板右前方 → 起点）",
+      "waypoints": [
+        "wp_a",
+        "wp_b",
+        "wp_lane",
+        "wp_c",
+        "wp_d"
+      ],
+      "stop_seconds": 2,
+      "capture_perception": true,
+      "return_home": true,
+      "enabled": true,
+      "map_id": "field_home",
+      "home_waypoint_id": "home"
+    },
+    {
+      "route_id": "map2_patrol",
+      "name": "地图2分叉巡检（试配）",
+      "map_id": "field_home2",
+      "waypoints": [
+        "map2_a",
+        "map2_b",
+        "map2_lane",
+        "map2_c",
+        "map2_branch_entry",
+        "map2_branch_end",
+        "map2_branch_entry",
+        "map2_lane",
+        "map2_b"
+      ],
+      "stop_seconds": 2,
+      "capture_perception": true,
+      "return_home": true,
+      "home_waypoint_id": "home_map2",
+      "enabled": true
+    }
+  ],
+  "waypoint_count": 13,
+  "vehicle_command_sent": false
+}

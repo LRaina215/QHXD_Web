@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Armchair, Backpack, ChevronRight, CupSoda, Footprints, House, MapPin, Milk, Navigation, Route, ScanSearch, User, Volleyball } from 'lucide-vue-next'
 import { COLOR_LABELS, COLOR_SWATCH, targetLabel } from '../labels'
 import type { YunTuo } from '../composables/useYunTuo'
@@ -17,7 +17,18 @@ const colors = ['red', 'green', 'blue', 'yellow', 'white', 'black']
 const active = computed(() => ['pending', 'running', 'paused'].includes(props.yt.state.value?.task_status.state ?? ''))
 const locked = computed(() => active.value || props.yt.busy.mission)
 const points = computed(() => props.yt.waypoints.value.filter((w) => w.configured))
-const route = computed(() => points.value.filter((w) => w.group === 'patrol'))
+const selectedRoute = ref('')
+const routes = computed(() => props.yt.patrolRoutes.value)
+watch(routes, (list) => {
+  if (!list.some((r) => r.route_id === selectedRoute.value)) selectedRoute.value = list[0]?.route_id ?? ''
+}, { immediate: true })
+const route = computed(() => routes.value.find((r) => r.route_id === selectedRoute.value))
+const routePoints = computed(() => {
+  if (!route.value) return []
+  const ids = [...route.value.waypoints]
+  if (route.value.return_home) ids.push(route.value.home_waypoint_id || 'home')
+  return ids.map((id) => points.value.find((w) => w.waypoint_id === id)).filter((w) => w !== undefined)
+})
 const label = computed(() => targetLabel(cls.value, color.value))
 </script>
 
@@ -55,10 +66,11 @@ const label = computed(() => targetLabel(cls.value, color.value))
     </div>
 
     <div v-else-if="tab === 'goto'" class="card-body">
+      <p class="map-label">{{ yt.currentMapLabel.value }} · 独立点位配置</p>
       <ul class="points" role="radiogroup" aria-label="目标点">
         <li v-for="w in points" :key="w.waypoint_id">
           <button type="button" role="radio" :aria-checked="selected === w.waypoint_id" :class="{ on: selected === w.waypoint_id }" @click="selected = w.waypoint_id">
-            <component :is="w.waypoint_id === 'home' ? House : MapPin" :size="18" />
+            <component :is="w.group === 'home' ? House : MapPin" :size="18" />
             <span class="nm">{{ w.name }}</span>
             <span class="xy num">{{ w.pose ? `${w.pose.x.toFixed(1)}, ${w.pose.y.toFixed(1)}` : '--' }}</span>
           </button>
@@ -71,14 +83,20 @@ const label = computed(() => targetLabel(cls.value, color.value))
     </div>
 
     <div v-else class="card-body">
+      <p class="map-label">{{ yt.currentMapLabel.value }} · 巡检路线</p>
+      <label v-if="routes.length > 1" class="route-select">选择路线
+        <select v-model="selectedRoute" class="field" :disabled="locked">
+          <option v-for="r in routes" :key="r.route_id" :value="r.route_id">{{ r.name }}</option>
+        </select>
+      </label>
+      <p v-if="route" class="route-name">{{ route.name }}</p>
       <ol class="chain">
-        <li v-for="w in route" :key="w.waypoint_id"><span>{{ w.name }}</span><ChevronRight :size="16" /></li>
-        <li><span>起点</span></li>
+        <li v-for="(w, index) in routePoints" :key="`${index}-${w.waypoint_id}`"><span>{{ w.name }}</span><ChevronRight v-if="index < routePoints.length - 1" :size="16" /></li>
       </ol>
-      <button type="button" class="btn primary go" :disabled="locked || !route.length" @click="yt.mission('start_patrol', { patrol_id: 'default_patrol' })">
+      <button type="button" class="btn primary go" :disabled="locked || !route || !routePoints.length" @click="yt.mission('start_patrol', { patrol_id: selectedRoute })">
         <Route :size="18" />开始巡检
       </button>
-      <p class="hint">逐点导航，每个点停留后继续，最后返回起点。</p>
+      <p class="hint">{{ route ? `逐点导航，每点停留 ${route.stop_seconds} 秒${route.return_home ? '，最后返回本地图起点' : ''}。` : '当前地图还没有可用巡检路线。' }} 点位与路线随板上地图自动切换。</p>
     </div>
   </section>
 </template>
@@ -99,6 +117,9 @@ const label = computed(() => targetLabel(cls.value, color.value))
 .go { width: 100%; height: 48px; font-size: 15px; }
 .go-2 { width: 100%; margin-top: 8px; }
 .hint { margin: 10px 0 0; font-size: 12px; color: var(--ink-3); }
+.map-label { margin: 0 0 10px; color: var(--brand-deep); font-size: 12px; font-weight: 650; }
+.route-name { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); }
+.route-select { display: grid; gap: 6px; margin-bottom: 12px; font-size: 12px; }
 .points { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
 .points button { width: 100%; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); text-align: left; }
 .points button.on { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-deep); }

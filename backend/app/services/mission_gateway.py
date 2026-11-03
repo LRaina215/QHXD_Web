@@ -63,7 +63,7 @@ class MissionGateway:
                 route = patrol_registry.require(request.patrol_id)
                 points = list(route['waypoints'])
                 if route.get('return_home'):
-                    points.append('home')
+                    points.append(str(route.get('home_waypoint_id') or 'home'))
                 for waypoint_id in points:
                     waypoint = waypoint_registry.require_navigation_target(waypoint_id)
                     self._require_navigation_ready(expected_map_id=waypoint.map_id)
@@ -101,15 +101,23 @@ class MissionGateway:
         )
 
     def return_home(self, request: ReturnHomeRequest) -> tuple[MissionActionResult, RobotState | None]:
+        home_id = "home"
+        if state_store.get_system_mode().mode == "real":
+            metadata = navigation_store.map_metadata()
+            if metadata is not None:
+                try:
+                    home_id = waypoint_registry.home_for_map(metadata.map_id).waypoint_id
+                except ValueError as exc:
+                    return self._record_rejection(request, "return_home", {}, str(exc))
         if state_store.get_system_mode().mode == "real" and self._preflight_enabled():
-            rejected = self._preflight_target("return_home", "home")
+            rejected = self._preflight_target("return_home", home_id)
             if rejected is not None:
                 return self._record_rejection(request, "return_home", {}, rejected)
         return self._dispatch(
             request=request,
             public_command="return_home",
             nuc_command="return_home",
-            payload={},
+            payload={"waypoint_id": home_id} if home_id != "home" else {},
             mock_handler=mock_state_service.return_home,
         )
 

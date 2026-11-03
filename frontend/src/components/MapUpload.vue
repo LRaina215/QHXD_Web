@@ -7,6 +7,7 @@ const props = defineProps<{ yt: YunTuo }>()
 const open = ref(false)
 const file = ref<File | null>(null)
 const fileError = ref('')
+const mapId = ref('field_home')
 const trigger = ref<HTMLButtonElement | null>(null)
 const dialog = ref<HTMLElement | null>(null)
 const status = computed(() => props.yt.mapUpload.value)
@@ -37,7 +38,7 @@ function close() {
 function keydown(event: KeyboardEvent) {
   if (event.key === 'Escape') close()
   if (event.key === 'Tab' && dialog.value) {
-    const nodes = dialog.value.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')
+    const nodes = dialog.value.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)')
     const first = nodes[0], last = nodes[nodes.length - 1]
     if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.value)) {
       event.preventDefault(); last?.focus()
@@ -47,12 +48,13 @@ function keydown(event: KeyboardEvent) {
   }
 }
 async function show() {
+  mapId.value = props.yt.currentMapId.value === 'field_home2' ? 'field_home2' : 'field_home'
   open.value = true
   window.addEventListener('keydown', keydown)
   await nextTick()
   dialog.value?.focus()
 }
-async function preview() { if (file.value && await props.yt.previewMap(file.value)) close() }
+async function preview() { if (file.value && await props.yt.previewMap(file.value, mapId.value)) close() }
 onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
 </script>
 
@@ -64,6 +66,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
         <header><div><p class="eyebrow">场地地图</p><h2 id="map-upload-title">上传先验地图</h2></div>
           <button class="close" type="button" aria-label="关闭地图上传" @click="close"><X :size="20" /></button></header>
         <p class="intro">选择已转换好的地图包，下发到FPGA后更新场地视图。</p>
+        <label class="map-profile">地图对应的点位与巡检配置
+          <select v-model="mapId" class="field" :disabled="sending">
+            <option value="field_home">地图 1 · 原场地</option>
+            <option value="field_home2">地图 2 · 分叉通道</option>
+          </select>
+        </label>
+        <p class="note">请选择与地图包一致的配置；加载成功后，定点和巡检路线会自动切换。</p>
         <label class="file-picker" :class="{ disabled: sending }">
           <FileUp :size="30" /><strong>{{ file?.name || '选择 .nvmp 文件' }}</strong>
           <span>{{ file ? `${(file.size / 1024).toFixed(1)} KB` : 'SLF128地图包 · 最大84 KB' }}</span>
@@ -83,7 +92,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', keydown))
         <footer><button class="btn" type="button" @click="close">关闭</button>
           <button class="btn" type="button" :disabled="!file || !!fileError || sending" @click="preview">仅预览</button>
           <button class="btn primary" type="button" :disabled="!file || !!fileError || !!unavailable || sending"
-            @click="file && yt.uploadMap(file)"><Upload :size="17" />{{ sending ? '下发中…' : '上传并下发' }}</button></footer>
+            @click="file && yt.uploadMap(file, mapId)"><Upload :size="17" />{{ sending ? '下发中…' : '上传并下发' }}</button></footer>
       </section>
     </div>
   </Teleport>
@@ -98,6 +107,7 @@ header, footer { display: flex; align-items: center; justify-content: space-betw
 header p, h2 { margin: 0; } h2 { margin-top: 5px; font-size: 22px; }
 .close { border: 0; background: none; color: var(--ink-2); padding: 6px; }
 .intro, .note, .hint { font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.map-profile { display: grid; gap: 7px; font-size: 13px; }
 .file-picker { position: relative; display: flex; flex-direction: column; align-items: center; gap: 9px; border: 1px dashed var(--line-2); background: var(--surface-2); border-radius: 12px; padding: 24px 16px; margin: 18px 0; cursor: pointer; }
 .file-picker strong { max-width: 100%; overflow-wrap: anywhere; font-size: 14px; } .file-picker span { font-size: 12px; color: var(--ink-3); }
 .file-picker svg { color: var(--brand); } .file-picker input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }

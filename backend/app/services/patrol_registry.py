@@ -19,11 +19,16 @@ class PatrolRegistry:
             if not route_id or route_id in seen or not points:
                 raise ValueError(f"巡检路线 ID 重复、为空或无点位：{route_id or '<empty>'}")
             seen.add(route_id)
-            for waypoint_id in points:
-                waypoint_registry.require_navigation_target(waypoint_id)
+            map_ids = {waypoint_registry.require_navigation_target(wid).map_id for wid in points}
             if bool(raw.get("return_home", False)):
-                waypoint_registry.require_navigation_target("home")
-            routes.append(dict(raw))
+                home = str(raw.get("home_waypoint_id") or "home")
+                map_ids.add(waypoint_registry.require_navigation_target(home).map_id)
+            if len(map_ids) != 1:
+                raise ValueError(f"巡检路线 {route_id} 的点位和起点必须属于同一张地图。")
+            map_id = next(iter(map_ids))
+            if raw.get("map_id") and raw["map_id"] != map_id:
+                raise ValueError(f"巡检路线 {route_id} 的 map_id 与点位不一致。")
+            routes.append({**raw, "map_id": map_id})
         return routes
 
     def require(self, route_id: str) -> dict[str, object]:

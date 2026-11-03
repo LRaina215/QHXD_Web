@@ -11,6 +11,7 @@ import type {
   PayloadValue,
   PendingCommand,
   Point,
+  PatrolRoute,
   RobotState,
   SmartCommandResult,
   TaskEvent,
@@ -55,7 +56,12 @@ export function useYunTuo() {
   let mapPollBusy = false
   let lastMapPoll = 0
   const mapImageVersion = ref('')
-  const waypoints = ref<Waypoint[]>([])
+  const allWaypoints = ref<Waypoint[]>([])
+  const allPatrolRoutes = ref<PatrolRoute[]>([])
+  const currentMapId = computed(() => mapMeta.value?.map_id ?? '')
+  const currentMapLabel = computed(() => ({ field_home: '地图 1', field_home2: '地图 2' } as Record<string, string>)[currentMapId.value] ?? (currentMapId.value || '等待地图'))
+  const waypoints = computed(() => allWaypoints.value.filter((w) => w.map_id === currentMapId.value))
+  const patrolRoutes = computed(() => allPatrolRoutes.value.filter((r) => r.enabled && r.map_id === currentMapId.value))
   const alerts = ref<AlertEvent[]>([])
   const taskEvents = ref<TaskEvent[]>([])
   const trail = ref<Point[]>([])
@@ -138,8 +144,11 @@ export function useYunTuo() {
   }
 
   async function loadWaypoints() {
-    const payload = await getJson<{ data: Waypoint[] }>('/api/waypoints')
-    if (payload) waypoints.value = payload.data.filter((w) => w.enabled)
+    const payload = await getJson<{ data: Waypoint[]; patrol_routes?: PatrolRoute[] }>('/api/waypoints')
+    if (payload) {
+      allWaypoints.value = payload.data.filter((w) => w.enabled)
+      allPatrolRoutes.value = payload.patrol_routes ?? []
+    }
   }
 
   async function loadMapMeta() {
@@ -178,7 +187,7 @@ export function useYunTuo() {
     }
   }
 
-  async function uploadMap(file: File) {
+  async function uploadMap(file: File, mapId = mapMeta.value?.map_id || 'yuntuo_field') {
     if (!file.name.toLowerCase().endsWith('.nvmp') || file.size < 48 || file.size > 86064) {
       log('请选择有效的 .nvmp 文件（48至86064字节）。', 'warn', '地图')
       return
@@ -186,7 +195,7 @@ export function useYunTuo() {
     busy.map = true
     mapUploadError.value = ''
     try {
-      const query = new URLSearchParams({ filename: file.name, map_id: mapMeta.value?.map_id || 'yuntuo_field' })
+      const query = new URLSearchParams({ filename: file.name, map_id: mapId })
       const response = await fetch(apiUrl(`/api/navigation/map/upload?${query}`), {
         method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() }, body: file,
       })
@@ -203,11 +212,11 @@ export function useYunTuo() {
     }
   }
 
-  async function previewMap(file: File): Promise<boolean> {
+  async function previewMap(file: File, mapId = mapMeta.value?.map_id || 'yuntuo_field'): Promise<boolean> {
     busy.map = true
     mapUploadError.value = ''
     try {
-      const query = new URLSearchParams({ filename: file.name, map_id: mapMeta.value?.map_id || 'yuntuo_field', preview: 'true' })
+      const query = new URLSearchParams({ filename: file.name, map_id: mapId, preview: 'true' })
       const response = await fetch(apiUrl(`/api/navigation/map/upload?${query}`), {
         method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...authHeaders() }, body: file,
       })
@@ -577,7 +586,7 @@ export function useYunTuo() {
   })
 
   return {
-    state, nav, mapMeta, mapMetaError, mapPreview, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
+    state, nav, mapMeta, mapMetaError, mapPreview, mapImageVersion, mapUpload, mapUploadError, mapUploading, waypoints, patrolRoutes, currentMapId, currentMapLabel, alerts, taskEvents, trail, logs, token, pending, smart, conn, busy,
     voiceStatus, confirmError, lastMessage, toast, platform, isMock, detections, timeline, navigationBusy, poseInteractionBusy,
     start, stop, mission, goTo, goToPoint, setPose, searchTarget, followMe, estop, switchMode, saveToken, sendText, recordBrowser,
     recordOnboard, confirm, uploadMap, previewMap, dismissMapPreview, log,

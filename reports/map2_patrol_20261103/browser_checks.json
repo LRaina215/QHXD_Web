@@ -1,0 +1,20 @@
+[
+  {
+    "map_id": "field_home2",
+    "point_count": 7,
+    "chain": "地图2 · 纸板前方\n地图2 · 左侧通道\n地图2 · 后方通道\n地图2 · 后方右端\n地图2 · 分叉入口\n地图2 · 分叉尽头\n地图2 · 分叉入口\n地图2 · 后方通道\n地图2 · 左侧通道\n地图2起点",
+    "patrol_id": "map2_patrol",
+    "real_commands_sent": 0,
+    "console_errors": [],
+    "method": "production build with locally fulfilled read-only API fixtures"
+  },
+  {
+    "map_id": "field_home",
+    "point_count": 6,
+    "chain": "A 点（纸板前方）\nB 点（左侧通道）\n小道中间\nC 点（小道尽头）\nD 点（纸板右前方）\n起点",
+    "patrol_id": "default_patrol",
+    "real_commands_sent": 0,
+    "console_errors": [],
+    "method": "production build with locally fulfilled read-only API fixtures"
+  }
+]

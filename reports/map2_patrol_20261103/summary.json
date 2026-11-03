@@ -1,0 +1,21 @@
+{
+  "date": "2026-11-03",
+  "original_map1_points_preserved": 6,
+  "map2_points": 7,
+  "related_tests_passed": 45,
+  "vue_typecheck": "passed",
+  "production_build": "passed",
+  "public_entry_assets": [
+    "/assets/index-CwS5Cmt6.js",
+    "/assets/index-BOi4QBfM.css"
+  ],
+  "public_waypoint_count": 13,
+  "public_route_ids": [
+    "default_patrol",
+    "map2_patrol"
+  ],
+  "backend_mode_after_deployment": "real",
+  "browser_fixture_checks": "passed both maps and map upload profile selection; no real writes",
+  "actual_patrol_started": false,
+  "note": "A backend restart reset mode to mock; deployment restored the prior real mode and verified idle/zero navigation command."
+}

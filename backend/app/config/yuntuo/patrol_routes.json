@@ -2,10 +2,39 @@
   {
     "route_id": "default_patrol",
     "name": "场地巡检（纸板前方 → 左侧通道 → 小道中间 → 小道尽头 → 纸板右前方 → 起点）",
-    "waypoints": ["wp_a", "wp_b", "wp_lane", "wp_c", "wp_d"],
+    "waypoints": [
+      "wp_a",
+      "wp_b",
+      "wp_lane",
+      "wp_c",
+      "wp_d"
+    ],
     "stop_seconds": 2,
     "capture_perception": true,
     "return_home": true,
+    "enabled": true,
+    "map_id": "field_home",
+    "home_waypoint_id": "home"
+  },
+  {
+    "route_id": "map2_patrol",
+    "name": "地图2分叉巡检（试配）",
+    "map_id": "field_home2",
+    "waypoints": [
+      "map2_a",
+      "map2_b",
+      "map2_lane",
+      "map2_c",
+      "map2_branch_entry",
+      "map2_branch_end",
+      "map2_branch_entry",
+      "map2_lane",
+      "map2_b"
+    ],
+    "stop_seconds": 2,
+    "capture_perception": true,
+    "return_home": true,
+    "home_waypoint_id": "home_map2",
     "enabled": true
   }
 ]

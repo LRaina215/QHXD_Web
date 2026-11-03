@@ -39,6 +39,13 @@ class WaypointRegistry:
         self._cached_mtime_ns = None
         return self.list()
 
+    def home_for_map(self, map_id: str) -> WaypointDefinition:
+        homes = [item for item in self.list() if item.map_id == map_id
+                 and item.group == "home" and item.enabled and item.configured]
+        if len(homes) != 1:
+            raise ValueError(f"地图 {map_id} 需要唯一的已配置起点，当前为 {len(homes)} 个。")
+        return homes[0]
+
     def _reload_if_needed(self) -> None:
         path = self._config_path()
         stat = path.stat()

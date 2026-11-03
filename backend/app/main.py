@@ -97,6 +97,7 @@ from app.services.visual_event_service import visual_event_service
 from app.services.voice_entry import voice_entry_service
 from app.services.weather_provider import weather_provider
 from app.services.waypoint_registry import waypoint_registry
+from app.services.patrol_registry import patrol_registry
 from app.services.ws_manager import ws_manager
 
 
@@ -793,7 +794,7 @@ async def get_task_events(limit: int = 50, task_id: str | None = None) -> TaskEv
 
 @app.get("/api/waypoints", response_model=WaypointsResponse)
 async def get_waypoints() -> WaypointsResponse:
-    return WaypointsResponse(data=waypoint_registry.list())
+    return WaypointsResponse(data=waypoint_registry.list(), patrol_routes=patrol_registry.list())
 
 
 @app.get("/api/waypoints/{waypoint_id}", response_model=WaypointResponse)

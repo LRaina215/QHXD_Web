@@ -18,7 +18,7 @@ const selectedWaypoint = ref('')
 
 watch(yt.waypoints, (list) => {
   if (!list.some((w) => w.waypoint_id === selectedWaypoint.value)) {
-    selectedWaypoint.value = list.find((w) => w.configured && w.waypoint_id !== 'home')?.waypoint_id ?? list[0]?.waypoint_id ?? ''
+    selectedWaypoint.value = list.find((w) => w.configured && w.group !== 'home')?.waypoint_id ?? list[0]?.waypoint_id ?? ''
   }
 })
 
