@@ -103,6 +103,24 @@ def display_fields(value):
 
 
 def display(item):
+    if str(item.get('event', '')).startswith('YOLO26.') and 'model' in item.get('data', {}):
+        data = item['data']
+        fps = data.get('detect_fps')
+        age = data.get('detection_age_s')
+        stamp = str(item.get('at', '')).split('T')[-1].split('+')[0]
+        state = {'ok':'识别中','stale':'结果过期','disabled':'已关闭','not_reported':'等待画面'}.get(data.get('status'), data.get('status'))
+        print(f'\n[{stamp}] {data.get("model") or "YOLO26"} | {state} | {fps if fps is not None else "--"} FPS'
+              f' | 目标 {data.get("object_count", 0)} | 更新 {age if age is not None else "--"} s', flush=True)
+        for obj in data.get('objects', []):
+            confidence = obj.get('confidence')
+            conf = f'{confidence:.1%}' if isinstance(confidence, (int,float)) else '--'
+            distance = obj.get('distance_m')
+            dist = f'{distance:.3f} m' if isinstance(distance, (int,float)) else '--'
+            recent = ' | 最近目标' if obj.get('current_frame') is False else ''
+            print(clean(f'  #{obj.get("track_id")} {obj.get("class_name")} | 置信度 {conf}'
+                        f' | 距离 {dist} | 颜色 {obj.get("color") or "--"}{recent}'), flush=True)
+            print(clean(f'    坐标 {obj.get("position_body_m") or "--"} | 框 {obj.get("bbox_xyxy") or "--"}'), flush=True)
+        return
     print('\n' + clean(item.get('at', '')) + '  [' + clean(item.get('trace') or 'system') + ']  '
           + clean(item.get('component', '')) + ' / ' + clean(item.get('event', '')), flush=True)
     if item.get('dropped_before_this_event'):
@@ -166,6 +184,102 @@ def follow(root, group, history):
             f.close()
 
 
+def workarea():
+    """Use the desktop's work area, excluding its panel."""
+    try:
+        text = subprocess.run(['xprop','-root','_NET_WORKAREA','_NET_CURRENT_DESKTOP'],
+                              capture_output=True,text=True,timeout=2).stdout
+        current = re.search(r'_NET_CURRENT_DESKTOP[^=]*=\s*(\d+)', text)
+        area = re.search(r'_NET_WORKAREA[^=]*=([^\n]+)', text)
+        if area:
+            values = [int(x) for x in re.findall(r'-?\d+', area.group(1))]
+            offset = int(current.group(1))*4 if current else 0
+            if len(values) >= offset+4:
+                return tuple(values[offset:offset+4])
+    except (OSError,subprocess.TimeoutExpired):
+        pass
+    from ai_demo_terminals import window_geometries
+    _, second, third = window_geometries()
+    return 0,0,int(second.split('+')[1])*2,int(third.rsplit('+',1)[1])*2
+
+
+def layout_rectangles(area):
+    x,y,width,height = area
+    half = width//2
+    row = max(80, int(height*.2))
+    return {'asr':(x,y,half,row), 'llm':(x+half,y,width-half,row),
+            'task':(x,y+row,half,row), 'tts':(x+half,y+row,width-half,row),
+            'yolo':(x,y+2*row,width,height-2*row)}
+
+
+def observer_windows(root):
+    if not shutil.which('wmctrl'):
+        return {}
+    result = subprocess.run(['wmctrl','-lp'],capture_output=True,text=True,timeout=2)
+    windows = {}
+    script = os.fsencode(root/'scripts/observe_ai_pipeline.py')
+    for line in result.stdout.splitlines():
+        fields = line.split(None,4)
+        if len(fields)<3:
+            continue
+        try:
+            argv = Path('/proc/'+fields[2]+'/cmdline').read_bytes().split(b'\0')
+            if script not in argv or b'--console' not in argv:
+                continue
+            role = argv[argv.index(b'--console')+1].decode()
+            if role in GROUPS:
+                windows[role] = fields[0]
+        except (OSError,ValueError,IndexError):
+            pass
+    return windows
+
+
+def window_bounds(wid):
+    frame = subprocess.run(['xprop','-id',wid,'_NET_FRAME_EXTENTS'],capture_output=True,text=True,timeout=2).stdout
+    match = re.search(r'=\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)', frame)
+    left,right,top,bottom = map(int,match.groups()) if match else (0,0,0,0)
+    text = subprocess.run(['xwininfo','-id',wid],capture_output=True,text=True,timeout=2).stdout
+    def number(label):
+        return int(re.search(label+r':\s*(-?\d+)',text).group(1))
+    outer = (number('Absolute upper-left X')-left,number('Absolute upper-left Y')-top,
+             number('Width')+left+right,number('Height')+top+bottom)
+    return outer,(left,right,top,bottom)
+
+
+def arrange(root, wait=0):
+    if not shutil.which('wmctrl'):
+        return {}
+    deadline = time.monotonic()+wait
+    while True:
+        windows = observer_windows(root)
+        if len(windows)==len(GROUPS) or time.monotonic()>=deadline:
+            break
+        time.sleep(.15)
+    rectangles = layout_rectangles(workarea())
+    report = {}
+    for role,wid in windows.items():
+        target = rectangles[role]
+        subprocess.run(['wmctrl','-ir',wid,'-b','remove,maximized_vert,maximized_horz'],capture_output=True,timeout=2)
+        # Terminal character-grid hints otherwise leave large unused strips.
+        subprocess.run(['xprop','-id',wid,'-remove','WM_NORMAL_HINTS'],capture_output=True,timeout=2)
+        actual,frame = window_bounds(wid)
+        left,right,top,bottom = frame
+        rx,ry = target[:2]
+        for _ in range(2):
+            values = f'0,{rx},{ry},{max(40,target[2]-left-right)},{max(20,target[3]-top-bottom)}'
+            subprocess.run(['wmctrl','-ir',wid,'-e',values],capture_output=True,timeout=2)
+            time.sleep(.08)
+            actual,_ = window_bounds(wid)
+            rx += target[0]-actual[0]
+            ry += target[1]-actual[1]
+        report[role] = {'window':wid,'target':target,'actual':actual}
+    if report:
+        path = root/'.runtime/processing_window_layout.json'
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    return report
+
+
 def desktop(root):
     path = Path.home()/'Desktop'
     if shutil.which('xdg-user-dir'):
@@ -193,6 +307,7 @@ def main():
     ap.add_argument('--history', action='store_true', help='同时显示当前日志文件中已有的记录，按真实时间标记')
     ap.add_argument('--install-desktop', action='store_true')
     ap.add_argument('--check', action='store_true')
+    ap.add_argument('--arrange', action='store_true', help='重新排列已打开的模块窗口')
     args = ap.parse_args()
     root = args.root.expanduser().resolve()
     if args.check:
@@ -211,22 +326,22 @@ def main():
         return follow(root, args.console, args.history)
     if not os.environ.get('DISPLAY') and not os.environ.get('WAYLAND_DISPLAY'):
         raise RuntimeError('请在RK图形桌面运行以弹窗；SSH中可用 --console all 查看同一条真实流程。')
+    if args.arrange:
+        arrange(root)
+        print('布局已更新。')
+        return
     # Only import window helpers; this module does not initialize any AI model.
-    from ai_demo_terminals import terminal_command, window_geometries
+    from ai_demo_terminals import terminal_command
     terminal = next((shutil.which(x) for x in ('xfce4-terminal','gnome-terminal','xterm') if shutil.which(x)), None)
     if not terminal:
         raise RuntimeError('找不到 xfce4-terminal / gnome-terminal / xterm')
-    first, second, third = window_geometries()
-    # Five panes: two on top, two in the middle, continuous YOLO results below.
-    columns = int(first.split('x',1)[0])
-    half_width = int(second.split('+')[1])
-    height = int(third.rsplit('+',1)[1])*2
-    rows = max(6, min(19, (height//3-75)//19))
-    size = f'{columns}x{rows}'
-    geometries = (size+'+0+0', size+f'+{half_width}+0',
-                  size+f'+0+{height//3}', size+f'+{half_width}+{height//3}',
-                  f'{min(130,columns*2)}x{rows}+0+{height*2//3}')
-    for group, geometry in zip(GROUPS, geometries):
+    rectangles = layout_rectangles(workarea())
+    existing = observer_windows(root)
+    for group in GROUPS:
+        if group in existing:
+            continue
+        x,y,width,height = rectangles[group]
+        geometry = f'{max(24,(width-6)//9)}x{max(3,(height-32)//18)}+{x}+{y}'
         command = [sys.executable, '-u', str(Path(__file__).resolve()), '--root', str(root), '--console', group]
         if args.history:
             command.append('--history')
@@ -235,6 +350,7 @@ def main():
         ai_demo_terminals.TITLES[group] = GROUPS[group][1]
         with open(os.devnull, 'w') as devnull:
             subprocess.Popen(terminal_command(terminal, group, command, geometry), stdout=devnull, stderr=devnull)
+    arrange(root,wait=5)
     print('已打开 5 个模块窗口。')
 
 
