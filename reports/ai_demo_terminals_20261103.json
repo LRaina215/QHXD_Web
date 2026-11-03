@@ -1,0 +1,37 @@
+{
+  "date": "2026-11-03",
+  "device": "RK3588 hky",
+  "project": "/home/robomaster/QHXD",
+  "launcher": "scripts/open_ai_demo.sh",
+  "desktop_entry": "/home/robomaster/Desktop/yuntuo-ai-demo.desktop",
+  "existing_services": {
+    "qhxd-backend": "active",
+    "yuntuo-llm": "active, model qwen3-1.7b",
+    "yuntuo-tts": "active, model matcha-icefall-zh-en"
+  },
+  "validation": {
+    "rk_python_compile": "passed",
+    "rk_bash_syntax": "passed",
+    "loopback_health_checks": "passed",
+    "actual_asr_llm_tts_worker_handoff": "passed",
+    "input": "请用一句话介绍你自己。",
+    "input_source": "Actual local TTS generated WAV, not microphone capture",
+    "asr_model_load_s": 3.473,
+    "audio_duration_s": 2.23,
+    "recognized_text": "请用一句话介绍你自己。",
+    "asr_decode_s": 0.111,
+    "llm_request_s": 3.117,
+    "llm_prompt_tokens": 62,
+    "llm_completion_tokens": 20,
+    "tts_request_s": 0.711,
+    "tts_audio_s": 5.26,
+    "playback_test_sink": "aplay -q -D null; hardware speaker not validated",
+    "temporary_wav_cleanup": "performed"
+  },
+  "limits": [
+    "Popup windows require a logged-in RK graphical desktop. SSH had no DISPLAY; actual on-screen placement has not been visually verified.",
+    "ASR demonstration owns a separate recognizer; backend ASR can remain resident concurrently.",
+    "LLM and TTS reuse existing loopback services. No service restart, navigation API, vehicle command, FPGA programming or model download was performed.",
+    "Timings are one finite sample, not a throughput or worst-case acceptance result."
+  ]
+}
