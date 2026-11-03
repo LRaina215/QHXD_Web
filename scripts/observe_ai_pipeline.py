@@ -13,9 +13,12 @@ import sys
 import time
 from urllib.request import ProxyHandler, build_opener
 
-GROUPS = {'asr': ('ASR', '01 实际语音识别'), 'llm': ('LLM', '02 实际语言理解'),
-          'task': ('TASK', '03 任务下发与FPGA反馈'), 'tts': ('TTS', '04 实际语音合成'),
-          'yolo': ('YOLO', '05 YOLO26 实际视觉识别')}
+GROUPS = {'asr': ('ASR', '01 SenseVoice | 语音识别'), 'llm': ('LLM', '02 Qwen3 | 语言理解'),
+          'task': ('TASK', '03 任务下发与 FPGA 反馈'), 'tts': ('TTS', '04 Matcha + Vocos | 语音合成'),
+          'yolo': ('YOLO', '05 YOLO26 | 视觉识别')}
+INTRO = {'asr': '将语音转换为文字。', 'llm': '理解指令，生成回复与任务意图。',
+         'task': '显示任务下发、确认与执行反馈。', 'tts': '将回复文本转换为语音。',
+         'yolo': '显示目标类别、置信度、距离与位置。', 'all': '语音、视觉与任务处理日志。'}
 READ_OPENER = build_opener(ProxyHandler({}))
 
 
@@ -90,12 +93,21 @@ def clean(value):
     return re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', '', str(value))
 
 
+def display_fields(value):
+    """Keep processing data/errors; omit explanatory notes from the presentation."""
+    if isinstance(value, dict):
+        return {key: display_fields(item) for key, item in value.items() if key != 'note'}
+    if isinstance(value, list):
+        return [display_fields(item) for item in value]
+    return value
+
+
 def display(item):
     print('\n' + clean(item.get('at', '')) + '  [' + clean(item.get('trace') or 'system') + ']  '
           + clean(item.get('component', '')) + ' / ' + clean(item.get('event', '')), flush=True)
     if item.get('dropped_before_this_event'):
         print('日志繁忙，丢弃事件数：' + str(item['dropped_before_this_event']), flush=True)
-    for key, value in item.get('data', {}).items():
+    for key, value in display_fields(item.get('data', {})).items():
         if value is None:
             continue
         text = json.dumps(value, ensure_ascii=False, indent=2) if isinstance(value, (dict, list)) else str(value)
@@ -103,14 +115,8 @@ def display(item):
 
 
 def follow(root, group, history):
-    stage, title = GROUPS[group] if group != 'all' else ('ALL', '真实请求全流程')
-    print(title + '\n只读跟随后端现有请求；请从网页或小程序发指令。\n'
-          '同一编号对应同一次请求；确认请求通过 related_trace 关联原指令。\n'
-          '这里显示实际结果/模型可见输出，不是内部思考。Ctrl+C关闭本窗口。', flush=True)
-    if group == 'asr':
-        print('文字输入/网页按钮不经过ASR；小程序微信识别在手机上完成时，这里不会冒称RK识别。', flush=True)
-    if group in ('yolo', 'all'):
-        print('YOLO每秒只读抽样已有检测；显示刷新率不等于模型检测帧率。无有效深度时距离为null。', flush=True)
+    stage, title = GROUPS[group] if group != 'all' else ('ALL', '云拓 AI 处理流程')
+    print(title + '\n' + INTRO[group], flush=True)
     handles = {}
     paths = [] if group == 'yolo' else [root/'logs'/f'processing_{name}.jsonl' for name in ('backend', 'bridge')]
     last_hint = next_yolo = 0
@@ -150,8 +156,7 @@ def follow(root, group, history):
                     except (ValueError, TypeError):
                         print('跳过一条无法解析的日志。', flush=True)
             if paths and not handles and time.monotonic()-last_hint > 15:
-                print('等待处理日志。需要以 trace_backend / trace_bridge 入口运行现有服务；'
-                      '本观察器不会自行重启服务或加载模型。', flush=True)
+                print('等待处理日志……', flush=True)
                 last_hint = time.monotonic()
             time.sleep(.2)
     except KeyboardInterrupt:
@@ -174,8 +179,8 @@ def desktop(root):
         directory.mkdir(parents=True, exist_ok=True)
         # Replace our earlier standalone-demo shortcut, rather than leave two ambiguous entries.
         file = directory/'yuntuo-ai-demo.desktop'
-        file.write_text('[Desktop Entry]\nType=Application\nName=云拓真实处理流程\n'
-                        'Comment=观察网页和小程序实际请求，不额外运行模型\n'
+        file.write_text('[Desktop Entry]\nType=Application\nName=云拓 AI 处理流程\n'
+                        'Comment=语音、视觉与任务处理\n'
                         f'Exec={command}\nPath={root}\nIcon=utilities-terminal\nTerminal=false\n', encoding='utf-8')
         file.chmod(0o755)
         print('已更新启动入口：' + str(file))
@@ -230,7 +235,7 @@ def main():
         ai_demo_terminals.TITLES[group] = GROUPS[group][1]
         with open(os.devnull, 'w') as devnull:
             subprocess.Popen(terminal_command(terminal, group, command, geometry), stdout=devnull, stderr=devnull)
-    print('五个只读观察窗口已启动（含YOLO26）。从网页/小程序正常下发指令即可。')
+    print('已打开 5 个模块窗口。')
 
 
 if __name__ == '__main__':

@@ -31,7 +31,10 @@ YOLO是持续检测流，不把每帧强行归到某一条语音请求；相应�
 bash scripts/open_ai_demo.sh --console all
 ```
 
-安装／更新桌面入口“云拓真实处理流程”：
+终端页首保留模块名称和一句简介，下面显示处理数据、结果和错误。技术说明放在本文档，
+不在终端重复打印。
+
+安装／更新桌面入口“云拓 AI 处理流程”：
 
 ```bash
 bash scripts/open_ai_demo.sh --install-desktop
