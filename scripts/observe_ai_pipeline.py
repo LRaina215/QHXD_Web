@@ -2,6 +2,7 @@
 """Display real backend/bridge events only: no recording, model calls or commands."""
 from __future__ import annotations
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -10,9 +11,79 @@ import shutil
 import subprocess
 import sys
 import time
+from urllib.request import ProxyHandler, build_opener
 
 GROUPS = {'asr': ('ASR', '01 实际语音识别'), 'llm': ('LLM', '02 实际语言理解'),
-          'task': ('TASK', '03 任务下发与FPGA反馈'), 'tts': ('TTS', '04 实际语音合成')}
+          'task': ('TASK', '03 任务下发与FPGA反馈'), 'tts': ('TTS', '04 实际语音合成'),
+          'yolo': ('YOLO', '05 YOLO26 实际视觉识别')}
+READ_OPENER = build_opener(ProxyHandler({}))
+
+
+def yolo_snapshot(state, health, now=None):
+    """Project existing API fields, keeping freshness distinct from inference timing."""
+    now = now or datetime.now(timezone.utc)
+    detection = state.get('detection_status') or {}
+    perception = health.get('perception') or {}
+    stamp = detection.get('timestamp')
+    age = None
+    if stamp:
+        try:
+            dt = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+            if dt.tzinfo is not None:
+                age = (now-dt).total_seconds()
+        except (TypeError, ValueError):
+            pass
+    fresh = (age is not None and -.5 <= age <= 2 and health.get('latest_frame_fresh') is True
+             and detection.get('enabled') is True)
+    status = ('disabled' if detection.get('enabled') is False else
+              'not_reported' if not detection else 'ok' if fresh else 'stale')
+    objects = []
+    if fresh:
+        for obj in detection.get('objects', [])[:32]:
+            objects.append({key: obj.get(key) for key in (
+                'class_name','confidence','bbox_xyxy','color','track_id','distance_m',
+                'position_body_m','current_frame','recently_seen')})
+    return {'status': status, 'model': detection.get('model_name') or perception.get('model'),
+            'source': detection.get('source'), 'frame_timestamp': stamp,
+            'detection_age_s': round(age, 3) if age is not None else None,
+            'detect_fps': perception.get('detect_fps'), 'target_task': perception.get('target_task'),
+            'fresh': fresh, 'object_count': len(objects), 'objects': objects,
+            'last_reported_object_count': len(detection.get('objects', [])),
+            'single_frame_npu_ms': None,
+            'note': '距离无有效深度时为null；单帧NPU耗时未上报；结果年龄不是推理耗时。'
+                    if fresh else '当前无新鲜识别结果，不把旧目标显示成当前目标。'}
+
+
+def backend_base(root):
+    port = os.environ.get('BACKEND_PORT', '')
+    if not port and (root/'.env').exists():
+        for line in (root/'.env').read_text(encoding='utf-8').splitlines():
+            if line.strip().startswith('BACKEND_PORT='):
+                port = line.split('=',1)[1].strip().strip('"\'')
+    value = int(port or '8000')
+    if not 1 <= value <= 65535:
+        raise ValueError('BACKEND_PORT 不在有效范围内')
+    return f'http://127.0.0.1:{value}'
+
+
+def read_yolo(root):
+    base = backend_base(root)
+    def get(path):
+        with READ_OPENER.open(base+path, timeout=1.5) as response:
+            return json.loads(response.read(2*1024*1024))['data']
+    return yolo_snapshot(get('/api/state/latest'), get('/api/perception/video_health'))
+
+
+def show_yolo(root):
+    try:
+        data = read_yolo(root)
+        display({'at': datetime.now().astimezone().isoformat(timespec='seconds'),
+                 'trace':'vision-continuous', 'component':'existing-perception',
+                 'event':'YOLO26.detected' if data['fresh'] else 'YOLO26.'+data['status'], 'data':data})
+    except Exception as exc:
+        display({'at':datetime.now().astimezone().isoformat(timespec='seconds'),
+                 'component':'existing-perception','event':'YOLO26.unavailable',
+                 'data':{'error':str(exc),'fresh':False}})
 
 
 def clean(value):
@@ -38,11 +109,16 @@ def follow(root, group, history):
           '这里显示实际结果/模型可见输出，不是内部思考。Ctrl+C关闭本窗口。', flush=True)
     if group == 'asr':
         print('文字输入/网页按钮不经过ASR；小程序微信识别在手机上完成时，这里不会冒称RK识别。', flush=True)
+    if group in ('yolo', 'all'):
+        print('YOLO每秒只读抽样已有检测；显示刷新率不等于模型检测帧率。无有效深度时距离为null。', flush=True)
     handles = {}
-    paths = [root/'logs'/f'processing_{name}.jsonl' for name in ('backend', 'bridge')]
-    last_hint = 0
+    paths = [] if group == 'yolo' else [root/'logs'/f'processing_{name}.jsonl' for name in ('backend', 'bridge')]
+    last_hint = next_yolo = 0
     try:
         while True:
+            if group in ('yolo', 'all') and time.monotonic() >= next_yolo:
+                show_yolo(root)
+                next_yolo = time.monotonic()+1
             for path in paths:
                 try:
                     stat = path.stat()
@@ -73,7 +149,7 @@ def follow(root, group, history):
                             display(item)
                     except (ValueError, TypeError):
                         print('跳过一条无法解析的日志。', flush=True)
-            if not handles and time.monotonic()-last_hint > 15:
+            if paths and not handles and time.monotonic()-last_hint > 15:
                 print('等待处理日志。需要以 trace_backend / trace_bridge 入口运行现有服务；'
                       '本观察器不会自行重启服务或加载模型。', flush=True)
                 last_hint = time.monotonic()
@@ -118,6 +194,11 @@ def main():
         for name in ('backend', 'bridge'):
             path = root/'logs'/f'processing_{name}.jsonl'
             print(name, str(path), '已存在' if path.exists() else '未生成')
+        try:
+            data = read_yolo(root)
+            print('YOLO', data['model'], data['status'], '检测帧率', data['detect_fps'])
+        except Exception as exc:
+            print('YOLO 不可用：', exc)
         return
     if args.install_desktop:
         return desktop(root)
@@ -131,10 +212,16 @@ def main():
     if not terminal:
         raise RuntimeError('找不到 xfce4-terminal / gnome-terminal / xterm')
     first, second, third = window_geometries()
-    size = first.split('+', 1)[0]
-    lower_left = size + '+0+' + third.rsplit('+',1)[1]
-    lower_right = size + '+' + second.split('+',1)[1].split('+')[0] + '+' + third.rsplit('+',1)[1]
-    for group, geometry in zip(GROUPS, (first,second,lower_left,lower_right)):
+    # Five panes: two on top, two in the middle, continuous YOLO results below.
+    columns = int(first.split('x',1)[0])
+    half_width = int(second.split('+')[1])
+    height = int(third.rsplit('+',1)[1])*2
+    rows = max(6, min(19, (height//3-75)//19))
+    size = f'{columns}x{rows}'
+    geometries = (size+'+0+0', size+f'+{half_width}+0',
+                  size+f'+0+{height//3}', size+f'+{half_width}+{height//3}',
+                  f'{min(130,columns*2)}x{rows}+0+{height*2//3}')
+    for group, geometry in zip(GROUPS, geometries):
         command = [sys.executable, '-u', str(Path(__file__).resolve()), '--root', str(root), '--console', group]
         if args.history:
             command.append('--history')
@@ -143,7 +230,7 @@ def main():
         ai_demo_terminals.TITLES[group] = GROUPS[group][1]
         with open(os.devnull, 'w') as devnull:
             subprocess.Popen(terminal_command(terminal, group, command, geometry), stdout=devnull, stderr=devnull)
-    print('四个只读观察窗口已打开。现在从网页/小程序正常下发指令。')
+    print('五个只读观察窗口已启动（含YOLO26）。从网页/小程序正常下发指令即可。')
 
 
 if __name__ == '__main__':

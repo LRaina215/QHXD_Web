@@ -1,0 +1,26 @@
+{
+  "actual_model": "yolo26n_int8.rknn",
+  "snapshot": {
+    "status": "ok",
+    "model": "yolo26n_int8.rknn",
+    "source": "yuntuo-astra",
+    "frame_timestamp": "2026-11-03T06:08:47.499685Z",
+    "detection_age_s": 0.177,
+    "detect_fps": 5.0,
+    "target_task": false,
+    "fresh": true,
+    "object_count": 0,
+    "objects": [],
+    "last_reported_object_count": 0,
+    "single_frame_npu_ms": null,
+    "note": "距离无有效深度时为null；单帧NPU耗时未上报；结果年龄不是推理耗时。"
+  },
+  "perception_pid_before": 15468,
+  "perception_pid_after": 15468,
+  "perception_restarted": false,
+  "extra_detector_started": false,
+  "observer_requests": "GET /api/state/latest and GET /api/perception/video_health",
+  "display_sample_hz": 1,
+  "tests": "4 existing-value, missing-depth, stale and empty-result contracts passed",
+  "popup_visually_verified": false
+}
