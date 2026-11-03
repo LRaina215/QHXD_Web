@@ -13,4 +13,4 @@ ARGS=(--link "${YUNTUO_FPGA_LINK:-uart:/dev/yuntuo-fpga}")
 [[ -n "${YUNTUO_PRIOR_MAP:-}" ]] && ARGS+=(--map "$YUNTUO_PRIOR_MAP")
 [[ "${YUNTUO_FPGA_IS_MOCK:-false}" =~ ^(1|true|yes|on)$ ]] && ARGS+=(--mock)
 
-exec "${BACKEND_PYTHON:-python3}" -m yuntuo.fpga_bridge "${ARGS[@]}"
+exec "${BACKEND_PYTHON:-python3}" -m yuntuo.trace_bridge "${ARGS[@]}"

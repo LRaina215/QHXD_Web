@@ -2,6 +2,11 @@ import json
 import os
 from datetime import datetime, timezone
 from urllib import error, request
+try:
+    from yuntuo.processing_trace import headers as processing_headers
+except ModuleNotFoundError:  # legacy backend-only entrypoint without the repository root on sys.path
+    def processing_headers():
+        return {}
 
 from app.schemas import (
     JsonScalar,
@@ -41,7 +46,7 @@ class Nav2MissionAdapter:
             http_request = request.Request(
                 url=f"{self._base_url()}{self._mission_path()}",
                 data=body,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", **processing_headers()},
                 method="POST",
             )
             with request.build_opener(request.ProxyHandler({})).open(

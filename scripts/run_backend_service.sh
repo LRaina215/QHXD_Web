@@ -32,7 +32,8 @@ fi
 ) &
 
 cd "${PROJECT_ROOT}/backend"
+export PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 # fpga_bridge / 感知节点每秒向 /api/internal/* 上报十几次，访问日志会刷满 journal；排查时 BACKEND_ACCESS_LOG=true 打开
 ACCESS_LOG=(--no-access-log)
 [[ "${BACKEND_ACCESS_LOG:-false}" =~ ^(1|true|yes|on)$ ]] && ACCESS_LOG=()
-exec "${BACKEND_PYTHON}" -m uvicorn app.main:app --host "${BACKEND_HOST:-0.0.0.0}" --port "${BACKEND_PORT}" "${ACCESS_LOG[@]}"
+exec "${BACKEND_PYTHON}" -m uvicorn yuntuo.trace_backend:app --host "${BACKEND_HOST:-0.0.0.0}" --port "${BACKEND_PORT}" "${ACCESS_LOG[@]}"

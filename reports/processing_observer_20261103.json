@@ -1,0 +1,179 @@
+{
+  "real_backend_trace": "22236fe16839441c",
+  "stages": [
+    [
+      "REQUEST",
+      "http.begin"
+    ],
+    [
+      "ASR",
+      "transcribe_audio_file.begin"
+    ],
+    [
+      "ASR",
+      "transcribe_audio_file.end"
+    ],
+    [
+      "LLM",
+      "handle.begin"
+    ],
+    [
+      "LLM",
+      "parse.begin"
+    ],
+    [
+      "LLM",
+      "chat_json.begin"
+    ],
+    [
+      "LLM",
+      "chat_json.end"
+    ],
+    [
+      "LLM",
+      "parse.end"
+    ],
+    [
+      "TTS",
+      "speak_with_policy.begin"
+    ],
+    [
+      "TTS",
+      "speak.begin"
+    ],
+    [
+      "TTS",
+      "_maybe_local_play.begin"
+    ],
+    [
+      "TTS",
+      "_maybe_local_play.end"
+    ],
+    [
+      "TTS",
+      "speak.end"
+    ],
+    [
+      "TTS",
+      "speak_with_policy.end"
+    ],
+    [
+      "LLM",
+      "handle.end"
+    ],
+    [
+      "REQUEST",
+      "http.response"
+    ]
+  ],
+  "input_source": "actual local TTS generated audio uploaded through the production smart_audio_command route; not microphone or phone",
+  "bridge_rejection_trace": "ee29ff5eb6bf4c52",
+  "bridge_events": [
+    [
+      "TASK",
+      "bridge.http.begin"
+    ],
+    [
+      "TASK",
+      "bridge.request"
+    ],
+    [
+      "TASK",
+      "bridge.request.result"
+    ]
+  ],
+  "bridge_rejection": {
+    "success": true,
+    "data": {
+      "accepted": false,
+      "command": "__observer_unsupported__",
+      "task_status": {
+        "task_id": "fpga-idle",
+        "task_type": "placeholder",
+        "state": "idle",
+        "progress": 0,
+        "source": "fpga_bridge",
+        "phase": "idle",
+        "current_waypoint_id": null,
+        "waypoint_index": null,
+        "waypoint_count": null,
+        "detail": "等待任务。",
+        "updated_at": "2026-11-03T06:00:30.593433+00:00"
+      },
+      "current_goal": null,
+      "nav_state": "idle",
+      "received_at": "2026-11-03T06:00:30.593491+00:00",
+      "detail": "不支持的任务命令：__observer_unsupported__"
+    }
+  },
+  "motion_command_sent_by_validation": false,
+  "popup_visual_check": false,
+  "initial_mock_probe": {
+    "success": true,
+    "data": {
+      "accepted": true,
+      "command": "go_to_waypoint",
+      "task_status": {
+        "task_id": "task-go-to-waypoint",
+        "task_type": "go_to_waypoint",
+        "state": "running",
+        "progress": 10,
+        "source": "processing-observer-rejection-20261103",
+        "phase": null,
+        "current_waypoint_id": null,
+        "waypoint_index": null,
+        "waypoint_count": null,
+        "detail": null,
+        "updated_at": null
+      },
+      "received_at": "2026-11-03T06:00:30.509059Z",
+      "detail": "已受理前往目标点 __observer_invalid_waypoint__ 的模拟命令。"
+    }
+  },
+  "mode_after_reload": "real",
+  "mock_startup_correction": "Legacy backend resets to mock on restart. Final reload cleared the synthetic mock task; explicitly restored Real through mode switch only.",
+  "real_gateway_rejection": {
+    "success": true,
+    "data": {
+      "accepted": false,
+      "command": "go_to_waypoint",
+      "task_status": {
+        "task_id": "fpga-idle",
+        "task_type": "placeholder",
+        "state": "idle",
+        "progress": 0,
+        "source": "fpga_bridge",
+        "phase": "idle",
+        "current_waypoint_id": null,
+        "waypoint_index": null,
+        "waypoint_count": null,
+        "detail": "等待任务。",
+        "updated_at": "2026-11-03T06:02:08.412179Z"
+      },
+      "received_at": "2026-11-03T06:02:08.487836Z",
+      "detail": "目标点不存在：__observer_invalid_waypoint__"
+    }
+  },
+  "final_vehicle_state": {
+    "task": "idle",
+    "mode": "idle",
+    "cmd_vx": 0.0,
+    "cmd_wz": 0.0,
+    "control_faults": [
+      "policy_fault:1",
+      "bmi088_error:4",
+      "bmi088_stale"
+    ]
+  },
+  "confirmation_cancel_check": {
+    "pending_command_id": "voice_pending_2a8a9c613b79",
+    "original_trace": "0be23468a6bc48ad",
+    "confirmation_trace": "460ed0843c7346ca",
+    "confirmed": false,
+    "motion_dispatched": false
+  },
+  "console_reader_real_log_check": true,
+  "reader_probe_correction": "First reader assertion incorrectly excluded unrelated historical NV events; final check filters the actual confirmation trace IDs.",
+  "tests": "7 observer/source-label contracts plus 31 existing bridge simulations passed in local runs.",
+  "restart_scope": "Backend and bridge reloaded while vehicle task idle; LLM/TTS/perception not restarted. Final backend is real."
+}

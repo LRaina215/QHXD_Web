@@ -40,7 +40,7 @@ class SmartVoiceService:
                 request_id=request_id,
                 recognized_text=text,
                 intent=parsed.intent,
-                data_source="deepseek",
+                data_source=parsed.llm_backend if parsed.parser == "llm" and parsed.llm_backend else parsed.parser,
                 reply_text=parsed.detail,
                 need_confirm=False,
                 confidence=parsed.confidence,
