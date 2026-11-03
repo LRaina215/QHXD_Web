@@ -132,8 +132,11 @@ def display(item):
         print('  ' + clean(key) + ': ' + clean(text), flush=True)
 
 
-def follow(root, group, history):
+def follow(root, group, history, stream=False):
     stage, title = GROUPS[group] if group != 'all' else ('ALL', '云拓 AI 处理流程')
+    if group!='all' and not history and not stream:
+        from processing_panel import run
+        return run(root,group,title,INTRO[group],read_yolo)
     print(title + '\n' + INTRO[group], flush=True)
     handles = {}
     paths = [] if group == 'yolo' else [root/'logs'/f'processing_{name}.jsonl' for name in ('backend', 'bridge')]
@@ -206,7 +209,7 @@ def workarea():
 def layout_rectangles(area):
     x,y,width,height = area
     half = width//2
-    row = max(80, int(height*.2))
+    row = max(80, int(height*.23))
     return {'asr':(x,y,half,row), 'llm':(x+half,y,width-half,row),
             'task':(x,y+row,half,row), 'tts':(x+half,y+row,width-half,row),
             'yolo':(x,y+2*row,width,height-2*row)}
@@ -308,6 +311,7 @@ def main():
     ap.add_argument('--install-desktop', action='store_true')
     ap.add_argument('--check', action='store_true')
     ap.add_argument('--arrange', action='store_true', help='重新排列已打开的模块窗口')
+    ap.add_argument('--stream', action='store_true', help='滚动显示详细日志')
     args = ap.parse_args()
     root = args.root.expanduser().resolve()
     if args.check:
@@ -323,7 +327,7 @@ def main():
     if args.install_desktop:
         return desktop(root)
     if args.console:
-        return follow(root, args.console, args.history)
+        return follow(root, args.console, args.history, args.stream)
     if not os.environ.get('DISPLAY') and not os.environ.get('WAYLAND_DISPLAY'):
         raise RuntimeError('请在RK图形桌面运行以弹窗；SSH中可用 --console all 查看同一条真实流程。')
     if args.arrange:
@@ -345,11 +349,17 @@ def main():
         command = [sys.executable, '-u', str(Path(__file__).resolve()), '--root', str(root), '--console', group]
         if args.history:
             command.append('--history')
+        if args.stream:
+            command.append('--stream')
         # helper accepts arbitrary roles through its title dictionary
         import ai_demo_terminals
         ai_demo_terminals.TITLES[group] = GROUPS[group][1]
+        argv=terminal_command(terminal, group, command, geometry)
+        if Path(terminal).name=='xfce4-terminal':
+            argv[argv.index('--font=Monospace 11')]='--font=Monospace 10'
+            argv[1:1]=['--color-bg=#0b1420','--color-text=#e6edf3','--hide-scrollbar','--hide-toolbar']
         with open(os.devnull, 'w') as devnull:
-            subprocess.Popen(terminal_command(terminal, group, command, geometry), stdout=devnull, stderr=devnull)
+            subprocess.Popen(argv, stdout=devnull, stderr=devnull)
     arrange(root,wait=5)
     print('已打开 5 个模块窗口。')
 
