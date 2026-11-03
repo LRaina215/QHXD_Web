@@ -1,12 +1,16 @@
 """Compact terminal presentation of existing processing events."""
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import re
+import select
+import signal
 import shutil
 import sys
 import time
 import unicodedata
+import wave
 
 
 def text(value):
@@ -34,6 +38,52 @@ class State:
         self.input='';self.output='';self.intent='';self.elapsed=None;self.command=''
         self.model='';self.error='';self.detail=''
         self.model_elapsed=None
+        self.debug={};self.raw_output='';self.steps=[]
+
+    def remember(self, item):
+        data=item.get('data',{});event=item.get('event','')
+        def put(label,value):
+            if value is not None and value!='':self.debug[label]=value
+        put('请求编号',self.trace)
+        put('最近方法',event)
+        if not self.steps or self.steps[-1][1]!=event:
+            self.steps.append((clock(item.get('at')),event));self.steps=self.steps[-8:]
+        request=data.get('request') or {}
+        for key,label in (('source','输入来源'),('confirmed','确认执行'),('pending_command_id','待确认编号')):
+            put(label,request.get(key))
+        for key,label in (('backend','后端'),('model','模型'),('record_seconds','录音秒数'),
+                          ('audio_device','采集设备'),('pending_command_id','待确认编号'),
+                          ('related_trace','原请求编号'),('packet_id','报文编号'),('usage','Token统计')):
+            put(label,data.get(key))
+        result=data.get('parsed') or data.get('bridge_response') or data.get('result') or {}
+        if isinstance(result,dict) and isinstance(result.get('data'),dict):result=result['data']
+        for key,label in (('backend','后端'),('parser','解析来源'),('llm_backend','推理后端'),
+                          ('llm_model','模型'),('confidence','置信度'),('need_confirm','需要确认'),
+                          ('payload','任务参数'),('pending_command_id','待确认编号'),
+                          ('raw_text','识别原文'),('model_load_time_s','模型加载秒数'),
+                          ('asr_time_s','识别处理秒数'),('audio_device','采集设备'),
+                          ('accepted','受理结果'),('status','语音状态')):
+            put(label,result.get(key))
+        task=result.get('task_status') or {}
+        for key,label in (('task_id','任务编号'),('state','任务状态'),('progress','任务进度'),
+                          ('phase','任务阶段'),('current_waypoint_id','当前点位')):
+            put(label,task.get(key))
+        if data.get('payload') is not None:put('桥接参数',data['payload'])
+        if data.get('packet') is not None:put('NV报文',data['packet'])
+        if data.get('status') is not None:put('FPGA状态',data['status'])
+        feedback=data.get('feedback') or {}
+        if feedback.get('event'):put('任务事件',feedback['event'])
+        if event in ('chat_json.end','chat_text.end'):
+            self.raw_output=data.get('output') or ''
+        audio_path=result.get('audio_path') or data.get('audio_path')
+        if audio_path:
+            put('音频文件',Path(audio_path).name)
+            try:
+                with wave.open(str(audio_path),'rb') as audio:
+                    put('采样率Hz',audio.getframerate());put('声道数',audio.getnchannels())
+                    put('音频秒数',round(audio.getnframes()/audio.getframerate(),3))
+                    put('采样位数',audio.getsampwidth()*8)
+            except (OSError,wave.Error,EOFError):pass
 
     def event(self, item):
         if item.get('stage') != {'asr':'ASR','llm':'LLM','task':'TASK','tts':'TTS'}[self.group]:
@@ -43,6 +93,7 @@ class State:
             self.__init__(self.group)
             self.trace=identity
         self.at=clock(item.get('at'))
+        self.remember(item)
         if self.group!='llm':self.elapsed=data.get('duration_ms',self.elapsed)
         if event.endswith('.error') or event=='nv.send.failed':
             self.error=data.get('error') or '处理失败';self.phase='失败';return
@@ -76,7 +127,7 @@ class State:
                 self.output=result.get('reply_text') or result.get('detail') or self.output
                 self.input=result.get('recognized_text') or self.input
                 self.intent=result.get('intent') or self.intent
-                self.phase='规则解析' if result.get('parser')=='rule' else '完成'
+                self.phase={'rule':'规则解析','builtin':'内置回复','confirm':'确认处理','safety':'校验结果'}.get(result.get('parser'),'完成')
                 if result.get('need_confirm'):self.phase='等待确认'
         elif self.group=='tts':
             if event in ('speak.begin','speak_with_policy.begin'):
@@ -133,6 +184,23 @@ class State:
         if self.error:result+=['错误：'+str(self.error)]
         return result
 
+    def sections(self):
+        def value(item):
+            if isinstance(item,bool):return '是' if item else '否'
+            if isinstance(item,(dict,list)):return json.dumps(item,ensure_ascii=False,separators=(',',':'))
+            return str(item)
+        summary=self.lines()
+        priority={'asr':['后端','采集设备','录音秒数','识别处理秒数','模型加载秒数','识别原文'],
+                  'llm':['模型','推理后端','解析来源','置信度','需要确认','任务参数','Token统计','输入来源'],
+                  'task':['NV报文','FPGA状态','桥接参数','受理结果','任务状态','任务阶段','任务进度','当前点位','任务事件'],
+                  'tts':['后端','语音状态','采样率Hz','声道数','采样位数','音频秒数','音频文件']}[self.group]
+        keys=[k for k in priority if k in self.debug]+[k for k in self.debug if k not in priority]
+        parameters=[str(k)+'：'+value(self.debug[k]) for k in keys]
+        groups=[('结果',summary[1:]),('参数',parameters or ['等待参数。'])]
+        if self.raw_output:groups.append(('模型输出',[self.raw_output]))
+        groups.append(('步骤',[stamp+'  '+event for stamp,event in self.steps] or ['等待处理。']))
+        return summary[0],groups
+
 
 class Logs:
     def __init__(self, root):
@@ -185,13 +253,45 @@ def yolo_lines(data, recent):
     return result
 
 
+def pages_for(sections, columns, capacity):
+    pages=[]
+    for name,lines in sections:
+        wrapped=[]
+        for line in lines:wrapped+=wrap(line,max(12,columns-1))
+        for offset in range(0,max(1,len(wrapped)),capacity):
+            pages.append((name,wrapped[offset:offset+capacity] or ['等待数据。']))
+    return pages
+
+
 def run(root, group, title, intro, yolo_reader):
     state=State(group) if group!='yolo' else None
     logs=Logs(root);last_screen='';last_poll=0;data={};recent=None
-    tty=sys.stdout.isatty()
-    if tty:sys.stdout.write('\033[?1049h\033[?25l');sys.stdout.flush()
+    interactive=sys.stdout.isatty();keyboard=None;old_terminal=None
+    old_signals={}
+    def leave(_sig=None,_frame=None):raise KeyboardInterrupt
+    for sig in (signal.SIGTERM,signal.SIGHUP):old_signals[sig]=signal.signal(sig,leave)
+    page=0;automatic=True;last_flip=time.monotonic();last_anchor=None
+    if os.name=='posix' and sys.stdin.isatty():
+        import termios
+        import tty
+        keyboard=sys.stdin.fileno();old_terminal=termios.tcgetattr(keyboard)
+        tty.setcbreak(keyboard)
+    if interactive:sys.stdout.write('\033[?1049h\033[?25l');sys.stdout.flush()
     try:
         while True:
+            key=b''
+            if keyboard is not None and select.select([keyboard],[],[],0)[0]:
+                key=os.read(keyboard,32)
+                if not key:break
+                if key.lower()==b'q':break
+                if key==b' ':
+                    automatic=not automatic;last_flip=time.monotonic()
+                if key.lower() in (b'n',b'\t',b'\x1b[c',b'\x1b[6~'):
+                    page+=1;automatic=False
+                if key.lower() in (b'p',b'\x1b[d',b'\x1b[5~'):
+                    page-=1;automatic=False
+                if key.lower() in (b'r',b'\x1b[h'):
+                    page=0;automatic=False
             if group=='yolo':
                 if time.monotonic()-last_poll>=1:
                     last_poll=time.monotonic()
@@ -202,26 +302,52 @@ def run(root, group, title, intro, yolo_reader):
                 lines=yolo_lines(data,recent)
                 if data.get('error'):lines=['状态：连接失败','错误：'+data['error']]
                 stamp=clock(data.get('frame_timestamp'))
+                status=lines[0]
+                diagnostic=[]
+                for key_name,label in (('source','检测来源'),('frame_id','相机坐标系'),('frame_timestamp','检测时间'),
+                    ('camera_running','相机进程'),('image_age_s','图像年龄s'),('fresh','结果新鲜'),
+                    ('detect_fps','检测FPS'),('target_task','任务检测模式'),('stream_frames','视频累计帧'),
+                    ('stream_dropped','视频丢弃帧'),('last_reported_object_count','最近上报目标数')):
+                    value=data.get(key_name)
+                    if value is not None:diagnostic.append(label+'：'+('是' if value is True else '否' if value is False else str(value)))
+                sections=[('目标',lines[1:]),('参数',diagnostic or ['等待检测参数。'])]
+                anchor=None
             else:
                 for item in logs.read():state.event(item)
-                lines=state.lines();stamp=state.at
+                status,sections=state.sections();stamp=state.at
+                anchor=(state.trace,state.output,state.error)
+            if automatic and anchor!=last_anchor:
+                page=0;last_flip=time.monotonic()
+            last_anchor=anchor
             cols,rows=shutil.get_terminal_size((80,24))
-            header=title.split(' ',1)[-1]+'  '+stamp
-            body=[header,intro]
-            for line in lines:body+=wrap(line,max(12,cols-1))
-            if len(body)>rows:
-                body=body[:max(1,rows)]
-                body[-1]=wrap(body[-1],max(10,cols-3))[0]+' …'
+            pages=pages_for(sections,cols,max(1,rows-4))
+            if automatic and time.monotonic()-last_flip>=6:
+                page+=1;last_flip=time.monotonic()
+            page%=len(pages)
+            name,content=pages[page]
+            header=wrap(title.split(' ',1)[-1]+'  '+stamp,cols-1)[0]
+            label=f'[{name} {page+1}/{len(pages)} '+('轮播' if automatic else '手动')+']'
+            subtitle=wrap(label+' '+intro,cols-1)[0]
+            footer='N/P 翻页  空格'+('暂停轮播' if automatic else '恢复轮播')+'  R返回'
+            body=[header,subtitle,wrap(status,cols-1)[0]]+content
+            body+=['']*max(0,rows-1-len(body))
+            body+=[wrap(footer,cols-1)[0]]
             screen='\n'.join(text(x) for x in body)
             if screen!=last_screen:
-                if tty:
-                    colored='\033[1;36m'+text(body[0])+'\033[0m\n\033[38;5;250m'+text(body[1])+'\033[0m'
-                    if len(body)>2:colored+='\n'+'\n'.join(text(x) for x in body[2:])
-                    sys.stdout.write('\033[H'+colored+'\033[J');sys.stdout.flush()
+                if interactive:
+                    colored=['\033[1;36m'+text(body[0])+'\033[0m',
+                             '\033[38;5;250m'+text(body[1])+'\033[0m']
+                    colored += [text(x) for x in body[2:-1]]
+                    colored += ['\033[38;5;250m'+text(body[-1])+'\033[0m']
+                    sys.stdout.write('\033[H'+'\n'.join('\033[2K'+line for line in colored)+'\033[J');sys.stdout.flush()
                 else:print(screen,flush=True)
                 last_screen=screen
             time.sleep(.15)
     except KeyboardInterrupt:pass
     finally:
         logs.close()
-        if tty:sys.stdout.write('\033[?25h\033[?1049l');sys.stdout.flush()
+        if old_terminal is not None:
+            try:termios.tcsetattr(keyboard,termios.TCSADRAIN,old_terminal)
+            except OSError:pass
+        for sig,handler in old_signals.items():signal.signal(sig,handler)
+        if interactive:sys.stdout.write('\033[?25h\033[?1049l');sys.stdout.flush()
