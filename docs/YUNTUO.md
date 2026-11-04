@@ -1,5 +1,7 @@
 # 云拓 RK3588 任务层（yuntuo-fpga 分支）
 
+**阶段交付补充（11-04）：** 生产共同工程为PNR100/136KiB，使用真实双串口；Flash默认应用与RK ACTIVE分开。局域网前端8000、真实AI处理窗口、地图2及维护事项见[PROJECT_HANDOVER_20261104.md](PROJECT_HANDOVER_20261104.md)。下文mock命令仅用于开发环境。
+
 云拓-多模态复杂地形轮腿机器人：导航（雷达定位、规划、SAFE 限幅）与运动控制（RL 轮腿策略）都在 FPGA 上，
 RK3588 承担视觉、语音、语言理解、任务编排与 Web 业务服务，通过 fpga_bridge 对接 FPGA。
 
